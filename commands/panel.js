@@ -2,7 +2,7 @@ const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, Butt
 
 module.exports = {
     data: new SlashCommandBuilder()
-        .setName('panel')
+        .setName('p')
         .setDescription('Bot configuration control panel by Books')
         .addIntegerOption(option =>
             option.setName('book')
@@ -36,7 +36,7 @@ module.exports = {
         const book = interaction.options.getInteger('book');
         const page = interaction.options.getInteger('page');
 
-        // Validation: Book aur Page match check
+        // Validation Check: Book aur Page match
         if (book === 1 && (page < 1 || page > 5)) {
             return interaction.reply({ content: '❌ Book 1 me sirf **Page 1 se 5** tak available hain!', ephemeral: true });
         }
@@ -104,7 +104,7 @@ module.exports = {
         } else if (page === 6) {
             const panelEmbed = new EmbedBuilder()
                 .setTitle('⚙️ [Book 2] Moderation & Auto-Mod Setup Panel')
-                .setDescription('Staff Roles, Link/IP filter permissions aur Auto-Mod rules configure karne ke liye niche button par click karein.')
+                .setDescription('Staff Roles, Link/IP filter permissions aur Auto-Mod rules configure karne ke liye niche diye gaye button par click karein.')
                 .setColor('#ED4245');
 
             const row = new ActionRowBuilder().addComponents(
@@ -114,10 +114,9 @@ module.exports = {
 
         } else if (page >= 7 && page <= 10) {
             await interaction.reply({ 
-                content: `🚧 **[Book 2] Page ${page}** abhi development me hai aur jald hi add hoga!`, 
+                content: `🚧 **[Book 2] Page ${page}** abhi development me hai aur agle update me live hoga!`, 
                 ephemeral: true 
             });
         }
     }
 };
-        
