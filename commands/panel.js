@@ -27,8 +27,12 @@ module.exports = {
                 .setColor('#5865F2');
 
             const row = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId('open_welcome_modal').setLabel('Setup Welcome').setStyle(ButtonStyle.Primary)
+                new ButtonBuilder()
+                    .setCustomId('open_welcome_modal')
+                    .setLabel('Setup Welcome')
+                    .setStyle(ButtonStyle.Primary)
             );
+
             await interaction.reply({ embeds: [panelEmbed], components: [row], ephemeral: true });
         } else if (page === 2) {
             const panelEmbed = new EmbedBuilder()
@@ -37,48 +41,68 @@ module.exports = {
                 .setColor('#5865F2');
 
             const row = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId('open_ticket_modal').setLabel('Setup Ticket').setStyle(ButtonStyle.Primary)
+                new ButtonBuilder()
+                    .setCustomId('open_ticket_modal')
+                    .setLabel('Setup Ticket')
+                    .setStyle(ButtonStyle.Primary)
             );
+
             await interaction.reply({ embeds: [panelEmbed], components: [row], ephemeral: true });
         } else if (page === 3) {
             const panelEmbed = new EmbedBuilder()
                 .setTitle('⚙️ Onboarding System Setup Panel')
-                .setDescription('Onboarding system configure karne ke liye niche click karein.')
+                .setDescription('Onboarding / Self-Role system configure karne ke liye niche diye gaye button par click karein.')
                 .setColor('#5865F2');
 
             const row = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId('open_onboarding_modal').setLabel('Setup Onboarding').setStyle(ButtonStyle.Primary)
+                new ButtonBuilder()
+                    .setCustomId('open_onboarding_modal')
+                    .setLabel('Setup Onboarding')
+                    .setStyle(ButtonStyle.Primary)
             );
+
             await interaction.reply({ embeds: [panelEmbed], components: [row], ephemeral: true });
         } else if (page === 4) {
             const panelEmbed = new EmbedBuilder()
                 .setTitle('⚙️ Server Stats Setup Panel')
-                .setDescription('Server Stats counter configure karne ke liye niche click karein.')
+                .setDescription('Live Server Stats counter channel configure karne ke liye niche diye gaye button par click karein.')
                 .setColor('#5865F2');
 
             const row = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId('open_stats_modal').setLabel('Setup Stats').setStyle(ButtonStyle.Primary)
+                new ButtonBuilder()
+                    .setCustomId('open_stats_modal')
+                    .setLabel('Setup Stats')
+                    .setStyle(ButtonStyle.Primary)
             );
+
             await interaction.reply({ embeds: [panelEmbed], components: [row], ephemeral: true });
         } else if (page === 5) {
             const panelEmbed = new EmbedBuilder()
                 .setTitle('⚙️ Store System Setup Panel')
-                .setDescription('Store & Shop system configure karne ke liye niche click karein.')
+                .setDescription('Store & In-Game Shop system configure karne ke liye niche diye gaye button par click karein.')
                 .setColor('#5865F2');
 
             const row = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId('open_store_modal').setLabel('Setup Store').setStyle(ButtonStyle.Primary)
+                new ButtonBuilder()
+                    .setCustomId('open_store_modal')
+                    .setLabel('Setup Store')
+                    .setStyle(ButtonStyle.Primary)
             );
+
             await interaction.reply({ embeds: [panelEmbed], components: [row], ephemeral: true });
         } else if (page === 6) {
             const panelEmbed = new EmbedBuilder()
                 .setTitle('⚙️ Moderation & Auto-Mod Setup Panel')
-                .setDescription('Staff Roles, Link/IP filter permissions aur Auto-Mod rules configure karne ke liye niche button par click karein.')
+                .setDescription('Staff Roles, Link/IP filter permissions aur Auto-Mod rules configure karne ke liye niche diye gaye button par click karein.')
                 .setColor('#ED4245');
 
             const row = new ActionRowBuilder().addComponents(
-                new ButtonBuilder().setCustomId('open_mod_modal').setLabel('Setup Moderation').setStyle(ButtonStyle.Danger)
+                new ButtonBuilder()
+                    .setCustomId('open_mod_modal')
+                    .setLabel('Setup Moderation')
+                    .setStyle(ButtonStyle.Danger)
             );
+
             await interaction.reply({ embeds: [panelEmbed], components: [row], ephemeral: true });
         }
     }
