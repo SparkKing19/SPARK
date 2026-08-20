@@ -44,11 +44,12 @@ client.once('ready', async () => {
 
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
     try {
+        // client.user.id use karne se CLIENT_ID variable ki zaroorat nahi padegi
         await rest.put(
-            Routes.applicationCommands(process.env.CLIENT_ID),
+            Routes.applicationCommands(client.user.id),
             { body: commandsArray }
         );
-        console.log('Slash Commands Registered.');
+        console.log('✅ Slash Commands Registered Successfully.');
     } catch (err) {
         console.error('Command Registration Error:', err);
     }
