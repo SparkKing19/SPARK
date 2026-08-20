@@ -7,7 +7,6 @@ const {
 } = require('discord.js');
 const WelcomeConfig = require('../models/welcome');
 
-// Helper: Placeholders format karne ke liye
 function formatPlaceholders(text, member) {
     if (!text) return '';
     const accountCreatedTs = Math.floor(member.user.createdTimestamp / 1000);
@@ -21,7 +20,6 @@ function formatPlaceholders(text, member) {
         .replace(/{server}/g, member.guild.name);
 }
 
-// Helper: Embed payload create karne ke liye
 function generateWelcomePayload(config, member) {
     const embed = new EmbedBuilder()
         .setColor('#00FFAA')
@@ -45,7 +43,6 @@ module.exports = (client) => {
 
     // 1. Button aur Modal Interactions
     client.on('interactionCreate', async (interaction) => {
-        // Modal Open karna
         if (interaction.isButton() && interaction.customId === 'open_welcome_modal') {
             const data = await WelcomeConfig.findOne({ guildId: interaction.guild.id }) || {};
 
@@ -99,7 +96,6 @@ module.exports = (client) => {
             await interaction.showModal(modal);
         }
 
-        // Modal Form Submit handle karna
         if (interaction.isModalSubmit() && interaction.customId === 'welcome_config_modal') {
             const title = interaction.fields.getTextInputValue('title_input');
             const description = interaction.fields.getTextInputValue('desc_input');
@@ -150,7 +146,7 @@ module.exports = (client) => {
             await message.reply({ content: '**[TEST PREVIEW] Server Welcome:**', embeds: [embed] });
             
             if (config.dmText) {
-                message.author.send({ embeds: [dmEmbed])
+                message.author.send({ embeds: [dmEmbed] })
                     .then(() => message.channel.send('✅ Test DM successfully sent!'))
                     .catch(() => message.channel.send('❌ Test DM send nahi ho saka (DMs band hain).'));
             }
@@ -159,4 +155,3 @@ module.exports = (client) => {
 
     console.log('✔ Welcome handler loaded.');
 };
-              
