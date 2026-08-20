@@ -7,24 +7,30 @@ const {
 } = require('discord.js');
 const WelcomeConfig = require('../models/welcome');
 
+const DEFAULT_TITLE = '✦ WELCOME TO {server} ✦';
+const DEFAULT_DESCRIPTION = '✦ Welcome, {user}!\n\n◆ You are our {memberCount}th member.\n◆ Joined: {joined}\n\n» Explore the server\n» Meet new people\n» Stay active & have fun\n» Follow the rules\n\n✦ Thank you for joining {server}!\n◆ We hope you enjoy your stay.';
+const DEFAULT_DM = 'Hey {user}, thank you for joining {server}!';
+
+// Helper: Dynamic Placeholders Replacement
 function formatPlaceholders(text, member) {
     if (!text) return '';
     const accountCreatedTs = Math.floor(member.user.createdTimestamp / 1000);
     const joinedTs = Math.floor((member.joinedTimestamp || Date.now()) / 1000);
 
     return text
-        .replace(/{user}/g, `<@${member.id}>`)
-        .replace(/{accountCreate}/g, `<t:${accountCreatedTs}:R>`)
-        .replace(/{joined}/g, `<t:${joinedTs}:R>`)
-        .replace(/{memberCount}/g, member.guild.memberCount.toString())
-        .replace(/{server}/g, member.guild.name);
+        .replace(/{user}/gi, `<@${member.id}>`)
+        .replace(/{accountCreate}/gi, `<t:${accountCreatedTs}:R>`)
+        .replace(/{joined}/gi, `<t:${joinedTs}:R>`)
+        .replace(/{memberCount}/gi, member.guild.memberCount.toString())
+        .replace(/{server}/gi, member.guild.name);
 }
 
+// Helper: Generate Welcome Embed & DM
 function generateWelcomePayload(config, member) {
     const embed = new EmbedBuilder()
-        .setColor('#00FFAA')
-        .setTitle(formatPlaceholders(config.title, member))
-        .setDescription(formatPlaceholders(config.description, member))
+        .setColor('#5865F2')
+        .setTitle(formatPlaceholders(config.title || DEFAULT_TITLE, member))
+        .setDescription(formatPlaceholders(config.description || DEFAULT_DESCRIPTION, member))
         .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
         .setTimestamp();
 
@@ -34,14 +40,14 @@ function generateWelcomePayload(config, member) {
 
     const dmEmbed = new EmbedBuilder()
         .setColor('#5865F2')
-        .setDescription(formatPlaceholders(config.dmText, member));
+        .setDescription(formatPlaceholders(config.dmText || DEFAULT_DM, member));
 
     return { embed, dmEmbed };
 }
 
 module.exports = (client) => {
 
-    // 1. Button aur Modal Interactions
+    // 1. Button & Modal Interaction
     client.on('interactionCreate', async (interaction) => {
         if (interaction.isButton() && interaction.customId === 'open_welcome_modal') {
             const data = await WelcomeConfig.findOne({ guildId: interaction.guild.id }) || {};
@@ -54,14 +60,14 @@ module.exports = (client) => {
                 .setCustomId('title_input')
                 .setLabel('Title')
                 .setStyle(TextInputStyle.Short)
-                .setValue(data.title || 'Welcome to {server}!')
+                .setValue(data.title || DEFAULT_TITLE)
                 .setRequired(true);
 
             const descInput = new TextInputBuilder()
                 .setCustomId('desc_input')
                 .setLabel('Description')
                 .setStyle(TextInputStyle.Paragraph)
-                .setValue(data.description || 'Hey {user}, welcome to {server}!\n📅 Account: {accountCreate}\n📥 Joined: {joined}\n👥 Count: #{memberCount}')
+                .setValue(data.description || DEFAULT_DESCRIPTION)
                 .setRequired(true);
 
             const bannerInput = new TextInputBuilder()
@@ -82,7 +88,7 @@ module.exports = (client) => {
                 .setCustomId('dm_input')
                 .setLabel('DM Text')
                 .setStyle(TextInputStyle.Paragraph)
-                .setValue(data.dmText || 'Hey {user}, thank you for joining {server}!')
+                .setValue(data.dmText || DEFAULT_DM)
                 .setRequired(false);
 
             modal.addComponents(
