@@ -16,6 +16,7 @@ const pendingOrderSchema = new mongoose.Schema({
     userId: String,
     username: String,
     itemName: String,
+    category: String,
     price: String,
     channelId: String,
     createdAt: { type: Date, default: Date.now },
@@ -28,14 +29,15 @@ const storeSchema = new mongoose.Schema({
     panelChannelId: { type: String, default: null },
     categoryId: { type: String, default: null },
     cmdsChannelId: { type: String, default: null },
+    logsChannelId: { type: String, default: null },
     bannerUrl: { type: String, default: '' },
     panelDesc: { 
         type: String, 
-        default: '✦ SERVER STORE ✦\n\nSelect an item from the menu below to place an order.' 
+        default: '✦ SERVER STORE ✦\n\nSelect a category from the dropdown below to explore available items.' 
     },
     orderDesc: { 
         type: String, 
-        default: '✦ NEW ORDER RECEIVED ✦\n\n◆ **Item:** {item}\n◆ **Price:** {price}\n◆ **IGN:** {username}\n◆ **Buyer:** {user}' 
+        default: '✦ NEW ORDER RECEIVED ✦\n\n◆ **Category:** {category}\n◆ **Item:** {item}\n◆ **Price:** {price}\n◆ **IGN:** {username}\n◆ **Buyer:** {user}' 
     },
     approvedDm: { 
         type: String, 
