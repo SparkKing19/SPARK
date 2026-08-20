@@ -8,7 +8,8 @@ const {
     ButtonBuilder, 
     ButtonStyle, 
     ChannelType, 
-    PermissionFlagsBits 
+    PermissionFlagsBits,
+    AttachmentBuilder
 } = require('discord.js');
 const TicketConfig = require('../models/ticket');
 
@@ -16,7 +17,8 @@ const DEFAULT_PANEL_DESC = '✦ SUPPORT CENTER ✦\n\nNeed help? Create a ticket
 const DEFAULT_TICKET_MSG = '✦ Your ticket has been created!\n\n◆ Please explain your issue clearly.\n◆ Provide any required details or proof.\n◆ Please wait patiently for a staff member to assist you.\n\n» Thank you for contacting support!';
 const DEFAULT_CATS = '🎟️ General Support, 🚨 Reports, 💳 Purchase, 🤝 Partnership';
 
-function createTicketPanel(config) {
+// Helper: Public Ticket Panel Embed & Select Menu
+function createTicketPanel(config, isTest = false) {
     const embed = new EmbedBuilder()
         .setColor('#5865F2')
         .setDescription(config.panelDescription || DEFAULT_PANEL_DESC)
@@ -34,8 +36,8 @@ function createTicketPanel(config) {
     }));
 
     const selectMenu = new StringSelectMenuBuilder()
-        .setCustomId('ticket_select_category')
-        .setPlaceholder('Select a category to open ticket...')
+        .setCustomId(isTest ? 'test_ticket_select' : 'ticket_select_category')
+        .setPlaceholder(isTest ? '[DEMO] Select a category...' : 'Select a category to open ticket...')
         .addOptions(options.length > 0 ? options : [{ label: 'General Support', value: 'ticket_cat_0' }]);
 
     const row = new ActionRowBuilder().addComponents(selectMenu);
@@ -127,7 +129,7 @@ module.exports = (client) => {
             if (panelChannelId) {
                 const targetChannel = interaction.guild.channels.cache.get(panelChannelId);
                 if (targetChannel) {
-                    const { embed, row } = createTicketPanel(config);
+                    const { embed, row } = createTicketPanel(config, false);
                     await targetChannel.send({ embeds: [embed], components: [row] });
                 }
             }
@@ -135,14 +137,22 @@ module.exports = (client) => {
             await interaction.reply({ content: '✅ Ticket System successfully configure ho gaya!', ephemeral: true });
         }
 
-        // 3. Ticket Creation (1 User = 1 Ticket Check & Category placement)
+        // 3. Demo / Test Selection Handling (No Ticket Created)
+        if (interaction.isStringSelectMenu() && interaction.customId === 'test_ticket_select') {
+            return interaction.reply({ 
+                content: '⚠️ **[DEMO PREVIEW]** Ye sirf test preview hai. Real ticket create karne ke liye setup channel me bheje gaye panel ka use karein.', 
+                ephemeral: true 
+            });
+        }
+
+        // 4. Real Ticket Creation
         if (interaction.isStringSelectMenu() && interaction.customId === 'ticket_select_category') {
             await interaction.deferReply({ ephemeral: true });
 
             const config = await TicketConfig.findOne({ guildId: interaction.guild.id });
             if (!config) return interaction.editReply({ content: '⚠️ Ticket System configure nahi hai.' });
 
-            // Check if user already has an active open ticket
+            // 1 User = 1 Ticket Check
             const existingTicket = config.activeTickets?.find(t => t.userId === interaction.user.id);
             if (existingTicket) {
                 const checkChannel = interaction.guild.channels.cache.get(existingTicket.channelId);
@@ -151,7 +161,6 @@ module.exports = (client) => {
                         content: `❌ Aapka pehle se ek ticket open hai: <#${existingTicket.channelId}>. Aap ek waqt me sirf ek ticket create kar sakte hain.` 
                     });
                 } else {
-                    // Agar channel manually delete ho gaya tha toh DB array se hatao
                     await TicketConfig.findOneAndUpdate(
                         { guildId: interaction.guild.id },
                         { $pull: { activeTickets: { channelId: existingTicket.channelId } } }
@@ -169,7 +178,6 @@ module.exports = (client) => {
             const countStr = String(updatedConfig.ticketCounter).padStart(4, '0');
             const selectedCategoryLabel = interaction.component.options.find(o => o.value === interaction.values[0])?.label || 'Support';
 
-            // Channel Permissions
             const permissionOverwrites = [
                 {
                     id: interaction.guild.roles.everyone.id,
@@ -192,7 +200,6 @@ module.exports = (client) => {
                 });
             }
 
-            // Create Channel inside specified category
             const ticketChannel = await interaction.guild.channels.create({
                 name: countStr,
                 type: ChannelType.GuildText,
@@ -200,7 +207,6 @@ module.exports = (client) => {
                 permissionOverwrites: permissionOverwrites
             });
 
-            // Save active ticket in DB
             await TicketConfig.findOneAndUpdate(
                 { guildId: interaction.guild.id },
                 { $push: { activeTickets: { userId: interaction.user.id, channelId: ticketChannel.id, ticketNumber: countStr } } }
@@ -233,7 +239,7 @@ module.exports = (client) => {
             await interaction.editReply({ content: `✅ Aapka ticket create ho gaya hai: ${ticketChannel}` });
         }
 
-        // 4. Handle Claim Button
+        // 5. Handle Claim Button
         if (interaction.isButton() && interaction.customId.startsWith('claim_ticket_')) {
             const config = await TicketConfig.findOne({ guildId: interaction.guild.id });
             const isStaff = config?.supportRoleId && interaction.member.roles.cache.has(config.supportRoleId);
@@ -266,7 +272,7 @@ module.exports = (client) => {
             await interaction.channel.send({ embeds: [claimEmbed] });
         }
 
-        // 5. Handle Close Button & Send Logs
+        // 6. Handle Close Button with Full Chat Transcript
         if (interaction.isButton() && interaction.customId === 'close_ticket') {
             const config = await TicketConfig.findOne({ guildId: interaction.guild.id });
             const isStaff = config?.supportRoleId && interaction.member.roles.cache.has(config.supportRoleId);
@@ -278,27 +284,49 @@ module.exports = (client) => {
 
             const ticketData = config.activeTickets?.find(t => t.channelId === interaction.channel.id);
 
-            await interaction.reply({ content: '🔒 Ticket 5 seconds me delete ho raha hai aur log record kiya ja raha hai...' });
+            await interaction.reply({ content: '🔒 Transcript save ho rahi hai aur ticket 5 seconds me delete ho jayega...' });
 
-            // Send Logs
+            // Generate Full Chat Transcript
             if (config.logsChannelId) {
                 const logsChannel = interaction.guild.channels.cache.get(config.logsChannelId);
                 if (logsChannel) {
+                    // Fetch up to 100 messages
+                    const fetchedMessages = await interaction.channel.messages.fetch({ limit: 100 });
+                    const sortedMessages = Array.from(fetchedMessages.values()).reverse();
+
+                    let transcriptText = `=========================================\n`;
+                    transcriptText += `TRANSCRIPT FOR TICKET #${ticketData?.ticketNumber || interaction.channel.name}\n`;
+                    transcriptText += `Guild: ${interaction.guild.name} (${interaction.guild.id})\n`;
+                    transcriptText += `Opened By: ${ticketData ? ticketData.userId : 'Unknown'}\n`;
+                    transcriptText += `Closed By: ${interaction.user.tag} (${interaction.user.id})\n`;
+                    transcriptText += `Date: ${new Date().toUTCString()}\n`;
+                    transcriptText += `=========================================\n\n`;
+
+                    for (const msg of sortedMessages) {
+                        const time = msg.createdAt.toISOString().replace(/T/, ' ').replace(/\..+/, '');
+                        const content = msg.cleanContent || (msg.embeds.length > 0 ? '[Embed Message]' : '[No Text Content]');
+                        const attachments = msg.attachments.map(a => `[Attachment: ${a.url}]`).join(' ');
+                        transcriptText += `[${time}] ${msg.author.tag}: ${content} ${attachments}\n`;
+                    }
+
+                    const buffer = Buffer.from(transcriptText, 'utf-8');
+                    const attachment = new AttachmentBuilder(buffer, { name: `transcript-${interaction.channel.name}.txt` });
+
                     const logEmbed = new EmbedBuilder()
                         .setColor('#ED4245')
                         .setTitle(`🗑️ Ticket Closed: #${ticketData?.ticketNumber || interaction.channel.name}`)
                         .addFields(
-                            { name: 'Opened By', value: ticketData ? `<@${ticketData.userId}>` : 'Unknown', inline: true },
-                            { name: 'Closed By', value: `<@${interaction.user.id}>`, inline: true },
-                            { name: 'Channel Name', value: interaction.channel.name, inline: true }
+                            { name: '👤 Opened By', value: ticketData ? `<@${ticketData.userId}>` : 'Unknown', inline: true },
+                            { name: '🛡️ Closed By', value: `<@${interaction.user.id}>`, inline: true },
+                            { name: '📁 Channel Name', value: interaction.channel.name, inline: true }
                         )
                         .setTimestamp();
 
-                    await logsChannel.send({ embeds: [logEmbed] }).catch(() => {});
+                    await logsChannel.send({ embeds: [logEmbed], files: [attachment] }).catch(console.error);
                 }
             }
 
-            // Remove from activeTickets array
+            // Remove from activeTickets array in DB
             await TicketConfig.findOneAndUpdate(
                 { guildId: interaction.guild.id },
                 { $pull: { activeTickets: { channelId: interaction.channel.id } } }
@@ -310,16 +338,16 @@ module.exports = (client) => {
         }
     });
 
-    // 6. Test Preview (§ticket)
+    // 7. Test Preview (§ticket)
     client.on('messageCreate', async (message) => {
         if (message.author.bot || !message.guild) return;
 
         if (message.content.trim() === '§ticket') {
             const config = await TicketConfig.findOne({ guildId: message.guild.id }) || {};
-            const { embed, row } = createTicketPanel(config);
+            const { embed, row } = createTicketPanel(config, true);
 
             await message.reply({ 
-                content: '**[TEST PREVIEW] Ticket Panel Preview:**', 
+                content: '**[TEST PREVIEW] Ticket Panel Preview (Isme ticket create nahi hoga):**', 
                 embeds: [embed], 
                 components: [row] 
             });
@@ -328,4 +356,4 @@ module.exports = (client) => {
 
     console.log('✔ Ticket handler loaded.');
 };
-                            
+                    
