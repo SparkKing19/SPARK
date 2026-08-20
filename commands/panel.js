@@ -12,7 +12,8 @@ module.exports = {
                     { name: 'Page 1 - Welcome System', value: 1 },
                     { name: 'Page 2 - Ticket System', value: 2 },
                     { name: 'Page 3 - Onboarding System', value: 3 },
-                    { name: 'Page 4 - Stats System', value: 4 }
+                    { name: 'Page 4 - Stats System', value: 4 },
+                    { name: 'Page 5 - Store System', value: 5 }
                 )
         ),
     async execute(interaction) {
@@ -70,6 +71,20 @@ module.exports = {
                 new ButtonBuilder()
                     .setCustomId('open_stats_modal')
                     .setLabel('Setup Stats')
+                    .setStyle(ButtonStyle.Primary)
+            );
+
+            await interaction.reply({ embeds: [panelEmbed], components: [row], ephemeral: true });
+        } else if (page === 5) {
+            const panelEmbed = new EmbedBuilder()
+                .setTitle('⚙️ Store System Setup Panel')
+                .setDescription('Store & In-Game Shop system configure karne ke liye niche diye gaye button par click karein.')
+                .setColor('#5865F2');
+
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId('open_store_modal')
+                    .setLabel('Setup Store')
                     .setStyle(ButtonStyle.Primary)
             );
 
