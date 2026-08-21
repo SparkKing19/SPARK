@@ -13,16 +13,17 @@ async function endGiveaway(client, g) {
     const message = await channel.messages.fetch(g.messageId).catch(() => null);
     if (!message) return;
 
-    // Fetch reactions and filter out bots
+    // Fetch reactions aur bots ko filter out karna
     const reaction = message.reactions.cache.get('1531251098738888734') || message.reactions.cache.get('🎉');
     let validUsers = [];
 
     if (reaction) {
         const users = await reaction.users.fetch();
+        // Strictly filter bots
         validUsers = users.filter(u => !u.bot).map(u => u.id);
     }
 
-    // Pick Winners
+    // Pick Winners randomly
     const winners = [];
     if (validUsers.length > 0) {
         const shuffled = validUsers.sort(() => 0.5 - Math.random());
@@ -56,27 +57,27 @@ ${winnersText}
 
     if (winners.length > 0) {
         await channel.send({ 
-            content: `🎉 Congratulations ${winners.map(w => `<@${w}>`).join(', ')}! You won **${g.reward}**!` 
+            content: `<a:celebration:1531251175721009242> Congratulations ${winners.map(w => `<@${w}>`).join(', ')}! You won **${g.reward}**!` 
         });
     } else {
-        await channel.send({ content: `⚠️ Giveaway for **${g.reward}** ended with no entries.` });
+        await channel.send({ content: `⚠️ Giveaway for **${g.reward}** ended with no valid entries.` });
     }
 }
 
 module.exports = (client) => {
-    // 5-second interval loop to check and end due giveaways
+    // 1-Second Precision Loop to catch exact minute/second match
     setInterval(async () => {
         try {
             const now = new Date();
-            const pendingGiveaways = await Giveaway.find({ ended: false, endsAt: { $lte: now } });
+            const dueGiveaways = await Giveaway.find({ ended: false, endsAt: { $lte: now } });
 
-            for (const g of pendingGiveaways) {
+            for (const g of dueGiveaways) {
                 await endGiveaway(client, g);
             }
         } catch (err) {
-            console.error('Giveaway checker error:', err);
+            console.error('Giveaway interval error:', err);
         }
-    }, 5000);
+    }, 1000);
 
-    console.log('✔ Giveaway handler loaded.');
+    console.log('✔ Exact Clock-Time Giveaway handler loaded.');
 };
