@@ -93,7 +93,7 @@ module.exports = (client) => {
                 { upsert: true, new: true }
             );
 
-            await interaction.editReply({ content: '✅ Moderation & Auto-Mod rules successfully configure ho gaye!' });
+            await interaction.editReply({ content: '✅ Moderation & Auto-Mod rules have been successfully configured!' });
         }
     });
 
@@ -105,10 +105,12 @@ module.exports = (client) => {
         if (!config) return;
 
         const member = message.member;
+        if (!member) return;
+
         const isAdmin = member.permissions.has(PermissionFlagsBits.Administrator);
         const isStaff = config.staffRoleIds?.some(id => member.roles.cache.has(id));
 
-        if (isAdmin || isStaff) return; // Staff bypass
+        if (isAdmin || isStaff) return; // Staff & Admin bypass
 
         const content = message.content.trim().toLowerCase();
         let violation = null;
@@ -171,7 +173,7 @@ module.exports = (client) => {
             const config = await ModerationConfig.findOne({ guildId: message.guild.id });
 
             if (!config) {
-                return message.reply('⚠️ Pehle `/panel page:6` run karke moderation system set karein!');
+                return message.reply('⚠️ Please configure the moderation system using `/panel book:2 page:6` first!');
             }
 
             const staffList = config.staffRoleIds?.map(id => `<@&${id}>`).join(', ') || 'None';
@@ -197,3 +199,4 @@ module.exports = (client) => {
 
     console.log('✔ Moderation handler loaded.');
 };
+            
