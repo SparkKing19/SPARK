@@ -13,17 +13,16 @@ async function endGiveaway(client, g) {
     const message = await channel.messages.fetch(g.messageId).catch(() => null);
     if (!message) return;
 
-    // Fetch reactions aur bots ko filter out karna
-    const reaction = message.reactions.cache.get('1531251098738888734') || message.reactions.cache.get('🎉');
+    // Fetch reactions and filter bots
+    const reaction = message.reactions.cache.get('1540171562156822660') || message.reactions.cache.get('🎉');
     let validUsers = [];
 
     if (reaction) {
         const users = await reaction.users.fetch();
-        // Strictly filter bots
         validUsers = users.filter(u => !u.bot).map(u => u.id);
     }
 
-    // Pick Winners randomly
+    // Pick Winners
     const winners = [];
     if (validUsers.length > 0) {
         const shuffled = validUsers.sort(() => 0.5 - Math.random());
@@ -38,26 +37,26 @@ async function endGiveaway(client, g) {
     const endedEmbed = new EmbedBuilder()
         .setColor('#ED4245')
         .setDescription(
-`<a:gift:1531251179235840051> GIVEAWAY ENDED <a:gift:1531251179235840051>
+`<a:GIFT_BOX:1540171626232942593> GIVEAWAY ENDED <a:GIFT_BOX:1540171626232942593>
 
 ⟢ Reward       : ${g.reward}
 ⟢ Total Winners: ${g.winnerCount}
 
 ────────────────────
 
-<a:trophy:1531251182713045023> **WINNERS**
+<a:TROPHY:1540171629383000184> **WINNERS**
 ${winnersText}
 
 ────────────────────
 
-<a:celebration:1531251175721009242> Congratulations to all the winners!`
+<a:POPPER:1540171624228069416> Congratulations to all the winners!`
         );
 
     await message.edit({ embeds: [endedEmbed] }).catch(console.error);
 
     if (winners.length > 0) {
         await channel.send({ 
-            content: `<a:celebration:1531251175721009242> Congratulations ${winners.map(w => `<@${w}>`).join(', ')}! You won **${g.reward}**!` 
+            content: `<a:POPPER:1540171624228069416> Congratulations ${winners.map(w => `<@${w}>`).join(', ')}! You won **${g.reward}**!` 
         });
     } else {
         await channel.send({ content: `⚠️ Giveaway for **${g.reward}** ended with no valid entries.` });
@@ -65,7 +64,7 @@ ${winnersText}
 }
 
 module.exports = (client) => {
-    // 1-Second Precision Loop to catch exact minute/second match
+    // 1-Second check for high-accuracy timing
     setInterval(async () => {
         try {
             const now = new Date();
@@ -75,9 +74,9 @@ module.exports = (client) => {
                 await endGiveaway(client, g);
             }
         } catch (err) {
-            console.error('Giveaway interval error:', err);
+            console.error('Giveaway tick error:', err);
         }
     }, 1000);
 
-    console.log('✔ Exact Clock-Time Giveaway handler loaded.');
+    console.log('✔ Timezone-Accurate Giveaway handler loaded.');
 };
