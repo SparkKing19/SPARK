@@ -1,36 +1,35 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const Giveaway = require('../models/giveaway');
 
-// Helper to parse duration like 10m, 2h, 1d ya HH:MM clock time
-function parseTimeInput(input) {
-    const durationMatch = input.match(/^(\d+)(m|h|d|s)$/i);
-    if (durationMatch) {
-        const val = parseInt(durationMatch[1], 10);
-        const unit = durationMatch[2].toLowerCase();
-        let ms = val * 1000;
-        if (unit === 'm') ms = val * 60 * 1000;
-        if (unit === 'h') ms = val * 60 * 60 * 1000;
-        if (unit === 'd') ms = val * 24 * 60 * 60 * 1000;
-        return new Date(Date.now() + ms);
+// Helper: Exact Clock Time Parser (HH:MM -> Exact Target Timestamp)
+function parseClockTime(timeStr) {
+    const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})$/);
+    if (!match) return null;
+
+    const targetHour = parseInt(match[1], 10);
+    const targetMin = parseInt(match[2], 10);
+
+    if (targetHour < 0 || targetHour > 23 || targetMin < 0 || targetMin > 59) return null;
+
+    // Current time in IST / Local
+    const now = new Date();
+    
+    // Target date object
+    const targetDate = new Date(now);
+    targetDate.setHours(targetHour, targetMin, 0, 0);
+
+    // Agar target time current time se pehle ka hai (e.g. abhi 23:00 hai aur 02:00 diya), to agle din ka set karo
+    if (targetDate.getTime() <= now.getTime()) {
+        targetDate.setDate(targetDate.getDate() + 1);
     }
 
-    const clockMatch = input.match(/^(\d{1,2}):(\d{2})$/);
-    if (clockMatch) {
-        const target = new Date();
-        target.setHours(parseInt(clockMatch[1], 10), parseInt(clockMatch[2], 10), 0, 0);
-        if (target.getTime() <= Date.now()) {
-            target.setDate(target.getDate() + 1); // Next day same time
-        }
-        return target;
-    }
-
-    return null;
+    return targetDate;
 }
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('giveaway')
-        .setDescription('Host a server giveaway')
+        .setDescription('Host a real-time giveaway')
         .addChannelOption(option =>
             option.setName('channel')
                 .setDescription('Channel where giveaway will be posted')
@@ -48,7 +47,7 @@ module.exports = {
         )
         .addStringOption(option =>
             option.setName('time')
-                .setDescription('End duration (e.g. 10m, 2h, 1d) or clock time (e.g. 18:30)')
+                .setDescription('Exact end time in 24-hr format (e.g. 06:05, 18:30, 22:00)')
                 .setRequired(true)
         ),
     async execute(interaction) {
@@ -61,10 +60,10 @@ module.exports = {
         const winnerCount = interaction.options.getInteger('winners');
         const rawTime = interaction.options.getString('time');
 
-        const endDate = parseTimeInput(rawTime);
+        const endDate = parseClockTime(rawTime);
         if (!endDate) {
             return interaction.reply({ 
-                content: '❌ Invalid time format! Use `10m`, `2h`, `1d` ya clock time `18:30`.', 
+                content: '❌ Invalid time format! Format `HH:MM` use karein (jaise: `06:05`, `14:30`, `23:00`).', 
                 ephemeral: true 
             });
         }
@@ -88,13 +87,11 @@ module.exports = {
 
         const giveawayMsg = await channel.send({ embeds: [giveawayEmbed] });
         
-        // Custom emoji reaction
         await giveawayMsg.react('<a:party_popper:1531251098738888734>').catch(async () => {
-            // Fallback to unicode if custom emoji not accessible
             await giveawayMsg.react('🎉');
         });
 
-        // Save in DB
+        // Save into MongoDB
         await Giveaway.create({
             guildId: interaction.guild.id,
             channelId: channel.id,
@@ -106,6 +103,6 @@ module.exports = {
             ended: false
         });
 
-        await interaction.reply({ content: `✅ Giveaway successfully started in ${channel}!`, ephemeral: true });
+        await interaction.reply({ content: `✅ Giveaway started! Exact **${rawTime}** par end hoga.`, ephemeral: true });
     }
 };
