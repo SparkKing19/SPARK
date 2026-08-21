@@ -57,50 +57,104 @@ module.exports = {
 
         } else if (page === 2) {
             const embed = new EmbedBuilder().setTitle('⚙️ [Book 1] Ticket System').setDescription('Configure ticket system.').setColor('#5865F2');
-            const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('open_ticket_modal').setLabel('Setup Ticket').setStyle(ButtonStyle.Primary));
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId('open_ticket_modal')
+                    .setLabel('Setup Ticket')
+                    .setEmoji('<a:TICKET:1540171470460686386>')
+                    .setStyle(ButtonStyle.Primary)
+            );
             await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
 
         } else if (page === 3) {
             const embed = new EmbedBuilder().setTitle('⚙️ [Book 1] Onboarding System').setDescription('Configure onboarding system.').setColor('#5865F2');
-            const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('open_onboarding_modal').setLabel('Setup Onboarding').setStyle(ButtonStyle.Primary));
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId('open_onboarding_modal')
+                    .setLabel('Setup Onboarding')
+                    .setEmoji('<a:HASHTAG:1540171539524091935>')
+                    .setStyle(ButtonStyle.Primary)
+            );
             await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
 
         } else if (page === 4) {
             const embed = new EmbedBuilder().setTitle('⚙️ [Book 1] Server Stats').setDescription('Configure live stats.').setColor('#5865F2');
-            const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('open_stats_modal').setLabel('Setup Stats').setStyle(ButtonStyle.Primary));
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId('open_stats_modal')
+                    .setLabel('Setup Stats')
+                    .setEmoji('<a:WELCOME:1540171665047035996>')
+                    .setStyle(ButtonStyle.Primary)
+            );
             await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
 
         } else if (page === 5) {
             const embed = new EmbedBuilder().setTitle('⚙️ [Book 1] Store System').setDescription('Configure in-game store.').setColor('#5865F2');
-            const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('open_store_modal').setLabel('Setup Store').setStyle(ButtonStyle.Primary));
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId('open_store_modal')
+                    .setLabel('Setup Store')
+                    .setEmoji('<a:WELCOME:1540171665047035996>')
+                    .setStyle(ButtonStyle.Primary)
+            );
             await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
 
         // ================= BOOK 2 =================
         } else if (page === 6) {
             const embed = new EmbedBuilder().setTitle('⚙️ [Book 2] Moderation System').setDescription('Configure automod & staff permissions.').setColor('#ED4245');
-            const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('open_mod_modal').setLabel('Setup Moderation').setStyle(ButtonStyle.Danger));
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId('open_mod_modal')
+                    .setLabel('Setup Moderation')
+                    .setEmoji('<a:WELCOME:1540171665047035996>')
+                    .setStyle(ButtonStyle.Danger)
+            );
             await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
 
         } else if (page === 7) {
             const embed = new EmbedBuilder().setTitle('⚙️ [Book 2] Auto Response System').setDescription('Configure custom word/IP/URL triggers.').setColor('#5865F2');
-            const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('open_autoresponse_modal').setLabel('Setup Auto Response').setStyle(ButtonStyle.Primary));
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId('open_autoresponse_modal')
+                    .setLabel('Setup Auto Response')
+                    .setEmoji('<a:DOT_LOADING:1540171550764830760>')
+                    .setStyle(ButtonStyle.Primary)
+            );
             await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
 
         } else if (page === 8) {
             const embed = new EmbedBuilder().setTitle('⚙️ [Book 2] Voice Generator System').setDescription('Configure join-to-create voice channels.').setColor('#5865F2');
-            const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('open_tempvc_modal').setLabel('Setup Voice Generator').setStyle(ButtonStyle.Primary));
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId('open_tempvc_modal')
+                    .setLabel('Setup Voice Generator')
+                    .setEmoji('<a:ANNOUCER:1540171503486898267>')
+                    .setStyle(ButtonStyle.Primary)
+            );
             await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
 
         } else if (page === 9) {
             const embed = new EmbedBuilder().setTitle('⚙️ [Book 2] Staff Application System').setDescription('Configure application questions & review channels.').setColor('#5865F2');
-            const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('open_apply_modal').setLabel('Setup Applications').setStyle(ButtonStyle.Primary));
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId('open_apply_modal')
+                    .setLabel('Setup Applications')
+                    .setEmoji('<a:FIR:1540171491512156160>')
+                    .setStyle(ButtonStyle.Primary)
+            );
             await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
 
         } else if (page === 10) {
             const embed = new EmbedBuilder().setTitle('⚙️ [Book 2] YouTube Notifier System').setDescription('Link YouTube channel for automatic video upload announcements.').setColor('#FF0000');
-            const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('open_yt_modal').setLabel('Setup YouTube Notifier').setStyle(ButtonStyle.Danger));
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId('open_yt_modal')
+                    .setLabel('Setup YouTube Notifier')
+                    .setEmoji('<a:YT:1540171472851435542>')
+                    .setStyle(ButtonStyle.Danger)
+            );
             await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
         }
     }
 };
-        
+                
