@@ -134,13 +134,13 @@ module.exports = (client) => {
                 }
             }
 
-            await interaction.reply({ content: '✅ Ticket System successfully configure ho gaya!', ephemeral: true });
+            await interaction.reply({ content: '✅ Ticket System successfully configured!', ephemeral: true });
         }
 
         // 3. Demo / Test Selection Handling (No Ticket Created)
         if (interaction.isStringSelectMenu() && interaction.customId === 'test_ticket_select') {
             return interaction.reply({ 
-                content: '⚠️ **[DEMO PREVIEW]** Ye sirf test preview hai. Real ticket create karne ke liye setup channel me bheje gaye panel ka use karein.', 
+                content: '⚠️ **[DEMO PREVIEW]** This is only a preview. To create an actual ticket, please use the panel sent in the configured setup channel.', 
                 ephemeral: true 
             });
         }
@@ -150,7 +150,7 @@ module.exports = (client) => {
             await interaction.deferReply({ ephemeral: true });
 
             const config = await TicketConfig.findOne({ guildId: interaction.guild.id });
-            if (!config) return interaction.editReply({ content: '⚠️ Ticket System configure nahi hai.' });
+            if (!config) return interaction.editReply({ content: '⚠️ Ticket System is not configured yet.' });
 
             // 1 User = 1 Ticket Check
             const existingTicket = config.activeTickets?.find(t => t.userId === interaction.user.id);
@@ -158,7 +158,7 @@ module.exports = (client) => {
                 const checkChannel = interaction.guild.channels.cache.get(existingTicket.channelId);
                 if (checkChannel) {
                     return interaction.editReply({ 
-                        content: `❌ Aapka pehle se ek ticket open hai: <#${existingTicket.channelId}>. Aap ek waqt me sirf ek ticket create kar sakte hain.` 
+                        content: `❌ You already have an open ticket: <#${existingTicket.channelId}>. You can only create one ticket at a time.` 
                     });
                 } else {
                     await TicketConfig.findOneAndUpdate(
@@ -223,10 +223,12 @@ module.exports = (client) => {
                 new ButtonBuilder()
                     .setCustomId(`claim_ticket_${countStr}`)
                     .setLabel('Claim Ticket')
+                    .setEmoji('<a:CONFIRM:1540171582817968148>')
                     .setStyle(ButtonStyle.Success),
                 new ButtonBuilder()
                     .setCustomId('close_ticket')
                     .setLabel('Close Ticket')
+                    .setEmoji('<a:ALERT:1540171495022530701>')
                     .setStyle(ButtonStyle.Danger)
             );
 
@@ -236,7 +238,7 @@ module.exports = (client) => {
                 components: [actionRow] 
             });
 
-            await interaction.editReply({ content: `✅ Aapka ticket create ho gaya hai: ${ticketChannel}` });
+            await interaction.editReply({ content: `✅ Your ticket has been created: ${ticketChannel}` });
         }
 
         // 5. Handle Claim Button
@@ -246,7 +248,7 @@ module.exports = (client) => {
             const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.Administrator);
 
             if (!isStaff && !isAdmin) {
-                return interaction.reply({ content: '❌ Aapke paas ticket claim karne ki permission nahi hai.', ephemeral: true });
+                return interaction.reply({ content: '❌ You do not have permission to claim this ticket.', ephemeral: true });
             }
 
             const ticketNum = interaction.customId.replace('claim_ticket_', '');
@@ -254,17 +256,19 @@ module.exports = (client) => {
 
             const claimEmbed = new EmbedBuilder()
                 .setColor('#2ECC71')
-                .setDescription(`✅ Ticket ko <@${interaction.user.id}> ne **Claim** kar liya hai!`);
+                .setDescription(`✅ Ticket has been **Claimed** by <@${interaction.user.id}>!`);
 
             const updatedRow = new ActionRowBuilder().addComponents(
                 new ButtonBuilder()
                     .setCustomId('claimed_disabled')
                     .setLabel(`Claimed by ${interaction.user.username}`)
+                    .setEmoji('<a:CONFIRM:1540171582817968148>')
                     .setStyle(ButtonStyle.Secondary)
                     .setDisabled(true),
                 new ButtonBuilder()
                     .setCustomId('close_ticket')
                     .setLabel('Close Ticket')
+                    .setEmoji('<a:ALERT:1540171495022530701>')
                     .setStyle(ButtonStyle.Danger)
             );
 
@@ -279,18 +283,17 @@ module.exports = (client) => {
             const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.Administrator);
 
             if (!isStaff && !isAdmin) {
-                return interaction.reply({ content: '❌ Sirf Support Staff hi ticket close kar sakte hain.', ephemeral: true });
+                return interaction.reply({ content: '❌ Only Support Staff can close this ticket.', ephemeral: true });
             }
 
             const ticketData = config.activeTickets?.find(t => t.channelId === interaction.channel.id);
 
-            await interaction.reply({ content: '🔒 Transcript save ho rahi hai aur ticket 5 seconds me delete ho jayega...' });
+            await interaction.reply({ content: '🔒 Saving transcript and deleting ticket in 5 seconds...' });
 
             // Generate Full Chat Transcript
             if (config.logsChannelId) {
                 const logsChannel = interaction.guild.channels.cache.get(config.logsChannelId);
                 if (logsChannel) {
-                    // Fetch up to 100 messages
                     const fetchedMessages = await interaction.channel.messages.fetch({ limit: 100 });
                     const sortedMessages = Array.from(fetchedMessages.values()).reverse();
 
@@ -347,7 +350,7 @@ module.exports = (client) => {
             const { embed, row } = createTicketPanel(config, true);
 
             await message.reply({ 
-                content: '**[TEST PREVIEW] Ticket Panel Preview (Isme ticket create nahi hoga):**', 
+                content: '**[TEST PREVIEW] Ticket Panel Preview (Ticket creation is disabled in preview):**', 
                 embeds: [embed], 
                 components: [row] 
             });
@@ -356,4 +359,4 @@ module.exports = (client) => {
 
     console.log('✔ Ticket handler loaded.');
 };
-                    
+                
