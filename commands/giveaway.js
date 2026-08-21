@@ -1,8 +1,8 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const Giveaway = require('../models/giveaway');
 
-// Helper: Exact Clock Time Parser (HH:MM -> Exact Target Timestamp)
-function parseClockTime(timeStr) {
+// Helper: Parse Indian Standard Time (IST - UTC+5:30)
+function parseISTClockTime(timeStr) {
     const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})$/);
     if (!match) return null;
 
@@ -11,19 +11,24 @@ function parseClockTime(timeStr) {
 
     if (targetHour < 0 || targetHour > 23 || targetMin < 0 || targetMin > 59) return null;
 
-    // Current time in IST / Local
-    const now = new Date();
-    
-    // Target date object
-    const targetDate = new Date(now);
-    targetDate.setHours(targetHour, targetMin, 0, 0);
+    // Current time in IST
+    const nowUtc = Date.now();
+    const istOffset = 5.5 * 60 * 60 * 1000;
+    const nowIstDate = new Date(nowUtc + istOffset);
 
-    // Agar target time current time se pehle ka hai (e.g. abhi 23:00 hai aur 02:00 diya), to agle din ka set karo
-    if (targetDate.getTime() <= now.getTime()) {
-        targetDate.setDate(targetDate.getDate() + 1);
+    const istYear = nowIstDate.getUTCFullYear();
+    const istMonth = nowIstDate.getUTCMonth();
+    const istDay = nowIstDate.getUTCDate();
+
+    // Create target time in IST (treated as UTC internally, then subtract offset)
+    let targetUtcEpoch = Date.UTC(istYear, istMonth, istDay, targetHour, targetMin, 0) - istOffset;
+
+    // Agar time pehle hi nikal chuka hai toh agle din ka target banao
+    if (targetUtcEpoch <= nowUtc) {
+        targetUtcEpoch += 24 * 60 * 60 * 1000;
     }
 
-    return targetDate;
+    return new Date(targetUtcEpoch);
 }
 
 module.exports = {
@@ -47,7 +52,7 @@ module.exports = {
         )
         .addStringOption(option =>
             option.setName('time')
-                .setDescription('Exact end time in 24-hr format (e.g. 06:05, 18:30, 22:00)')
+                .setDescription('Exact end time in IST (e.g. 06:05, 18:30, 22:00)')
                 .setRequired(true)
         ),
     async execute(interaction) {
@@ -60,10 +65,10 @@ module.exports = {
         const winnerCount = interaction.options.getInteger('winners');
         const rawTime = interaction.options.getString('time');
 
-        const endDate = parseClockTime(rawTime);
+        const endDate = parseISTClockTime(rawTime);
         if (!endDate) {
             return interaction.reply({ 
-                content: '❌ Invalid time format! Format `HH:MM` use karein (jaise: `06:05`, `14:30`, `23:00`).', 
+                content: '❌ Invalid time format! Format `HH:MM` use karein (jaise: `06:05`, `18:30`, `22:00`).', 
                 ephemeral: true 
             });
         }
@@ -73,7 +78,7 @@ module.exports = {
         const giveawayEmbed = new EmbedBuilder()
             .setColor('#5865F2')
             .setDescription(
-`<a:gift:1531251179235840051> GIVEAWAY STARTED <a:gift:1531251179235840051>
+`<a:GIFT_BOX:1540171626232942593> GIVEAWAY STARTED <a:GIFT_BOX:1540171626232942593>
 
 ⟢ Hosted By    : <@${interaction.user.id}>
 ⟢ Reward       : ${reward}
@@ -82,16 +87,16 @@ module.exports = {
 
 ────────────────────
 
-➥ React with <a:party_popper:1531251098738888734> to enter the giveaway!`
+➥ React with <a:PARTY_POPPER:1540171562156822660> to enter the giveaway!`
             );
 
         const giveawayMsg = await channel.send({ embeds: [giveawayEmbed] });
         
-        await giveawayMsg.react('<a:party_popper:1531251098738888734>').catch(async () => {
+        await giveawayMsg.react('<a:PARTY_POPPER:1540171562156822660>').catch(async () => {
             await giveawayMsg.react('🎉');
         });
 
-        // Save into MongoDB
+        // Save in MongoDB
         await Giveaway.create({
             guildId: interaction.guild.id,
             channelId: channel.id,
@@ -103,6 +108,6 @@ module.exports = {
             ended: false
         });
 
-        await interaction.reply({ content: `✅ Giveaway started! Exact **${rawTime}** par end hoga.`, ephemeral: true });
+        await interaction.reply({ content: `✅ Giveaway started! Exact **${rawTime} (IST)** par end hoga.`, ephemeral: true });
     }
 };
