@@ -115,7 +115,7 @@ module.exports = (client) => {
                 { upsert: true, new: true }
             );
 
-            await interaction.reply({ content: '✅ Welcome settings successfully save ho gayi hain!', ephemeral: true });
+            await interaction.reply({ content: '✅ Welcome settings have been successfully saved!', ephemeral: true });
         }
     });
 
@@ -144,7 +144,7 @@ module.exports = (client) => {
             const config = await WelcomeConfig.findOne({ guildId: message.guild.id });
 
             if (!config) {
-                return message.reply('⚠️ Pehle `/panel page:1` run karke settings save karein!');
+                return message.reply('⚠️ Please configure settings using `/panel book:1 page:1` first!');
             }
 
             const { embed, dmEmbed } = generateWelcomePayload(config, message.member);
@@ -154,7 +154,7 @@ module.exports = (client) => {
             if (config.dmText) {
                 message.author.send({ embeds: [dmEmbed] })
                     .then(() => message.channel.send('✅ Test DM successfully sent!'))
-                    .catch(() => message.channel.send('❌ Test DM send nahi ho saka (DMs band hain).'));
+                    .catch(() => message.channel.send('❌ Could not send test DM (User DMs are closed).'));
             }
         }
     });
