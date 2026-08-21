@@ -37,16 +37,22 @@ module.exports = {
         const page = interaction.options.getInteger('page');
 
         if (book === 1 && (page < 1 || page > 5)) {
-            return interaction.reply({ content: '❌ Book 1 me sirf **Page 1 se 5** tak available hain!', ephemeral: true });
+            return interaction.reply({ content: '❌ Only **Pages 1 to 5** are available in Book 1!', ephemeral: true });
         }
         if (book === 2 && (page < 6 || page > 10)) {
-            return interaction.reply({ content: '❌ Book 2 me sirf **Page 6 se 10** tak available hain!', ephemeral: true });
+            return interaction.reply({ content: '❌ Only **Pages 6 to 10** are available in Book 2!', ephemeral: true });
         }
 
         // ================= BOOK 1 =================
         if (page === 1) {
             const embed = new EmbedBuilder().setTitle('⚙️ [Book 1] Welcome System').setDescription('Configure welcome system.').setColor('#5865F2');
-            const row = new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('open_welcome_modal').setLabel('Setup Welcome').setStyle(ButtonStyle.Primary));
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId('open_welcome_modal')
+                    .setLabel('Setup Welcome')
+                    .setEmoji('<a:WELCOME:1540171665047035996>')
+                    .setStyle(ButtonStyle.Primary)
+            );
             await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
 
         } else if (page === 2) {
@@ -97,4 +103,4 @@ module.exports = {
         }
     }
 };
-            
+        
