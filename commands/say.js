@@ -13,20 +13,14 @@ module.exports = {
             option.setName('embed')
                 .setDescription('Should the message be sent inside an embed? (True/False)')
                 .setRequired(false)
-        )
-        .addChannelOption(option =>
-            option.setName('channel')
-                .setDescription('Target channel (defaults to current channel)')
-                .setRequired(false)
         ),
     async execute(interaction) {
         if (!interaction.member.permissions.has(PermissionFlagsBits.ManageMessages)) {
-            return interaction.reply({ content: '❌ Aapke paas `/say` use karne ki permission nahi hai.', ephemeral: true });
+            return interaction.reply({ content: '❌ You do not have permission to use `/say`.', ephemeral: true });
         }
 
         const text = interaction.options.getString('message').replace(/\\n/g, '\n');
         const isEmbed = interaction.options.getBoolean('embed') || false;
-        const targetChannel = interaction.options.getChannel('channel') || interaction.channel;
 
         if (isEmbed) {
             const embed = new EmbedBuilder()
@@ -34,11 +28,11 @@ module.exports = {
                 .setDescription(text)
                 .setTimestamp();
 
-            await targetChannel.send({ embeds: [embed] });
+            await interaction.channel.send({ embeds: [embed] });
         } else {
-            await targetChannel.send(text);
+            await interaction.channel.send(text);
         }
 
-        await interaction.reply({ content: `✅ Message sent to ${targetChannel}!`, ephemeral: true });
+        await interaction.reply({ content: '✅ Message sent successfully!', ephemeral: true });
     }
 };
