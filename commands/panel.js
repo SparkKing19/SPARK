@@ -83,7 +83,7 @@ module.exports = {
                 new ButtonBuilder()
                     .setCustomId('open_stats_modal')
                     .setLabel('Setup Stats')
-                    .setEmoji('<a:WELCOME:1540171665047035996>')
+                    .setEmoji('<a:STAR_CLOUD:1540171534113579028>')
                     .setStyle(ButtonStyle.Primary)
             );
             await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
@@ -94,7 +94,7 @@ module.exports = {
                 new ButtonBuilder()
                     .setCustomId('open_store_modal')
                     .setLabel('Setup Store')
-                    .setEmoji('<a:WELCOME:1540171665047035996>')
+                    .setEmoji('<a:CART:1540171634567151646>')
                     .setStyle(ButtonStyle.Primary)
             );
             await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
@@ -106,7 +106,7 @@ module.exports = {
                 new ButtonBuilder()
                     .setCustomId('open_mod_modal')
                     .setLabel('Setup Moderation')
-                    .setEmoji('<a:WELCOME:1540171665047035996>')
+                    .setEmoji('<a:UPGRADE:1540171652548005991>')
                     .setStyle(ButtonStyle.Danger)
             );
             await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
