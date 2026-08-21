@@ -1,7 +1,15 @@
-const { ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, ChannelType, PermissionFlagsBits } = require('discord.js');
+const { 
+    ModalBuilder, 
+    TextInputBuilder, 
+    TextInputStyle, 
+    ActionRowBuilder, 
+    ChannelType, 
+    PermissionFlagsBits 
+} = require('discord.js');
 const TempVCConfig = require('../models/tempvc');
 
 module.exports = (client) => {
+    // 1. Setup Interaction
     client.on('interactionCreate', async (interaction) => {
         if (interaction.isButton() && interaction.customId === 'open_tempvc_modal') {
             const data = await TempVCConfig.findOne({ guildId: interaction.guild.id }) || {};
@@ -24,7 +32,7 @@ module.exports = (client) => {
 
         if (interaction.isModalSubmit() && interaction.customId === 'tempvc_config_modal') {
             const rawIds = interaction.fields.getTextInputValue('tempvc_ids');
-            const [hubVoiceChannelId, targetCategoryId] = rawIds.split('||').map(s => s.trim());
+            const [hubVoiceChannelId, targetCategoryId] = rawIds.split('||').map(s => s?.trim());
 
             await TempVCConfig.findOneAndUpdate(
                 { guildId: interaction.guild.id },
@@ -36,53 +44,77 @@ module.exports = (client) => {
         }
     });
 
+    // 2. Dynamic Join-To-Create & Auto-Delete Logic
     client.on('voiceStateUpdate', async (oldState, newState) => {
         const guild = newState.guild || oldState.guild;
+        if (!guild) return;
+
         const config = await TempVCConfig.findOne({ guildId: guild.id });
         if (!config || !config.hubVoiceChannelId) return;
 
-        // 1. User Joined Hub Channel -> Create Temp VC
+        // A. User Joined Hub Channel -> Create Temp VC & Move
         if (newState.channelId === config.hubVoiceChannelId) {
             const member = newState.member;
-            const channelName = `🔊 ${member.user.username}'s VC`;
+            if (!member || member.user.bot) return;
 
-            const createdChannel = await guild.channels.create({
-                name: channelName,
-                type: ChannelType.GuildVoice,
-                parent: config.targetCategoryId || null,
-                permissionOverwrites: [
-                    {
-                        id: member.id,
-                        allow: [
-                            PermissionFlagsBits.ManageChannels,
-                            PermissionFlagsBits.MuteMembers,
-                            PermissionFlagsBits.DeafenMembers,
-                            PermissionFlagsBits.MoveMembers,
-                            PermissionFlagsBits.Connect
-                        ]
-                    },
-                    {
-                        id: guild.roles.everyone.id,
-                        allow: [PermissionFlagsBits.Connect, PermissionFlagsBits.Speak]
-                    }
-                ]
-            });
+            try {
+                const channelName = `🔊 ${member.user.username}'s VC`;
 
-            await member.voice.setChannel(createdChannel);
+                const createdChannel = await guild.channels.create({
+                    name: channelName,
+                    type: ChannelType.GuildVoice,
+                    parent: config.targetCategoryId && guild.channels.cache.has(config.targetCategoryId) ? config.targetCategoryId : null,
+                    permissionOverwrites: [
+                        {
+                            id: member.id,
+                            allow: [
+                                PermissionFlagsBits.ManageChannels,
+                                PermissionFlagsBits.MuteMembers,
+                                PermissionFlagsBits.DeafenMembers,
+                                PermissionFlagsBits.MoveMembers,
+                                PermissionFlagsBits.Connect,
+                                PermissionFlagsBits.Speak
+                            ]
+                        },
+                        {
+                            id: guild.roles.everyone.id,
+                            allow: [PermissionFlagsBits.Connect, PermissionFlagsBits.Speak]
+                        },
+                        {
+                            id: client.user.id,
+                            allow: [
+                                PermissionFlagsBits.ManageChannels,
+                                PermissionFlagsBits.MoveMembers,
+                                PermissionFlagsBits.Connect
+                            ]
+                        }
+                    ]
+                });
 
-            await TempVCConfig.findOneAndUpdate(
-                { guildId: guild.id },
-                { $push: { activeChannels: { channelId: createdChannel.id, ownerId: member.id } } }
-            );
+                // Move Member to Newly Created Voice Channel
+                await member.voice.setChannel(createdChannel).catch(console.error);
+
+                // Save to Database
+                await TempVCConfig.findOneAndUpdate(
+                    { guildId: guild.id },
+                    { $push: { activeChannels: { channelId: createdChannel.id, ownerId: member.id } } }
+                );
+            } catch (error) {
+                console.error('Error creating temporary voice channel:', error);
+            }
         }
 
-        // 2. User Left -> Check if empty and delete
+        // B. User Left Channel -> Auto-Delete if empty
         if (oldState.channelId && oldState.channelId !== config.hubVoiceChannelId) {
-            const activeRecord = config.activeChannels.find(c => c.channelId === oldState.channelId);
-            if (activeRecord) {
-                const voiceChannel = guild.channels.cache.get(oldState.channelId);
+            const activeList = config.activeChannels || [];
+            const isActiveTempVC = activeList.some(c => c.channelId === oldState.channelId);
+
+            if (isActiveTempVC) {
+                const voiceChannel = guild.channels.cache.get(oldState.channelId) || await guild.channels.fetch(oldState.channelId).catch(() => null);
+
                 if (voiceChannel && voiceChannel.members.size === 0) {
                     await voiceChannel.delete().catch(() => {});
+
                     await TempVCConfig.findOneAndUpdate(
                         { guildId: guild.id },
                         { $pull: { activeChannels: { channelId: oldState.channelId } } }
@@ -92,13 +124,18 @@ module.exports = (client) => {
         }
     });
 
-    // Secret Test Command: §vc
+    // 3. Test Preview Command: §vc
     client.on('messageCreate', async (message) => {
         if (message.author.bot || !message.guild) return;
+
         if (message.content.trim() === '§vc') {
             const config = await TempVCConfig.findOne({ guildId: message.guild.id });
-            if (!config || !config.hubVoiceChannelId) return message.reply('⚠️ Voice Generator configure nahi hai!');
-            message.reply(`🎤 **[TEST PREVIEW] Voice Generator Status:**\nHub Channel: <#${config.hubVoiceChannelId}>\nTarget Category: <#${config.targetCategoryId}>\nActive Channels: **${config.activeChannels.length}**`);
+            if (!config || !config.hubVoiceChannelId) {
+                return message.reply('⚠️ Please configure the Voice Generator using `/panel book:2 page:8` first!');
+            }
+
+            const activeCount = config.activeChannels ? config.activeChannels.length : 0;
+            message.reply(`🎤 **[TEST PREVIEW] Voice Generator Status:**\nHub Channel: <#${config.hubVoiceChannelId}>\nTarget Category: <#${config.targetCategoryId}>\nActive Channels: **${activeCount}**`);
         }
     });
 
