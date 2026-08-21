@@ -1,5 +1,7 @@
 const { Client, GatewayIntentBits, REST, Routes } = require('discord.js');
 const mongoose = require('mongoose');
+const { Client, GatewayIntentBits, REST, Routes } = require('discord.js');
+const mongoose = require('mongoose');
 const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
@@ -9,10 +11,10 @@ const client = new Client({
         GatewayIntentBits.Guilds,
         GatewayIntentBits.GuildMembers,
         GatewayIntentBits.GuildMessages,
-        GatewayIntentBits.MessageContent
+        GatewayIntentBits.MessageContent,
+        GatewayIntentBits.GuildVoiceStates // <-- Ye intent zaroori hai Voice events ke liye
     ]
 });
-
 client.commands = new Map();
 
 // 1. Auto-load Slash Commands
