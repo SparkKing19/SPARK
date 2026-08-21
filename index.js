@@ -1,7 +1,5 @@
 const { Client, GatewayIntentBits, REST, Routes } = require('discord.js');
 const mongoose = require('mongoose');
-const { Client, GatewayIntentBits, REST, Routes } = require('discord.js');
-const mongoose = require('mongoose');
 const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
@@ -12,9 +10,10 @@ const client = new Client({
         GatewayIntentBits.GuildMembers,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildVoiceStates // <-- Ye intent zaroori hai Voice events ke liye
+        GatewayIntentBits.GuildVoiceStates
     ]
 });
+
 client.commands = new Map();
 
 // 1. Auto-load Slash Commands
@@ -23,14 +22,22 @@ const commandFiles = fs.readdirSync(path.join(__dirname, 'commands')).filter(fil
 
 for (const file of commandFiles) {
     const command = require(`./commands/${file}`);
-    client.commands.set(command.data.name, command);
-    commandsArray.push(command.data.toJSON());
+    if (command?.data?.name) {
+        client.commands.set(command.data.name, command);
+        commandsArray.push(command.data.toJSON());
+    }
 }
 
 client.on('interactionCreate', async (interaction) => {
     if (interaction.isChatInputCommand()) {
         const command = client.commands.get(interaction.commandName);
-        if (command) await command.execute(interaction);
+        if (command) {
+            try {
+                await command.execute(interaction);
+            } catch (err) {
+                console.error(`Error executing command ${interaction.commandName}:`, err);
+            }
+        }
     }
 });
 
@@ -46,7 +53,6 @@ client.once('ready', async () => {
 
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
     try {
-        // client.user.id use karne se CLIENT_ID variable ki zaroorat nahi padegi
         await rest.put(
             Routes.applicationCommands(client.user.id),
             { body: commandsArray }
@@ -62,3 +68,4 @@ mongoose.connect(process.env.MONGO_URI)
     .catch(err => console.error('MongoDB Connection Error:', err));
 
 client.login(process.env.DISCORD_TOKEN);
+    
