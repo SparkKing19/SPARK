@@ -1,6 +1,6 @@
 const { ChannelType } = require('discord.js');
 
-// Helper: Webhook fetch ya create karna channel me
+// Webhook Fetch or Create Helper
 async function getOrCreateWebhook(channel) {
     if (!channel.guild || channel.type !== ChannelType.GuildText) return null;
 
@@ -19,6 +19,16 @@ async function getOrCreateWebhook(channel) {
 }
 
 module.exports = (client) => {
+    // Bot Ready hone par Application Emojis cache fetch karna
+    client.once('ready', async () => {
+        try {
+            await client.application.emojis.fetch();
+            console.log(`✔ Loaded ${client.application.emojis.cache.size} Developer Portal Application Emojis.`);
+        } catch (err) {
+            console.error('Error fetching application emojis:', err);
+        }
+    });
+
     client.on('messageCreate', async (message) => {
         // Bots aur DMs ignore
         if (message.author.bot || !message.guild) return;
@@ -27,7 +37,6 @@ module.exports = (client) => {
         if (!content) return;
 
         // Emoji Pattern detect karna: :emoji_name:
-        // Ignore already formatted emojis (<:name:id> or <a:name:id>)
         const emojiRegex = /(?<!<a?:)(?<!<):([a-zA-Z0-9_~]+):/g;
         const matches = [...content.matchAll(emojiRegex)];
 
@@ -36,17 +45,30 @@ module.exports = (client) => {
         let hasReplacements = false;
         let newContent = content;
 
-        // Current server + Bot accessible emojis me search karna
         for (const match of matches) {
-            const rawMatch = match[0]; // e.g. :pepe_clap:
-            const emojiName = match[1]; // e.g. pepe_clap
+            const rawMatch = match[0]; // e.g. :STEVE_GAMER:
+            const emojiName = match[1].toLowerCase();
 
-            // Pehle current server ke emojis me check karo, fir global bot cache me
-            let targetEmoji = message.guild.emojis.cache.find(e => e.name.toLowerCase() === emojiName.toLowerCase());
+            // 1. Check Developer Portal Application Emojis (Highest Priority)
+            let targetEmoji = client.application.emojis.cache.find(
+                e => e.name.toLowerCase() === emojiName
+            );
+
+            // 2. Check Current Server Emojis
             if (!targetEmoji) {
-                targetEmoji = client.emojis.cache.find(e => e.name.toLowerCase() === emojiName.toLowerCase());
+                targetEmoji = message.guild.emojis.cache.find(
+                    e => e.name.toLowerCase() === emojiName
+                );
             }
 
+            // 3. Check All Servers Bot is in
+            if (!targetEmoji) {
+                targetEmoji = client.emojis.cache.find(
+                    e => e.name.toLowerCase() === emojiName
+                );
+            }
+
+            // Replace with full discord emoji syntax
             if (targetEmoji) {
                 const formattedEmoji = targetEmoji.animated 
                     ? `<a:${targetEmoji.name}:${targetEmoji.id}>` 
@@ -57,16 +79,14 @@ module.exports = (client) => {
             }
         }
 
-        // Agar koi valid custom emoji match hua
+        // Agar koi custom emoji mila toh webhook proxy se bhej do
         if (hasReplacements) {
             try {
                 const webhook = await getOrCreateWebhook(message.channel);
                 if (!webhook) return;
 
-                // Original message delete karo
                 await message.delete().catch(() => {});
 
-                // User ke exact Name & Avatar ke sath send karo
                 await webhook.send({
                     content: newContent,
                     username: message.member ? message.member.displayName : message.author.username,
@@ -79,5 +99,6 @@ module.exports = (client) => {
         }
     });
 
-    console.log('✔ Non-Nitro Emoji Webhook handler loaded.');
+    console.log('✔ Non-Nitro & Application Emoji Webhook handler loaded.');
 };
+            
