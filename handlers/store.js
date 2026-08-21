@@ -24,7 +24,7 @@ function createStoreCategoryPanel(config, isTest = false) {
         embed.setImage(config.bannerUrl);
     }
 
-    // Unique categories nikalna
+    // Extract unique categories
     const categories = Array.from(new Set((config.items || []).map(i => i.category).filter(Boolean)));
     const options = categories.length > 0
         ? categories.map(cat => ({
@@ -159,7 +159,7 @@ module.exports = (client) => {
                 return { category: parts[0] || 'General', name: parts[1] || 'Item', price: parts[2] || '$0.00' };
             }).filter(i => i.name);
 
-            // IDs Parse (Including Logs Channel)
+            // IDs Parse
             const idParts = rawIds.split(',').map(s => s.trim());
             const storeRoleId = idParts[0] || null;
             const panelChannelId = idParts[1] || null;
@@ -204,13 +204,13 @@ module.exports = (client) => {
                 }
             }
 
-            await interaction.editReply({ content: '✅ Store System successfully configure ho gaya aur Category Panel send ho gaya!' });
+            await interaction.editReply({ content: '✅ Store System successfully configured and Category Panel sent!' });
         }
 
         // 3. Demo Handlers
         if (interaction.isStringSelectMenu() && (interaction.customId === 'test_store_category' || interaction.customId === 'test_store_item')) {
             return interaction.reply({ 
-                content: '⚠️ **[DEMO PREVIEW]** Ye sirf test preview hai. Real order setup channel ke panel se place karein.', 
+                content: '⚠️ **[DEMO PREVIEW]** This is only a preview. Please place actual orders from the configured setup channel panel.', 
                 ephemeral: true 
             });
         }
@@ -218,7 +218,7 @@ module.exports = (client) => {
         // 4. Step 1 -> Category Selected: Send Items Dropdown
         if (interaction.isStringSelectMenu() && interaction.customId === 'store_select_category') {
             const config = await StoreConfig.findOne({ guildId: interaction.guild.id });
-            if (!config) return interaction.reply({ content: '⚠️ Store configure nahi hai.', ephemeral: true });
+            if (!config) return interaction.reply({ content: '⚠️ Store is not configured yet.', ephemeral: true });
 
             const selectedCatClean = interaction.values[0].replace('store_cat_', '');
             
@@ -228,7 +228,7 @@ module.exports = (client) => {
             );
 
             if (categoryItems.length === 0) {
-                return interaction.reply({ content: '❌ Is category me koi items available nahi hain.', ephemeral: true });
+                return interaction.reply({ content: '❌ No items available in this category.', ephemeral: true });
             }
 
             const itemOptions = categoryItems.map(item => {
@@ -250,7 +250,7 @@ module.exports = (client) => {
             const catEmbed = new EmbedBuilder()
                 .setColor('#F1C40F')
                 .setTitle(`📁 Category: ${categoryItems[0].category}`)
-                .setDescription('Niche diye gaye dropdown se apna manpasand **Item** select karein.')
+                .setDescription('Select your desired **Item** from the dropdown menu below.')
                 .setTimestamp();
 
             await interaction.reply({ embeds: [catEmbed], components: [row], ephemeral: true });
@@ -259,7 +259,7 @@ module.exports = (client) => {
         // 5. Step 2 -> Item Selected: Show Item Preview + Order Now Button
         if (interaction.isStringSelectMenu() && interaction.customId === 'store_select_item') {
             const config = await StoreConfig.findOne({ guildId: interaction.guild.id });
-            if (!config) return interaction.reply({ content: '⚠️ Store configure nahi hai.', ephemeral: true });
+            if (!config) return interaction.reply({ content: '⚠️ Store is not configured yet.', ephemeral: true });
 
             const itemIndex = parseInt(interaction.values[0].replace('store_item_', ''), 10);
             const selectedItem = config.items[itemIndex] || config.items[0];
@@ -271,7 +271,7 @@ module.exports = (client) => {
                     { name: '📁 Category', value: selectedItem.category, inline: true },
                     { name: '💰 Price', value: selectedItem.price, inline: true }
                 )
-                .setDescription('Order confirm karne ke liye niche **Order Now** button par click karein.')
+                .setDescription('Click the **Order Now** button below to confirm your order.')
                 .setTimestamp();
 
             const row = new ActionRowBuilder().addComponents(
@@ -312,7 +312,7 @@ module.exports = (client) => {
             const inGameUsername = interaction.fields.getTextInputValue('store_ign_input').trim();
 
             const config = await StoreConfig.findOne({ guildId: interaction.guild.id });
-            if (!config) return interaction.editReply({ content: '⚠️ Store configure nahi hai.' });
+            if (!config) return interaction.editReply({ content: '⚠️ Store is not configured yet.' });
 
             const selectedItem = config.items[itemIndex] || { category: 'Store', name: 'Item', price: '$0.00' };
 
@@ -391,13 +391,13 @@ module.exports = (client) => {
                 new ButtonBuilder()
                     .setCustomId(`order_approve_${countStr}`)
                     .setLabel('Approve')
-                    .setStyle(ButtonStyle.Success)
-                    .setEmoji('✅'),
+                    .setEmoji('<a:CONFIRM:1540171582817968148>')
+                    .setStyle(ButtonStyle.Success),
                 new ButtonBuilder()
                     .setCustomId(`order_reject_${countStr}`)
                     .setLabel('Reject')
+                    .setEmoji('<a:ALERT:1540171495022530701>')
                     .setStyle(ButtonStyle.Danger)
-                    .setEmoji('❌')
             );
 
             await orderChannel.send({
@@ -406,7 +406,7 @@ module.exports = (client) => {
                 components: [actionRow]
             });
 
-            await interaction.editReply({ content: `✅ Order channel ban chuka hai: ${orderChannel}` });
+            await interaction.editReply({ content: `✅ Your order channel has been created: ${orderChannel}` });
         }
 
         // 8. Handle Approve (Command Dispatch, DM & Store Logs)
@@ -418,15 +418,15 @@ module.exports = (client) => {
             const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.Administrator);
 
             if (!isStaff && !isAdmin) {
-                return interaction.reply({ content: '❌ Sirf Store Staff hi orders approve kar sakte hain.', ephemeral: true });
+                return interaction.reply({ content: '❌ Only Store Staff can approve orders.', ephemeral: true });
             }
 
             const orderData = config.pendingOrders?.find(o => o.orderNumber === orderNum);
             if (!orderData) {
-                return interaction.reply({ content: '⚠️ Order details database me nahi mili.', ephemeral: true });
+                return interaction.reply({ content: '⚠️ Order details not found in database.', ephemeral: true });
             }
 
-            await interaction.reply({ content: '✅ Order APPROVE ho gaya! Logs save ho rahe hain aur channel delete ho raha hai...' });
+            await interaction.reply({ content: '✅ Order APPROVED! Saving logs and deleting channel...' });
 
             // In-Game Command Execution
             const matchingCmd = config.commands?.find(c => c.itemName.toLowerCase() === orderData.itemName.toLowerCase());
@@ -497,15 +497,15 @@ module.exports = (client) => {
             const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.Administrator);
 
             if (!isStaff && !isAdmin) {
-                return interaction.reply({ content: '❌ Sirf Store Staff hi orders reject kar sakte hain.', ephemeral: true });
+                return interaction.reply({ content: '❌ Only Store Staff can reject orders.', ephemeral: true });
             }
 
             const orderData = config.pendingOrders?.find(o => o.orderNumber === orderNum);
             if (!orderData) {
-                return interaction.reply({ content: '⚠️ Order details database me nahi mili.', ephemeral: true });
+                return interaction.reply({ content: '⚠️ Order details not found in database.', ephemeral: true });
             }
 
-            await interaction.reply({ content: '❌ Order REJECT ho gaya! User ko inform kiya ja raha hai...' });
+            await interaction.reply({ content: '❌ Order REJECTED! Notifying user and deleting channel...' });
 
             // Buyer DM
             const buyer = await client.users.fetch(orderData.userId).catch(() => null);
