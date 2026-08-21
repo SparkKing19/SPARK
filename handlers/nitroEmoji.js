@@ -18,27 +18,57 @@ async function getOrCreateWebhook(channel) {
     return webhook;
 }
 
+// Global Emoji Finder across all servers & app portal
+function findGlobalEmoji(client, currentGuild, emojiName) {
+    const targetName = emojiName.toLowerCase();
+
+    // 1. Check Developer Portal Application Emojis
+    if (client.application && client.application.emojis) {
+        const appEmoji = client.application.emojis.cache.find(e => e.name.toLowerCase() === targetName);
+        if (appEmoji) return appEmoji;
+    }
+
+    // 2. Check Current Server Emojis
+    const localEmoji = currentGuild.emojis.cache.find(e => e.name.toLowerCase() === targetName);
+    if (localEmoji) return localEmoji;
+
+    // 3. Check ALL other servers where bot is added
+    for (const guild of client.guilds.cache.values()) {
+        const externalEmoji = guild.emojis.cache.find(e => e.name.toLowerCase() === targetName);
+        if (externalEmoji) return externalEmoji;
+    }
+
+    return null;
+}
+
 module.exports = (client) => {
-    // Bot Ready hone par Application Emojis cache fetch karna
     client.once('ready', async () => {
         try {
-            await client.application.emojis.fetch();
-            console.log(`✔ Loaded ${client.application.emojis.cache.size} Developer Portal Application Emojis.`);
+            if (client.application) {
+                await client.application.emojis.fetch().catch(() => {});
+            }
+            for (const guild of client.guilds.cache.values()) {
+                await guild.emojis.fetch().catch(() => {});
+            }
+            console.log(`✔ Synced emojis across ${client.guilds.cache.size} servers.`);
         } catch (err) {
-            console.error('Error fetching application emojis:', err);
+            console.error('Error fetching global emojis:', err);
         }
     });
 
     client.on('messageCreate', async (message) => {
-        // Bots aur DMs ignore
-        if (message.author.bot || !message.guild) return;
+        // Bots, Webhooks aur DMs ignore
+        if (message.author.bot || message.webhookId || !message.guild) return;
 
         const content = message.content;
         if (!content) return;
 
-        // Emoji Pattern detect karna: :emoji_name:
-        const emojiRegex = /(?<!<a?:)(?<!<):([a-zA-Z0-9_~]+):/g;
-        const matches = [...content.matchAll(emojiRegex)];
+        // Strip out already valid Nitro emojis (<:name:id> or <a:name:id>) to test only raw plain text
+        const contentWithoutRenderedEmojis = content.replace(/<a?:[a-zA-Z0-9_~]+:\d+>/g, '');
+
+        // Match only standalone plain text :emojiname:
+        const unrenderedEmojiRegex = /(?<!\w):([a-zA-Z0-9_~]+):(?!\w)/g;
+        const matches = [...contentWithoutRenderedEmojis.matchAll(unrenderedEmojiRegex)];
 
         if (!matches || matches.length === 0) return;
 
@@ -46,40 +76,23 @@ module.exports = (client) => {
         let newContent = content;
 
         for (const match of matches) {
-            const rawMatch = match[0]; // e.g. :STEVE_GAMER:
-            const emojiName = match[1].toLowerCase();
+            const rawMatch = match[0]; // e.g. :pepe:
+            const emojiName = match[1]; // e.g. pepe
 
-            // 1. Check Developer Portal Application Emojis (Highest Priority)
-            let targetEmoji = client.application.emojis.cache.find(
-                e => e.name.toLowerCase() === emojiName
-            );
+            const targetEmoji = findGlobalEmoji(client, message.guild, emojiName);
 
-            // 2. Check Current Server Emojis
-            if (!targetEmoji) {
-                targetEmoji = message.guild.emojis.cache.find(
-                    e => e.name.toLowerCase() === emojiName
-                );
-            }
-
-            // 3. Check All Servers Bot is in
-            if (!targetEmoji) {
-                targetEmoji = client.emojis.cache.find(
-                    e => e.name.toLowerCase() === emojiName
-                );
-            }
-
-            // Replace with full discord emoji syntax
             if (targetEmoji) {
                 const formattedEmoji = targetEmoji.animated 
                     ? `<a:${targetEmoji.name}:${targetEmoji.id}>` 
                     : `<:${targetEmoji.name}:${targetEmoji.id}>`;
 
+                // Replace only the unrendered raw text occurrence
                 newContent = newContent.replace(rawMatch, formattedEmoji);
                 hasReplacements = true;
             }
         }
 
-        // Agar koi custom emoji mila toh webhook proxy se bhej do
+        // Only delete & proxy if at least one plain-text emoji was successfully replaced
         if (hasReplacements) {
             try {
                 const webhook = await getOrCreateWebhook(message.channel);
@@ -94,11 +107,10 @@ module.exports = (client) => {
                     files: message.attachments.map(a => a.url)
                 });
             } catch (err) {
-                console.error('Nitro emoji webhook proxy error:', err);
+                console.error('Cross-server emoji proxy error:', err);
             }
         }
     });
 
-    console.log('✔ Non-Nitro & Application Emoji Webhook handler loaded.');
+    console.log('✔ Non-Nitro Only Emoji Proxy handler loaded.');
 };
-            
