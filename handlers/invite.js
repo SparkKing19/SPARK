@@ -115,37 +115,37 @@ module.exports = (client) => {
             await inviterData.save();
         }
 
-        // Send to Public Invites Channel
+        // Send to Public Invites Channel (Clean Author Embed Style)
         if (config?.inviteChannelId) {
             const ch = member.guild.channels.cache.get(config.inviteChannelId);
             if (ch) {
-                const total = inviterData ? (inviterData.regular - inviterData.left) : 0;
-                let joinMsg = `📥 <@${member.id}> joined the server!`;
-                if (inviter) {
-                    joinMsg += ` Invited by **${inviter.tag}** (Now has **${total}** invites).`;
-                } else if (isVanity) {
-                    joinMsg += ` Joined using **Vanity URL**.`;
-                } else {
-                    joinMsg += ` Inviter could not be determined.`;
-                }
-                await ch.send(joinMsg).catch(() => {});
+                const joinEmbed = new EmbedBuilder()
+                    .setColor('#2ECC71')
+                    .setAuthor({
+                        name: `${member.user.username} joined the server`,
+                        iconURL: member.user.displayAvatarURL()
+                    });
+
+                await ch.send({ embeds: [joinEmbed] }).catch(() => {});
             }
         }
 
-        // Send to Private Invite Logs Channel
+        // Send Detailed Information to Mod/Invite Logs Channel
         if (config?.logsChannelId) {
             const logCh = member.guild.channels.cache.get(config.logsChannelId);
             if (logCh) {
+                const total = inviterData ? (inviterData.regular - inviterData.left) : 0;
                 const logEmbed = new EmbedBuilder()
                     .setColor('#2ECC71')
                     .setTitle('📥 Member Joined - Invite Log')
                     .setThumbnail(member.user.displayAvatarURL())
                     .addFields(
-                        { name: 'Member', value: `<@${member.id}> (${member.user.tag})`, inline: true },
-                        { name: 'Inviter', value: inviter ? `<@${inviter.id}> (${inviter.tag})` : (isVanity ? 'Vanity URL' : 'Unknown / Direct'), inline: true },
-                        { name: 'Invite Code', value: usedInvite ? `\`${usedInvite.code}\`` : 'N/A', inline: true },
-                        { name: 'Status', value: isRejoin ? '🔄 Rejoined' : '✨ New Join', inline: true },
-                        { name: 'Joined At', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: false }
+                        { name: '👤 Member', value: `<@${member.id}> (${member.user.tag})`, inline: true },
+                        { name: '🔗 Inviter', value: inviter ? `<@${inviter.id}> (${inviter.tag})` : (isVanity ? 'Vanity URL' : 'Unknown / Direct'), inline: true },
+                        { name: '📊 Total Invites', value: `\`${total}\``, inline: true },
+                        { name: '🎟️ Invite Code', value: usedInvite ? `\`${usedInvite.code}\`` : 'N/A', inline: true },
+                        { name: '📌 Status', value: isRejoin ? '🔄 Rejoined' : '✨ New Join', inline: true },
+                        { name: '⏰ Joined At', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: false }
                     )
                     .setTimestamp();
 
@@ -158,7 +158,6 @@ module.exports = (client) => {
     client.on('guildMemberRemove', async (member) => {
         const config = await InviteConfig.findOne({ guildId: member.guild.id });
 
-        // Find inviter of this member
         const inviterData = await InviteUser.findOne({
             guildId: member.guild.id,
             'invitedMembers.memberId': member.id
@@ -174,31 +173,35 @@ module.exports = (client) => {
             inviterUser = await client.users.fetch(inviterData.userId).catch(() => null);
         }
 
-        // Send to Public Invites Channel
+        // Send to Public Invites Channel (Clean Author Embed Style)
         if (config?.inviteChannelId) {
             const ch = member.guild.channels.cache.get(config.inviteChannelId);
             if (ch) {
-                let leftMsg = `📤 **${member.user.tag}** left the server.`;
-                if (inviterUser) {
-                    const total = inviterData.regular - inviterData.left;
-                    leftMsg += ` Invited by **${inviterUser.tag}** (Now has **${total}** invites).`;
-                }
-                await ch.send(leftMsg).catch(() => {});
+                const leaveEmbed = new EmbedBuilder()
+                    .setColor('#ED4245')
+                    .setAuthor({
+                        name: `${member.user.username} left the server`,
+                        iconURL: member.user.displayAvatarURL()
+                    });
+
+                await ch.send({ embeds: [leaveEmbed] }).catch(() => {});
             }
         }
 
-        // Send to Private Invite Logs Channel
+        // Send Detailed Information to Mod/Invite Logs Channel
         if (config?.logsChannelId) {
             const logCh = member.guild.channels.cache.get(config.logsChannelId);
             if (logCh) {
+                const total = inviterData ? (inviterData.regular - inviterData.left) : 0;
                 const logEmbed = new EmbedBuilder()
                     .setColor('#ED4245')
                     .setTitle('📤 Member Left - Invite Log')
                     .setThumbnail(member.user.displayAvatarURL())
                     .addFields(
-                        { name: 'Member', value: `<@${member.id}> (${member.user.tag})`, inline: true },
-                        { name: 'Invited By', value: inviterUser ? `<@${inviterUser.id}> (${inviterUser.tag})` : 'Unknown / Left earlier', inline: true },
-                        { name: 'Left At', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: false }
+                        { name: '👤 Member', value: `<@${member.id}> (${member.user.tag})`, inline: true },
+                        { name: '🔗 Invited By', value: inviterUser ? `<@${inviterUser.id}> (${inviterUser.tag})` : 'Unknown / Left earlier', inline: true },
+                        { name: '📊 Inviter Net Total', value: `\`${total}\``, inline: true },
+                        { name: '⏰ Left At', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: false }
                     )
                     .setTimestamp();
 
@@ -270,3 +273,4 @@ module.exports = (client) => {
 
     console.log('✔ Invite handler loaded.');
 };
+    
