@@ -17,7 +17,7 @@ function parseDuration(str) {
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('staff')
-        .setDescription('Execute advanced staff moderation actions')
+        .setDescription('Execute staff moderation actions')
         .addStringOption(option =>
             option.setName('action')
                 .setDescription('Action to perform')
@@ -25,8 +25,8 @@ module.exports = {
                 .addChoices(
                     { name: 'Ban', value: 'ban' },
                     { name: 'Kick', value: 'kick' },
-                    { name: 'Mute (Timeout)', value: 'mute' },
-                    { name: 'Unmute', value: 'unmute' },
+                    { name: 'Timeout / Mute', value: 'timeout' },
+                    { name: 'Remove Timeout / Unmute', value: 'untimeout' },
                     { name: 'Unban', value: 'unban' },
                     { name: 'Purge / Clear Messages', value: 'purge' },
                     { name: 'Add Role', value: 'role_add' },
@@ -34,13 +34,12 @@ module.exports = {
                     { name: 'Lock Channel', value: 'lock' },
                     { name: 'Unlock Channel', value: 'unlock' },
                     { name: 'Slowmode', value: 'slowmode' },
-                    { name: 'Warn User', value: 'warn' },
-                    { name: 'Change Nickname', value: 'setnick' }
+                    { name: 'Warn User', value: 'warn' }
                 )
         )
         .addUserOption(option =>
             option.setName('user')
-                .setDescription('Target user (For ban/kick/mute/role/warn/nick)')
+                .setDescription('Target user')
                 .setRequired(false)
         )
         .addRoleOption(option =>
@@ -50,41 +49,42 @@ module.exports = {
         )
         .addIntegerOption(option =>
             option.setName('amount')
-                .setDescription('Number of messages to clear (1-100) or Slowmode seconds (0-21600)')
+                .setDescription('Number of messages to clear (1-100) or slowmode seconds')
                 .setRequired(false)
         )
         .addStringOption(option =>
             option.setName('limit')
-                .setDescription('Duration limit for mute (e.g. 10m, 1h, 1d)')
-                .setRequired(false)
-        )
-        .addStringOption(option =>
-            option.setName('value')
-                .setDescription('New Nickname or specific custom value')
+                .setDescription('Timeout duration (e.g. 10m, 1h, 1d)')
                 .setRequired(false)
         )
         .addStringOption(option =>
             option.setName('reason')
-                .setDescription('Reason for punishment / action')
+                .setDescription('Reason for the action')
                 .setRequired(false)
         ),
 
     async execute(interaction) {
         const config = await ModerationConfig.findOne({ guildId: interaction.guild.id });
-        
-        const isStaff = config?.staffRoleIds?.some(id => interaction.member.roles.cache.has(id));
-        const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.Administrator);
+        const action = interaction.options.getString('action');
 
-        if (!isStaff && !isAdmin) {
-            return interaction.reply({ content: '❌ You do not have permission to use `/staff` commands.', ephemeral: true });
+        // Permission Verification Engine
+        const isOwner = interaction.user.id === interaction.guild.ownerId;
+        const isExtraOwner = config?.extraOwners?.includes(interaction.user.id);
+        const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.Administrator);
+        const userGrantedPerms = config?.userModPerms?.get(interaction.user.id) || [];
+        const hasCustomPerm = userGrantedPerms.includes(action) || userGrantedPerms.includes(action.replace('role_add', 'role').replace('role_remove', 'role'));
+
+        if (!isOwner && !isExtraOwner && !isAdmin && !hasCustomPerm) {
+            return interaction.reply({ 
+                content: `❌ You do not have permission to execute the **${action}** action. Contact Server Owner or get access via \`%pr @user\`.`, 
+                ephemeral: true 
+            });
         }
 
-        const action = interaction.options.getString('action');
         const targetUser = interaction.options.getUser('user');
         const targetRole = interaction.options.getRole('role');
         const amount = interaction.options.getInteger('amount');
         const timeLimit = interaction.options.getString('limit');
-        const value = interaction.options.getString('value');
         const reason = interaction.options.getString('reason') || 'No reason provided';
 
         await interaction.deferReply();
@@ -97,131 +97,87 @@ module.exports = {
 
             let logDetails = [];
 
-            // 1. BAN
             if (action === 'ban') {
-                if (!targetUser) return interaction.editReply('❌ Please mention a valid user.');
-                await interaction.guild.members.ban(targetUser.id, { reason: `${reason} | By: ${interaction.user.tag}` });
+                if (!targetUser) return interaction.editReply('❌ Please specify a valid user.');
+                await interaction.guild.members.ban(targetUser.id, { reason: `${reason} | Staff: ${interaction.user.tag}` });
                 logDetails.push({ name: 'Target User', value: `<@${targetUser.id}> (${targetUser.tag})`, inline: true });
-            }
-
-            // 2. KICK
+            } 
             else if (action === 'kick') {
                 if (!targetMember) return interaction.editReply('❌ User is not in this server.');
-                await targetMember.kick(`${reason} | By: ${interaction.user.tag}`);
+                await targetMember.kick(`${reason} | Staff: ${interaction.user.tag}`);
                 logDetails.push({ name: 'Target User', value: `<@${targetUser.id}> (${targetUser.tag})`, inline: true });
-            }
-
-            // 3. MUTE (TIMEOUT)
-            else if (action === 'mute') {
+            } 
+            else if (action === 'timeout') {
                 if (!targetMember) return interaction.editReply('❌ User is not in this server.');
                 const durationMs = parseDuration(timeLimit) || (10 * 60 * 1000);
-                await targetMember.timeout(durationMs, `${reason} | By: ${interaction.user.tag}`);
+                await targetMember.timeout(durationMs, `${reason} | Staff: ${interaction.user.tag}`);
                 logDetails.push(
                     { name: 'Target User', value: `<@${targetUser.id}>`, inline: true },
-                    { name: 'Duration', value: timeLimit || '10m (Default)', inline: true }
+                    { name: 'Duration', value: timeLimit || '10m', inline: true }
                 );
-            }
-
-            // 4. UNMUTE
-            else if (action === 'unmute') {
+            } 
+            else if (action === 'untimeout') {
                 if (!targetMember) return interaction.editReply('❌ User is not in this server.');
-                await targetMember.timeout(null, `Unmuted by ${interaction.user.tag}`);
+                await targetMember.timeout(null, `Timeout removed by ${interaction.user.tag}`);
                 logDetails.push({ name: 'Target User', value: `<@${targetUser.id}>`, inline: true });
-            }
-
-            // 5. UNBAN
+            } 
             else if (action === 'unban') {
-                if (!targetUser) return interaction.editReply('❌ Please specify a user ID/mention.');
+                if (!targetUser) return interaction.editReply('❌ Please specify a user ID.');
                 await interaction.guild.members.unban(targetUser.id, `Unbanned by ${interaction.user.tag}`);
                 logDetails.push({ name: 'Target User', value: `<@${targetUser.id}>`, inline: true });
-            }
-
-            // 6. PURGE / CLEAR MESSAGES
+            } 
             else if (action === 'purge') {
                 const count = amount || 10;
-                if (count < 1 || count > 100) return interaction.editReply('❌ Please enter a message amount between 1 and 100.');
-                
+                if (count < 1 || count > 100) return interaction.editReply('❌ Enter an amount between 1 and 100.');
                 const deleted = await interaction.channel.bulkDelete(count, true);
                 logDetails.push(
                     { name: 'Channel', value: `<#${interaction.channel.id}>`, inline: true },
-                    { name: 'Messages Deleted', value: `${deleted.size}`, inline: true }
+                    { name: 'Messages Cleared', value: `${deleted.size}`, inline: true }
                 );
-            }
-
-            // 7. ADD ROLE
+            } 
             else if (action === 'role_add') {
-                if (!targetMember || !targetRole) return interaction.editReply('❌ Please select both a User and a Role.');
-                await targetMember.roles.add(targetRole, `${reason} | By: ${interaction.user.tag}`);
+                if (!targetMember || !targetRole) return interaction.editReply('❌ Please specify both User and Role.');
+                await targetMember.roles.add(targetRole, `${reason} | Staff: ${interaction.user.tag}`);
                 logDetails.push(
                     { name: 'Target User', value: `<@${targetUser.id}>`, inline: true },
                     { name: 'Role Added', value: `<@&${targetRole.id}>`, inline: true }
                 );
-            }
-
-            // 8. REMOVE ROLE
+            } 
             else if (action === 'role_remove') {
-                if (!targetMember || !targetRole) return interaction.editReply('❌ Please select both a User and a Role.');
-                await targetMember.roles.remove(targetRole, `${reason} | By: ${interaction.user.tag}`);
+                if (!targetMember || !targetRole) return interaction.editReply('❌ Please specify both User and Role.');
+                await targetMember.roles.remove(targetRole, `${reason} | Staff: ${interaction.user.tag}`);
                 logDetails.push(
                     { name: 'Target User', value: `<@${targetUser.id}>`, inline: true },
                     { name: 'Role Removed', value: `<@&${targetRole.id}>`, inline: true }
                 );
-            }
-
-            // 9. LOCK CHANNEL
+            } 
             else if (action === 'lock') {
-                await interaction.channel.permissionOverwrites.edit(interaction.guild.roles.everyone, {
-                    SendMessages: false
-                });
+                await interaction.channel.permissionOverwrites.edit(interaction.guild.roles.everyone, { SendMessages: false });
                 logDetails.push({ name: 'Locked Channel', value: `<#${interaction.channel.id}>`, inline: true });
-            }
-
-            // 10. UNLOCK CHANNEL
+            } 
             else if (action === 'unlock') {
-                await interaction.channel.permissionOverwrites.edit(interaction.guild.roles.everyone, {
-                    SendMessages: null
-                });
+                await interaction.channel.permissionOverwrites.edit(interaction.guild.roles.everyone, { SendMessages: null });
                 logDetails.push({ name: 'Unlocked Channel', value: `<#${interaction.channel.id}>`, inline: true });
-            }
-
-            // 11. SLOWMODE
+            } 
             else if (action === 'slowmode') {
                 const seconds = amount !== null ? amount : 5;
-                await interaction.channel.setRateLimitPerUser(seconds, `${reason} | By: ${interaction.user.tag}`);
-                logDetails.push(
-                    { name: 'Channel', value: `<#${interaction.channel.id}>`, inline: true },
-                    { name: 'Slowmode Delay', value: `${seconds} Seconds`, inline: true }
-                );
-            }
-
-            // 12. WARN USER (DM Alert + Log)
+                await interaction.channel.setRateLimitPerUser(seconds, `${reason} | Staff: ${interaction.user.tag}`);
+                logDetails.push({ name: 'Slowmode Delay', value: `${seconds} Seconds`, inline: true });
+            } 
             else if (action === 'warn') {
                 if (!targetMember) return interaction.editReply('❌ User is not in this server.');
-                
                 const warnEmbed = new EmbedBuilder()
                     .setColor('#ED4245')
-                    .setTitle(`⚠️ Warning from ${interaction.guild.name}`)
-                    .setDescription(`You have received an official warning from staff.\n\n**Reason:** ${reason}`)
+                    .setTitle(`⚠️ Official Warning from ${interaction.guild.name}`)
+                    .setDescription(`You have received a formal warning.\n\n**Reason:** ${reason}`)
                     .setTimestamp();
-
                 await targetMember.send({ embeds: [warnEmbed] }).catch(() => {});
                 logDetails.push({ name: 'Warned User', value: `<@${targetUser.id}>`, inline: true });
             }
 
-            // 13. SET NICKNAME
-            else if (action === 'setnick') {
-                if (!targetMember) return interaction.editReply('❌ User is not in this server.');
-                const newNick = value || null;
-                await targetMember.setNickname(newNick, `${reason} | By: ${interaction.user.tag}`);
-                logDetails.push(
-                    { name: 'Target User', value: `<@${targetUser.id}>`, inline: true },
-                    { name: 'New Nickname', value: newNick || 'Reset to Default', inline: true }
-                );
-            }
-
             const successEmbed = new EmbedBuilder()
                 .setColor('#2ECC71')
-                .setTitle(`🛡️ Staff Action: ${action.replace('_', ' ').toUpperCase()}`)
+                .setTitle(`🛡️ Staff Action Executed: ${action.replace('_', ' ').toUpperCase()}`)
                 .addFields(
                     { name: 'Moderator', value: `<@${interaction.user.id}>`, inline: true },
                     ...logDetails,
@@ -231,15 +187,13 @@ module.exports = {
 
             await interaction.editReply({ embeds: [successEmbed] });
 
-            // Send to Mod Logs Channel
             if (config?.modLogsChannelId) {
                 const logsChannel = interaction.guild.channels.cache.get(config.modLogsChannelId);
-                if (logsChannel) await logsChannel.send({ embeds: [successEmbed] });
+                if (logsChannel) await logsChannel.send({ embeds: [successEmbed] }).catch(() => {});
             }
         } catch (error) {
             console.error('Staff action error:', error);
-            await interaction.editReply({ content: `❌ An error occurred while executing this action: \`${error.message}\`` });
+            await interaction.editReply({ content: `❌ Error executing action: \`${error.message}\`` });
         }
     }
 };
-                                 
