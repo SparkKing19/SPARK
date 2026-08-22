@@ -8,17 +8,18 @@ const {
 } = require('discord.js');
 const ModerationConfig = require('../models/moderation');
 
-// Cache to prevent duplicate messages (User ID -> { content, timestamp })
-const lastMessages = new Map();
+const userCooldowns = new Map(); // userId -> lastTimestamp
+const lastMessages = new Map();   // userId -> { content, timestamp }
 
-// Regex patterns
+// Advanced Regex Matchers
 const LINK_REGEX = /(https?:\/\/[^\s]+)|(discord\.(gg|io|me|li)\/[^\s]+)|(discordapp\.com\/invite\/[^\s]+)/i;
-const IP_REGEX = /\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b|(?:[a-zA-Z0-9-]+\.)+(?:com|net|org|io|me|xyz|gg|in|play|server)(?::\d+)?/i;
+const IP_REGEX = /\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b/i;
+const DOMAIN_REGEX = /(?:[a-zA-Z0-9-]+\.)+(?:com|net|org|io|me|xyz|gg|in|play|server|site|store|online|tech|info|co)(?::\d+)?/i;
 
 module.exports = (client) => {
 
+    // 1. Setup Modal (/panel Book 2 Page 6)
     client.on('interactionCreate', async (interaction) => {
-        // 1. Open Setup Modal
         if (interaction.isButton() && interaction.customId === 'open_mod_modal') {
             const data = await ModerationConfig.findOne({ guildId: interaction.guild.id }) || {};
 
@@ -26,78 +27,87 @@ module.exports = (client) => {
                 .setCustomId('mod_config_modal')
                 .setTitle('Moderation & Auto-Mod Setup');
 
-            const staffInput = new TextInputBuilder()
+            const wordsInput = new TextInputBuilder()
+                .setCustomId('mod_bad_words')
+                .setLabel('Blocked Words (Comma Separated)')
+                .setPlaceholder('bkl, mc, bc, scam, raid')
+                .setStyle(TextInputStyle.Paragraph)
+                .setValue(data.badWords?.join(', ') || '')
+                .setRequired(false);
+
+            const togglesInput = new TextInputBuilder()
+                .setCustomId('mod_toggles')
+                .setLabel('Block: Links,Media,Ips,Domains,Urls (yes/no)')
+                .setPlaceholder('yes, no, yes, yes, yes')
+                .setStyle(TextInputStyle.Short)
+                .setValue(`${data.blockLinks ? 'yes' : 'no'}, ${data.blockMedia ? 'yes' : 'no'}, ${data.blockIps ? 'yes' : 'no'}, ${data.blockDomains ? 'yes' : 'no'}, ${data.blockUrls ? 'yes' : 'no'}`)
+                .setRequired(true);
+
+            const rolesInput = new TextInputBuilder()
                 .setCustomId('mod_staff_roles')
-                .setLabel('Staff Role IDs (Sep by comma)')
+                .setLabel('Staff Role IDs (Comma Separated)')
                 .setPlaceholder('123456789, 987654321')
                 .setStyle(TextInputStyle.Short)
                 .setValue(data.staffRoleIds?.join(', ') || '')
-                .setRequired(true);
-
-            const linkInput = new TextInputBuilder()
-                .setCustomId('mod_link_roles')
-                .setLabel('Allow Links Role IDs (Sep by comma)')
-                .setPlaceholder('Role IDs allowed to post URLs/invites')
-                .setStyle(TextInputStyle.Short)
-                .setValue(data.linkAllowRoleIds?.join(', ') || '')
-                .setRequired(false);
-
-            const ipInput = new TextInputBuilder()
-                .setCustomId('mod_ip_roles')
-                .setLabel('Allow IP/Advertise Role IDs')
-                .setPlaceholder('Role IDs allowed to share IP addresses')
-                .setStyle(TextInputStyle.Short)
-                .setValue(data.ipAllowRoleIds?.join(', ') || '')
-                .setRequired(false);
-
-            const channelInput = new TextInputBuilder()
-                .setCustomId('mod_channels')
-                .setLabel('Ignored / Restricted Channel IDs')
-                .setPlaceholder('Channel IDs to apply strict auto-mod denial')
-                .setStyle(TextInputStyle.Short)
-                .setValue(data.ignoredChannelIds?.join(', ') || '')
                 .setRequired(false);
 
             const logsInput = new TextInputBuilder()
                 .setCustomId('mod_logs_channel')
                 .setLabel('Mod Logs Channel ID')
-                .setPlaceholder('Channel ID for moderation logs')
+                .setPlaceholder('123456789012345678')
                 .setStyle(TextInputStyle.Short)
                 .setValue(data.modLogsChannelId || '')
                 .setRequired(false);
 
             modal.addComponents(
-                new ActionRowBuilder().addComponents(staffInput),
-                new ActionRowBuilder().addComponents(linkInput),
-                new ActionRowBuilder().addComponents(ipInput),
-                new ActionRowBuilder().addComponents(channelInput),
+                new ActionRowBuilder().addComponents(wordsInput),
+                new ActionRowBuilder().addComponents(togglesInput),
+                new ActionRowBuilder().addComponents(rolesInput),
                 new ActionRowBuilder().addComponents(logsInput)
             );
 
             await interaction.showModal(modal);
         }
 
-        // 2. Save Setup Modal Configuration
         if (interaction.isModalSubmit() && interaction.customId === 'mod_config_modal') {
             await interaction.deferReply({ ephemeral: true });
 
-            const staffRoleIds = interaction.fields.getTextInputValue('mod_staff_roles').split(',').map(s => s.trim()).filter(Boolean);
-            const linkAllowRoleIds = interaction.fields.getTextInputValue('mod_link_roles').split(',').map(s => s.trim()).filter(Boolean);
-            const ipAllowRoleIds = interaction.fields.getTextInputValue('mod_ip_roles').split(',').map(s => s.trim()).filter(Boolean);
-            const ignoredChannelIds = interaction.fields.getTextInputValue('mod_channels').split(',').map(s => s.trim()).filter(Boolean);
+            const badWords = interaction.fields.getTextInputValue('mod_bad_words')
+                .split(',')
+                .map(w => w.trim().toLowerCase())
+                .filter(Boolean);
+
+            const toggles = interaction.fields.getTextInputValue('mod_toggles')
+                .split(',')
+                .map(t => t.trim().toLowerCase() === 'yes');
+
+            const staffRoleIds = interaction.fields.getTextInputValue('mod_staff_roles')
+                .split(',')
+                .map(r => r.trim())
+                .filter(Boolean);
+
             const modLogsChannelId = interaction.fields.getTextInputValue('mod_logs_channel').trim() || null;
 
             await ModerationConfig.findOneAndUpdate(
                 { guildId: interaction.guild.id },
-                { staffRoleIds, linkAllowRoleIds, ipAllowRoleIds, ignoredChannelIds, modLogsChannelId },
+                {
+                    badWords,
+                    blockLinks: toggles[0] ?? true,
+                    blockMedia: toggles[1] ?? false,
+                    blockIps: toggles[2] ?? true,
+                    blockDomains: toggles[3] ?? true,
+                    blockUrls: toggles[4] ?? true,
+                    staffRoleIds,
+                    modLogsChannelId
+                },
                 { upsert: true, new: true }
             );
 
-            await interaction.editReply({ content: '✅ Moderation & Auto-Mod rules have been successfully configured!' });
+            await interaction.editReply({ content: '✅ Advanced Moderation & Auto-Mod rules saved successfully!' });
         }
     });
 
-    // 3. Auto-Mod Engine (Anti-Duplicate, Anti-Link, Anti-IP)
+    // 2. High-Performance AutoMod Engine
     client.on('messageCreate', async (message) => {
         if (message.author.bot || !message.guild) return;
 
@@ -107,96 +117,90 @@ module.exports = (client) => {
         const member = message.member;
         if (!member) return;
 
-        const isAdmin = member.permissions.has(PermissionFlagsBits.Administrator);
+        // Bypass checks: Server Owner, Extra Owners, Whitelist
+        const isOwner = member.id === message.guild.ownerId;
+        const isExtraOwner = config.extraOwners.includes(member.id);
+        const isWhitelisted = config.whitelistedUsers.includes(member.id);
         const isStaff = config.staffRoleIds?.some(id => member.roles.cache.has(id));
 
-        if (isAdmin || isStaff) return; // Staff & Admin bypass
+        if (isOwner || isExtraOwner || isWhitelisted || isStaff) return;
 
-        const content = message.content.trim().toLowerCase();
+        const now = Date.now();
+        const content = message.content.trim();
+        const lowerContent = content.toLowerCase();
         let violation = null;
 
-        // A. Anti-Duplicate Message Check (Within 10 seconds)
-        const lastMsg = lastMessages.get(message.author.id);
-        const now = Date.now();
+        // A. 3-Second Chat Cooldown
+        const lastChatTime = userCooldowns.get(message.author.id) || 0;
+        if (now - lastChatTime < 3000) {
+            await message.delete().catch(() => {});
+            const warn = await message.channel.send(`⚠️ <@${message.author.id}>, please wait 3 seconds before sending another message!`);
+            setTimeout(() => warn.delete().catch(() => {}), 3000);
+            return;
+        }
+        userCooldowns.set(message.author.id, now);
 
-        if (lastMsg && lastMsg.content === content && (now - lastMsg.time) < 10000 && content.length > 2) {
+        // B. Anti-Duplicate Message Check (10s window)
+        const lastMsg = lastMessages.get(message.author.id);
+        if (lastMsg && lastMsg.content === lowerContent && (now - lastMsg.time) < 10000 && lowerContent.length > 2) {
             violation = 'Repeated / Duplicate Message Spam';
         } else {
-            lastMessages.set(message.author.id, { content, time: now });
+            lastMessages.set(message.author.id, { content: lowerContent, time: now });
         }
 
-        // B. Anti-Link / Invite Check
-        const canSendLinks = config.linkAllowRoleIds?.some(id => member.roles.cache.has(id));
-        if (!violation && !canSendLinks && LINK_REGEX.test(message.content)) {
-            violation = 'Unauthorized Link / Invite Shared';
+        // Channel Overrides Check
+        const channelRule = config.channelOverrides.get(message.channel.id);
+
+        // C. Universal Substring Bad Words Filter (Case-insensitive)
+        if (!violation && config.badWords.length > 0) {
+            const hasBadWord = config.badWords.some(word => lowerContent.includes(word));
+            if (hasBadWord) violation = 'Blacklisted Word / Slur Usage';
         }
 
-        // C. Anti-IP / Server Advertise Check
-        const canSendIP = config.ipAllowRoleIds?.some(id => member.roles.cache.has(id));
-        if (!violation && !canSendIP && IP_REGEX.test(message.content)) {
-            violation = 'Unauthorized Server IP / Advertisement';
+        // D. Media Block Check
+        if (!violation && config.blockMedia && !channelRule?.allowMedia) {
+            if (message.attachments.size > 0 || message.embeds.some(e => e.image || e.video)) {
+                violation = 'Unauthorized Media / Attachments';
+            }
         }
 
-        // If Violation Found -> Delete & Warn
+        // E. IP Address Block
+        if (!violation && config.blockIps && !channelRule?.allowIps && IP_REGEX.test(content)) {
+            violation = 'Unauthorized Server IP Address';
+        }
+
+        // F. Domain & URL Block
+        if (!violation && (config.blockDomains || config.blockUrls || config.blockLinks) && !channelRule?.allowLinks) {
+            if (LINK_REGEX.test(content) || DOMAIN_REGEX.test(content)) {
+                violation = 'Unauthorized Link / Domain / Invite URL';
+            }
+        }
+
+        // Violation Enforcement
         if (violation) {
             await message.delete().catch(() => {});
+            const alert = await message.channel.send(`⚠️ <@${message.author.id}>, your message was removed: **${violation}**`);
+            setTimeout(() => alert.delete().catch(() => {}), 4000);
 
-            const warnMsg = await message.channel.send(`⚠️ <@${message.author.id}>, your message was deleted: **${violation}**`);
-            setTimeout(() => warnMsg.delete().catch(() => {}), 4000);
-
-            // Log Violation
             if (config.modLogsChannelId) {
-                const logsChannel = message.guild.channels.cache.get(config.modLogsChannelId);
-                if (logsChannel) {
+                const logCh = message.guild.channels.cache.get(config.modLogsChannelId);
+                if (logCh) {
                     const logEmbed = new EmbedBuilder()
                         .setColor('#ED4245')
                         .setTitle('🚨 Auto-Mod Violation Detected')
                         .addFields(
                             { name: 'User', value: `<@${message.author.id}> (${message.author.tag})`, inline: true },
                             { name: 'Channel', value: `<#${message.channel.id}>`, inline: true },
-                            { name: 'Violation', value: violation, inline: false },
-                            { name: 'Message Content', value: `\`\`\`${message.content.substring(0, 500)}\`\`\``, inline: false }
+                            { name: 'Violation Reason', value: violation, inline: false },
+                            { name: 'Intercepted Content', value: `\`\`\`${content.substring(0, 500) || '[Media/Embed]'}\`\`\``, inline: false }
                         )
                         .setTimestamp();
-
-                    await logsChannel.send({ embeds: [logEmbed] }).catch(() => {});
+                    await logCh.send({ embeds: [logEmbed] }).catch(() => {});
                 }
             }
         }
     });
 
-    // 4. Test Preview Command: §moderation
-    client.on('messageCreate', async (message) => {
-        if (message.author.bot || !message.guild) return;
-
-        if (message.content.trim() === '§moderation') {
-            const config = await ModerationConfig.findOne({ guildId: message.guild.id });
-
-            if (!config) {
-                return message.reply('⚠️ Please configure the moderation system using `/panel book:2 page:6` first!');
-            }
-
-            const staffList = config.staffRoleIds?.map(id => `<@&${id}>`).join(', ') || 'None';
-            const linkList = config.linkAllowRoleIds?.map(id => `<@&${id}>`).join(', ') || 'None';
-            const ipList = config.ipAllowRoleIds?.map(id => `<@&${id}>`).join(', ') || 'None';
-            const logsCh = config.modLogsChannelId ? `<#${config.modLogsChannelId}>` : 'Not Set';
-
-            const embed = new EmbedBuilder()
-                .setColor('#ED4245')
-                .setTitle('🛡️ [TEST PREVIEW] Moderation & Auto-Mod Config')
-                .addFields(
-                    { name: 'Staff Roles (Can use /staff)', value: staffList, inline: false },
-                    { name: 'Link Whitelisted Roles', value: linkList, inline: true },
-                    { name: 'IP / Advertise Whitelisted Roles', value: ipList, inline: true },
-                    { name: 'Mod Logs Channel', value: logsCh, inline: false }
-                )
-                .setFooter({ text: 'Auto-Mod: Anti-Duplicate, Anti-Links, Anti-IP Active' })
-                .setTimestamp();
-
-            await message.reply({ embeds: [embed] });
-        }
-    });
-
-    console.log('✔ Moderation handler loaded.');
+    console.log('✔ Moderation Auto-Mod handler loaded.');
 };
-            
+                
