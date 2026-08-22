@@ -16,6 +16,10 @@ const LINK_REGEX = /(https?:\/\/[^\s]+)|(discord\.(gg|io|me|li)\/[^\s]+)|(discor
 const IP_REGEX = /\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b/i;
 const DOMAIN_REGEX = /(?:[a-zA-Z0-9-]+\.)+(?:com|net|org|io|me|xyz|gg|in|play|server|site|store|online|tech|info|co)(?::\d+)?/i;
 
+function escapeRegex(string) {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 module.exports = (client) => {
 
     // 1. Setup Modal (/panel Book 2 Page 6)
@@ -149,11 +153,14 @@ module.exports = (client) => {
         }
 
         // Channel Overrides Check
-        const channelRule = config.channelOverrides.get(message.channel.id);
+        const channelRule = config.channelOverrides?.get(message.channel.id);
 
-        // C. Universal Substring Bad Words Filter (Case-insensitive)
-        if (!violation && config.badWords.length > 0) {
-            const hasBadWord = config.badWords.some(word => lowerContent.includes(word));
+        // C. Word Boundary Bad Words Filter (Allows compound words like SparkleMc)
+        if (!violation && config.badWords && config.badWords.length > 0) {
+            const hasBadWord = config.badWords.some(word => {
+                const regex = new RegExp(`\\b${escapeRegex(word)}\\b`, 'i');
+                return regex.test(content);
+            });
             if (hasBadWord) violation = 'Blacklisted Word / Slur Usage';
         }
 
@@ -203,4 +210,4 @@ module.exports = (client) => {
 
     console.log('✔ Moderation Auto-Mod handler loaded.');
 };
-                
+                        
