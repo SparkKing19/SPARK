@@ -33,6 +33,13 @@ async function logAction(guild, config, title, description, color = '#ED4245') {
     await channel.send({ embeds: [embed] }).catch(() => {});
 }
 
+// Temporary alert for unauthorized prefix commands (Self-cleaning)
+async function sendTempDenial(message, text) {
+    await message.delete().catch(() => {});
+    const reply = await message.channel.send(`⚠️ <@${message.author.id}>, ${text}`);
+    setTimeout(() => reply.delete().catch(() => {}), 3500);
+}
+
 module.exports = (client) => {
 
     // 1. Unauthorized Bot Add & 10-Second Timer
@@ -42,7 +49,6 @@ module.exports = (client) => {
         const config = await ModerationConfig.findOne({ guildId: member.guild.id });
         if (!config || !config.antiNukeEnabled) return;
 
-        // Fetch Executor who invited the bot
         const auditLogs = await member.guild.fetchAuditLogs({ limit: 1, type: AuditLogEvent.BotAdd }).catch(() => null);
         const entry = auditLogs?.entries.first();
         const executor = entry?.executor;
@@ -50,14 +56,12 @@ module.exports = (client) => {
         const isServerOwner = executor?.id === member.guild.ownerId;
         const isExtraOwner = config.extraOwners.includes(executor?.id);
 
-        // Case A: Non-Owner/Non-ExtraOwner invited a bot -> Ban Bot, Punish Executor
         if (!isServerOwner && !isExtraOwner) {
             await member.ban({ reason: '🛡️ Anti-Nuke: Unauthorized Bot Addition' }).catch(() => {});
 
             if (executor) {
                 const executorMember = await member.guild.members.fetch(executor.id).catch(() => null);
                 if (executorMember && executor.id !== member.guild.ownerId) {
-                    // Strip Admin & Dangerous Roles
                     const dangerousRoles = executorMember.roles.cache.filter(r => 
                         r.permissions.has(PermissionFlagsBits.Administrator) ||
                         r.permissions.has(PermissionFlagsBits.ManageGuild) ||
@@ -79,7 +83,6 @@ module.exports = (client) => {
             return;
         }
 
-        // Case B: Owner/ExtraOwner invited bot -> 10s Whitelist Grace Period
         const timeout = setTimeout(async () => {
             const currentConfig = await ModerationConfig.findOne({ guildId: member.guild.id });
             const isWhitelisted = currentConfig?.whitelistedBots?.includes(member.id);
@@ -99,7 +102,7 @@ module.exports = (client) => {
         pendingBots.set(member.id, { timeout, guildId: member.guild.id });
     });
 
-    // 2. Instant Bot Nuke Killer (Sub-second defense for rapid actions)
+    // 2. Instant Bot Nuke Killer
     const checkBotAction = async (guild, auditType) => {
         const config = await ModerationConfig.findOne({ guildId: guild.id });
         if (!config || !config.antiNukeEnabled) return;
@@ -137,7 +140,7 @@ module.exports = (client) => {
     client.on('guildBanAdd', (ban) => ban.guild && checkBotAction(ban.guild, AuditLogEvent.MemberBanAdd));
     client.on('guildMemberRemove', (member) => member.guild && checkBotAction(member.guild, AuditLogEvent.MemberKick));
 
-    // 3. Dangerous Role Protection (Instant strip if assigned to non-whitelisted user)
+    // 3. Dangerous Role Protection
     client.on('guildMemberUpdate', async (oldMember, newMember) => {
         const config = await ModerationConfig.findOne({ guildId: newMember.guild.id });
         if (!config || !config.antiNukeEnabled) return;
@@ -180,7 +183,9 @@ module.exports = (client) => {
 
         // A. Anti-Nuke Toggle
         if (cmd === 'antinuke') {
-            if (!isOwner && !isExtraOwner) return message.reply('❌ Only Server Owner or Extra Owners can toggle Anti-Nuke.');
+            if (!isOwner && !isExtraOwner) {
+                return sendTempDenial(message, 'you do not have permission to configure Anti-Nuke.');
+            }
             const state = args[0]?.toLowerCase();
             if (state === 'enable') {
                 config.antiNukeEnabled = true;
@@ -191,12 +196,14 @@ module.exports = (client) => {
                 await config.save();
                 return message.reply('⚠️ Anti-Nuke protection has been **DISABLED**.');
             }
-            return message.reply(`Anti-Nuke is currently **${config.antiNukeEnabled ? 'ENABLED' : 'DISABLED'}**. Use \`%antinuke enable\` or \`%antinuke disable\`.`);
+            return message.reply(`Anti-Nuke is currently **${config.antiNukeEnabled ? 'ENABLED' : 'DISABLED'}**.`);
         }
 
         // B. Extra Owner Management (%extraowner add/remove @user)
         if (cmd === 'extraowner') {
-            if (!isOwner) return message.reply('❌ Only the Server Owner can manage Extra Owners.');
+            if (!isOwner) {
+                return sendTempDenial(message, 'only the Server Owner can manage Extra Owners.');
+            }
             const sub = args[0]?.toLowerCase();
             const target = message.mentions.users.first() || await client.users.fetch(args[1]).catch(() => null);
             if (!target) return message.reply('Usage: `%extraowner add @user` or `%extraowner remove @user`');
@@ -215,7 +222,9 @@ module.exports = (client) => {
 
         // C. Whitelist Management (%wl add/remove @user)
         if (cmd === 'wl') {
-            if (!isOwner && !isExtraOwner) return message.reply('❌ Only Server Owner and Extra Owners can manage Whitelist.');
+            if (!isOwner && !isExtraOwner) {
+                return sendTempDenial(message, 'only Server Owner and Extra Owners can manage Whitelist.');
+            }
             const sub = args[0]?.toLowerCase();
             const target = message.mentions.users.first() || await client.users.fetch(args[1]).catch(() => null);
             if (!target) return message.reply('Usage: `%wl add @user/bot` or `%wl remove @user/bot`');
@@ -237,15 +246,17 @@ module.exports = (client) => {
 
         // D. Permission Control Panel (%pr @user)
         if (cmd === 'pr') {
-            if (!isOwner && !isExtraOwner) return message.reply('❌ Only Server Owner or Extra Owners can modify command permissions.');
+            if (!isOwner && !isExtraOwner) {
+                return sendTempDenial(message, 'only Server Owner or Extra Owners can modify command permissions.');
+            }
             const target = message.mentions.members.first();
             if (!target) return message.reply('Usage: `%pr @user`');
 
-            const availablePerms = ['kick', 'ban', 'unban', 'timeout', 'mute', 'purge', 'role', 'warn', 'slowmode', 'lock'];
+            const availablePerms = ['kick', 'ban', 'unban', 'timeout', 'untimeout', 'purge', 'role_add', 'role_remove', 'warn', 'slowmode', 'lock', 'unlock'];
             const currentPerms = config.userModPerms.get(target.id) || [];
 
             const options = availablePerms.map(p => ({
-                label: p.toUpperCase(),
+                label: p.replace('_', ' ').toUpperCase(),
                 value: p,
                 description: `Allow user to use /staff ${p}`,
                 default: currentPerms.includes(p)
@@ -270,9 +281,11 @@ module.exports = (client) => {
 
         // E. Channel Automod Overrides (%channel allow/deny links/media/ips)
         if (cmd === 'channel') {
-            if (!isOwner && !isExtraOwner) return message.reply('❌ Only Server Owner or Extra Owners can configure channel rules.');
-            const action = args[0]?.toLowerCase(); // allow / deny
-            const feature = args[1]?.toLowerCase(); // links / media / ips
+            if (!isOwner && !isExtraOwner) {
+                return sendTempDenial(message, 'only Server Owner or Extra Owners can configure channel rules.');
+            }
+            const action = args[0]?.toLowerCase();
+            const feature = args[1]?.toLowerCase();
 
             if (!['allow', 'deny'].includes(action) || !['links', 'media', 'ips'].includes(feature)) {
                 return message.reply('Usage: `%channel allow links` | `%channel deny media` | `%channel allow ips`');
@@ -321,3 +334,4 @@ module.exports = (client) => {
 
     console.log('✔ Anti-Nuke & Permission Handler loaded.');
 };
+            
