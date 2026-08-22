@@ -1,6 +1,8 @@
 const { ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, EmbedBuilder } = require('discord.js');
 const AutoResponseConfig = require('../models/autoresponse');
 
+const IMAGE_REGEX = /\.(jpeg|jpg|gif|png|webp)($|\?.*$)/i;
+
 module.exports = (client) => {
     client.on('interactionCreate', async (interaction) => {
         if (interaction.isButton() && interaction.customId === 'open_autoresponse_modal') {
@@ -47,7 +49,7 @@ module.exports = (client) => {
     client.on('messageCreate', async (message) => {
         if (message.author.bot || !message.guild) return;
 
-        // Secret Test Command: §autoresponse
+        // Test Preview Command: §autoresponse
         if (message.content.trim() === '§autoresponse') {
             const config = await AutoResponseConfig.findOne({ guildId: message.guild.id });
             if (!config || !config.responses.length) return message.reply('⚠️ No auto responses configured!');
@@ -69,12 +71,21 @@ module.exports = (client) => {
         for (const item of config.responses) {
             const regex = new RegExp(`\\b${item.trigger}\\b`, 'i');
             if (regex.test(content)) {
-                if (item.response.startsWith('http://') || item.response.startsWith('https://')) {
-                    const embed = new EmbedBuilder().setColor('#00FFAA').setImage(item.response);
-                    await message.channel.send({ embeds: [embed] }).catch(() => message.channel.send(item.response));
-                } else {
-                    await message.channel.send(item.response);
+                const responseEmbed = new EmbedBuilder()
+                    .setColor('#5865F2')
+                    .setDescription(item.response)
+                    .setFooter({ 
+                        text: `${message.guild.name} • Auto Response`, 
+                        iconURL: message.guild.iconURL() 
+                    })
+                    .setTimestamp();
+
+                // If response is an image URL, attach it directly as embed image
+                if (IMAGE_REGEX.test(item.response) || item.response.startsWith('http://') || item.response.startsWith('https://')) {
+                    responseEmbed.setImage(item.response);
                 }
+
+                await message.channel.send({ embeds: [responseEmbed] }).catch(() => {});
                 break;
             }
         }
