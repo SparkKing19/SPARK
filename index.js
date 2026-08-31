@@ -47,7 +47,7 @@ for (const file of commandFiles) {
     }
 }
 
-// Global Command Security Guard (Bot Owner, Server Owner, Extra Owner only)
+// Global Command Security Guard
 client.on('interactionCreate', async (interaction) => {
     if (interaction.isChatInputCommand()) {
         const command = client.commands.get(interaction.commandName);
@@ -117,7 +117,16 @@ client.once('ready', async () => {
     }
 });
 
-// Helper: Build Multi-Select Feature Manager
+// Helper: Convert Image URL to Base64 Data URI
+async function urlToBase64(url) {
+    const response = await fetch(url);
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    const contentType = response.headers.get('content-type') || 'image/png';
+    return `data:${contentType};base64,${buffer.toString('base64')}`;
+}
+
+// Helper: Build Multi-Select Feature Manager & Server Avatar Card
 async function buildFeatureManager(guildId) {
     let settings = await ServerSettings.findOne({ guildId });
     if (!settings) settings = await ServerSettings.create({ guildId });
@@ -125,10 +134,14 @@ async function buildFeatureManager(guildId) {
     const guild = client.guilds.cache.get(guildId);
     const f = settings.features;
 
+    // Fetch Bot's actual member object in that guild to check current guild avatar
+    const botMember = guild ? await guild.members.fetch(client.user.id).catch(() => null) : null;
+    const currentAvatar = botMember ? botMember.displayAvatarURL() : client.user.displayAvatarURL();
+
     const embed = new EmbedBuilder()
         .setColor('#5865F2')
-        .setTitle(`🛠️ Feature Management: ${guild ? guild.name : guildId}`)
-        .setDescription('Select all features you want to **ENABLE** from the dropdown checklist. Any unselected feature will be automatically **DISABLED**.')
+        .setTitle(`🛠️ Feature & Profile Manager: ${guild ? guild.name : guildId}`)
+        .setDescription('Toggle features on/off and switch the bot\'s server profile avatar.')
         .addFields(
             { name: 'Welcome System', value: f.welcome ? '✅ `Enabled`' : '❌ `Disabled`', inline: true },
             { name: 'Ticket System', value: f.ticket ? '✅ `Enabled`' : '❌ `Disabled`', inline: true },
@@ -143,9 +156,9 @@ async function buildFeatureManager(guildId) {
             { name: 'Invite Tracker', value: f.invite ? '✅ `Enabled`' : '❌ `Disabled`', inline: true },
             { name: 'Goodbye System', value: f.goodbye ? '✅ `Enabled`' : '❌ `Disabled`', inline: true },
             { name: 'Giveaway System', value: f.giveaway ? '✅ `Enabled`' : '❌ `Disabled`', inline: true },
-            { name: 'Custom Server Logo Override', value: settings.customLogoUrl ? `[View Logo URL](${settings.customLogoUrl})` : '`None (Default Bot Avatar)`', inline: false }
+            { name: 'Server Profile Avatar Status', value: settings.customLogoUrl ? '`Using Server Icon as Avatar` 🖼️' : '`Using Global Bot Avatar` 🤖', inline: false }
         )
-        .setThumbnail(guild ? guild.iconURL() : client.user.displayAvatarURL())
+        .setThumbnail(currentAvatar)
         .setTimestamp();
 
     const featureKeys = [
@@ -180,7 +193,7 @@ async function buildFeatureManager(guildId) {
 
     const logoBtn = new ButtonBuilder()
         .setCustomId(`toggle_logo_${guildId}`)
-        .setLabel(settings.customLogoUrl ? 'Reset to Default Bot Logo' : 'Set Server Logo as Bot Logo')
+        .setLabel(settings.customLogoUrl ? 'Reset to Global Bot Profile' : 'Apply Server Icon to Bot Profile')
         .setStyle(settings.customLogoUrl ? ButtonStyle.Danger : ButtonStyle.Primary);
 
     return {
@@ -240,18 +253,18 @@ client.on('messageCreate', async (message) => {
         const options = guilds.slice(0, 25).map(g => ({
             label: g.name.substring(0, 100),
             value: `manage_guild_${g.id}`,
-            description: `Configure features for ${g.name}`
+            description: `Configure features & profile for ${g.name}`
         }));
 
         const selectMenu = new StringSelectMenuBuilder()
             .setCustomId('owner_manage_server_select')
-            .setPlaceholder('Select server to configure features & logo...')
+            .setPlaceholder('Select server to configure features & avatar...')
             .addOptions(options);
 
         const embed = new EmbedBuilder()
             .setColor('#2ECC71')
-            .setTitle('🛠️ Bot Features & Branding Manager')
-            .setDescription('Choose a server from the dropdown to configure its active modules and custom logo branding.')
+            .setTitle('🛠️ Bot Features & Guild Profile Manager')
+            .setDescription('Choose a server from the dropdown to configure its active modules and change the bot\'s server profile avatar.')
             .setThumbnail(client.user.displayAvatarURL())
             .setTimestamp();
 
@@ -279,7 +292,7 @@ client.on('messageCreate', async (message) => {
             .addFields(
                 {
                     name: '👑 Bot Owner Controls (% prefix in DM)',
-                    value: '• `%control` - Server list, bot profile & force leave\n• `%manage` - Multi-select feature checklist & logo toggle\n• `%clear <amount>` - DM message cleaner',
+                    value: '• `%control` - Server list, bot profile & force leave\n• `%manage` - Multi-select feature checklist & Server Avatar changer\n• `%clear <amount>` - DM message cleaner',
                     inline: false
                 },
                 {
@@ -362,7 +375,7 @@ client.on('interactionCreate', async (interaction) => {
     // D. %manage: Multi-Select Feature Checklist Handler
     if (interaction.isStringSelectMenu() && interaction.customId.startsWith('multi_toggle_feature_')) {
         const guildId = interaction.customId.replace('multi_toggle_feature_', '');
-        const selectedFeatures = interaction.values; // Array of selected feature keys
+        const selectedFeatures = interaction.values;
 
         let settings = await ServerSettings.findOne({ guildId });
         if (!settings) settings = new ServerSettings({ guildId });
@@ -373,7 +386,6 @@ client.on('interactionCreate', async (interaction) => {
             'youtube', 'invite', 'goodbye', 'giveaway'
         ];
 
-        // Enable selected, disable unselected
         allFeatureKeys.forEach(key => {
             settings.features[key] = selectedFeatures.includes(key);
         });
@@ -385,23 +397,52 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.update(updatedPanel);
     }
 
-    // E. %manage: Toggle Custom Server Logo Branding
+    // E. %manage: Real Server Profile Avatar Change (via REST API)
     if (interaction.isButton() && interaction.customId.startsWith('toggle_logo_')) {
         const guildId = interaction.customId.replace('toggle_logo_', '');
         const targetGuild = client.guilds.cache.get(guildId);
 
+        if (!targetGuild) return interaction.reply({ content: '❌ Guild not found.', ephemeral: true });
+
+        await interaction.deferUpdate();
+
         let settings = await ServerSettings.findOne({ guildId });
         if (!settings) settings = new ServerSettings({ guildId });
 
-        if (settings.customLogoUrl) {
-            settings.customLogoUrl = null;
-        } else {
-            settings.customLogoUrl = targetGuild ? targetGuild.iconURL() : null;
-        }
+        const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
 
-        await settings.save();
-        const updatedPanel = await buildFeatureManager(guildId);
-        return interaction.update(updatedPanel);
+        try {
+            if (settings.customLogoUrl) {
+                // Revert bot's server avatar to default
+                await rest.patch(Routes.guildMember(guildId, '@me'), {
+                    body: { avatar: null }
+                });
+                settings.customLogoUrl = null;
+            } else {
+                // Apply server's icon as bot's server-specific profile avatar
+                const guildIconUrl = targetGuild.iconURL({ extension: 'png', size: 1024 });
+                if (!guildIconUrl) {
+                    return interaction.followUp({ content: '❌ This server does not have an icon set.', ephemeral: true });
+                }
+
+                const base64Avatar = await urlToBase64(guildIconUrl);
+                await rest.patch(Routes.guildMember(guildId, '@me'), {
+                    body: { avatar: base64Avatar }
+                });
+
+                settings.customLogoUrl = guildIconUrl;
+            }
+
+            await settings.save();
+            const updatedPanel = await buildFeatureManager(guildId);
+            return interaction.editReply(updatedPanel);
+        } catch (err) {
+            console.error('Server Avatar Update Error:', err);
+            return interaction.followUp({ 
+                content: `❌ Failed to update Server Avatar: \`${err.message}\` (Ensure bot has Change Nickname/Guild Profile permissions).`, 
+                ephemeral: true 
+            });
+        }
     }
 });
 
@@ -410,4 +451,4 @@ mongoose.connect(process.env.MONGO_URI)
     .catch(err => console.error('MongoDB Connection Error:', err));
 
 client.login(process.env.DISCORD_TOKEN);
-        
+            
