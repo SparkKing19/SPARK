@@ -33,7 +33,7 @@ module.exports = {
                     { name: 'Page 10 - YouTube Notifier (Book 2)', value: 10 },
                     // Book 3
                     { name: 'Page 11 - Invite System (Book 3)', value: 11 },
-                    { name: 'Page 12 - Coming Soon (Book 3)', value: 12 },
+                    { name: 'Page 12 - Goodbye System (Book 3)', value: 12 },
                     { name: 'Page 13 - Coming Soon (Book 3)', value: 13 },
                     { name: 'Page 14 - Coming Soon (Book 3)', value: 14 },
                     { name: 'Page 15 - Coming Soon (Book 3)', value: 15 }
@@ -141,8 +141,23 @@ module.exports = {
                     .setStyle(ButtonStyle.Primary)
             );
             await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
+
+        } else if (page === 12) {
+            const embed = new EmbedBuilder()
+                .setTitle('⚙️ [Book 3] Goodbye System')
+                .setDescription('Configure departure messages, leave channel, embed colors & banner.')
+                .setColor('#ED4245');
+
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId('open_goodbye_modal')
+                    .setLabel('Setup Goodbye')
+                    .setEmoji('<a:ALERT:1540171495022530701>')
+                    .setStyle(ButtonStyle.Danger)
+            );
+            await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
             
-        } else if (page >= 12 && page <= 15) {
+        } else if (page >= 13 && page <= 15) {
             await interaction.reply({ 
                 content: `🚧 **[Book 3] Page ${page}** is currently under development!`, 
                 ephemeral: true 
@@ -150,4 +165,3 @@ module.exports = {
         }
     }
 };
-                
