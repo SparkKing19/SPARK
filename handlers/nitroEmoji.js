@@ -1,6 +1,5 @@
 const { ChannelType } = require('discord.js');
 
-// Webhook Fetch or Create Helper
 async function getOrCreateWebhook(channel) {
     if (!channel.guild || channel.type !== ChannelType.GuildText) return null;
 
@@ -18,21 +17,20 @@ async function getOrCreateWebhook(channel) {
     return webhook;
 }
 
-// Global Emoji Finder across all servers & app portal
 function findGlobalEmoji(client, currentGuild, emojiName) {
     const targetName = emojiName.toLowerCase();
 
-    // 1. Check Developer Portal Application Emojis
+    // 1. Application Emojis
     if (client.application && client.application.emojis) {
         const appEmoji = client.application.emojis.cache.find(e => e.name.toLowerCase() === targetName);
         if (appEmoji) return appEmoji;
     }
 
-    // 2. Check Current Server Emojis
+    // 2. Local Server Emojis
     const localEmoji = currentGuild.emojis.cache.find(e => e.name.toLowerCase() === targetName);
     if (localEmoji) return localEmoji;
 
-    // 3. Check ALL other servers where bot is added
+    // 3. Global Guild Emojis
     for (const guild of client.guilds.cache.values()) {
         const externalEmoji = guild.emojis.cache.find(e => e.name.toLowerCase() === targetName);
         if (externalEmoji) return externalEmoji;
@@ -57,42 +55,27 @@ module.exports = (client) => {
     });
 
     client.on('messageCreate', async (message) => {
-        // Bots, Webhooks aur DMs ignore
         if (message.author.bot || message.webhookId || !message.guild) return;
 
         const content = message.content;
         if (!content) return;
 
-        // Strip out already valid Nitro emojis (<:name:id> or <a:name:id>) to test only raw plain text
-        const contentWithoutRenderedEmojis = content.replace(/<a?:[a-zA-Z0-9_~]+:\d+>/g, '');
-
-        // Match only standalone plain text :emojiname:
-        const unrenderedEmojiRegex = /(?<!\w):([a-zA-Z0-9_~]+):(?!\w)/g;
-        const matches = [...contentWithoutRenderedEmojis.matchAll(unrenderedEmojiRegex)];
-
-        if (!matches || matches.length === 0) return;
-
         let hasReplacements = false;
-        let newContent = content;
 
-        for (const match of matches) {
-            const rawMatch = match[0]; // e.g. :pepe:
-            const emojiName = match[1]; // e.g. pepe
+        // Matches :emojiname: only when NOT part of an existing <a:name:id> or <:name:id>
+        const emojiRegex = /(?<!<a?:)(?<!\w):([a-zA-Z0-9_~]+):(?!\d+>)(?!\w)/g;
 
+        const newContent = content.replace(emojiRegex, (match, emojiName) => {
             const targetEmoji = findGlobalEmoji(client, message.guild, emojiName);
-
             if (targetEmoji) {
-                const formattedEmoji = targetEmoji.animated 
+                hasReplacements = true;
+                return targetEmoji.animated 
                     ? `<a:${targetEmoji.name}:${targetEmoji.id}>` 
                     : `<:${targetEmoji.name}:${targetEmoji.id}>`;
-
-                // Replace only the unrendered raw text occurrence
-                newContent = newContent.replace(rawMatch, formattedEmoji);
-                hasReplacements = true;
             }
-        }
+            return match; // Leave untouched if emoji doesn't exist
+        });
 
-        // Only delete & proxy if at least one plain-text emoji was successfully replaced
         if (hasReplacements) {
             try {
                 const webhook = await getOrCreateWebhook(message.channel);
