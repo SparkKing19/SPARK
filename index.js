@@ -117,7 +117,7 @@ client.once('ready', async () => {
     }
 });
 
-// Helper: Build Feature Management Panel
+// Helper: Build Multi-Select Feature Manager
 async function buildFeatureManager(guildId) {
     let settings = await ServerSettings.findOne({ guildId });
     if (!settings) settings = await ServerSettings.create({ guildId });
@@ -128,7 +128,7 @@ async function buildFeatureManager(guildId) {
     const embed = new EmbedBuilder()
         .setColor('#5865F2')
         .setTitle(`🛠️ Feature Management: ${guild ? guild.name : guildId}`)
-        .setDescription('Toggle features on/off for this server using the interactive dropdown below.')
+        .setDescription('Select all features you want to **ENABLE** from the dropdown checklist. Any unselected feature will be automatically **DISABLED**.')
         .addFields(
             { name: 'Welcome System', value: f.welcome ? '✅ `Enabled`' : '❌ `Disabled`', inline: true },
             { name: 'Ticket System', value: f.ticket ? '✅ `Enabled`' : '❌ `Disabled`', inline: true },
@@ -149,19 +149,34 @@ async function buildFeatureManager(guildId) {
         .setTimestamp();
 
     const featureKeys = [
-        'welcome', 'ticket', 'onboarding', 'stats', 'store', 
-        'moderation', 'autoresponse', 'voicegen', 'apply', 
-        'youtube', 'invite', 'goodbye', 'giveaway'
+        { label: 'Welcome System', value: 'welcome' },
+        { label: 'Ticket System', value: 'ticket' },
+        { label: 'Onboarding System', value: 'onboarding' },
+        { label: 'Server Stats', value: 'stats' },
+        { label: 'Store System', value: 'store' },
+        { label: 'Moderation System', value: 'moderation' },
+        { label: 'Auto Response', value: 'autoresponse' },
+        { label: 'Voice Generator', value: 'voicegen' },
+        { label: 'Staff Application', value: 'apply' },
+        { label: 'YouTube Notifier', value: 'youtube' },
+        { label: 'Invite Tracker', value: 'invite' },
+        { label: 'Goodbye System', value: 'goodbye' },
+        { label: 'Giveaway System', value: 'giveaway' }
     ];
 
-    const selectMenu = new StringSelectMenuBuilder()
-        .setCustomId(`toggle_feature_${guildId}`)
-        .setPlaceholder('Click to Toggle a Feature Enable / Disable...')
-        .addOptions(featureKeys.map(k => ({
-            label: `${k.toUpperCase()} (${f[k] ? '✅ Enabled' : '❌ Disabled'})`,
-            value: k,
-            description: `Click to ${f[k] ? 'Disable ❌' : 'Enable ✅'} ${k} feature`
-        })));
+    const options = featureKeys.map(item => ({
+        label: item.label,
+        value: item.value,
+        description: `Check to enable ${item.label}`,
+        default: Boolean(f[item.value])
+    }));
+
+    const multiSelectMenu = new StringSelectMenuBuilder()
+        .setCustomId(`multi_toggle_feature_${guildId}`)
+        .setPlaceholder('Select enabled features (Multi-Select Checklist)...')
+        .setMinValues(0)
+        .setMaxValues(options.length)
+        .addOptions(options);
 
     const logoBtn = new ButtonBuilder()
         .setCustomId(`toggle_logo_${guildId}`)
@@ -171,7 +186,7 @@ async function buildFeatureManager(guildId) {
     return {
         embeds: [embed],
         components: [
-            new ActionRowBuilder().addComponents(selectMenu),
+            new ActionRowBuilder().addComponents(multiSelectMenu),
             new ActionRowBuilder().addComponents(logoBtn)
         ]
     };
@@ -264,7 +279,7 @@ client.on('messageCreate', async (message) => {
             .addFields(
                 {
                     name: '👑 Bot Owner Controls (% prefix in DM)',
-                    value: '• `%control` - Server list, bot profile & force leave\n• `%manage` - Server features checklist & logo toggle\n• `%clear <amount>` - DM message cleaner',
+                    value: '• `%control` - Server list, bot profile & force leave\n• `%manage` - Multi-select feature checklist & logo toggle\n• `%clear <amount>` - DM message cleaner',
                     inline: false
                 },
                 {
@@ -344,15 +359,25 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply(panelData);
     }
 
-    // D. %manage: Toggle Feature
-    if (interaction.isStringSelectMenu() && interaction.customId.startsWith('toggle_feature_')) {
-        const guildId = interaction.customId.replace('toggle_feature_', '');
-        const featureKey = interaction.values[0];
+    // D. %manage: Multi-Select Feature Checklist Handler
+    if (interaction.isStringSelectMenu() && interaction.customId.startsWith('multi_toggle_feature_')) {
+        const guildId = interaction.customId.replace('multi_toggle_feature_', '');
+        const selectedFeatures = interaction.values; // Array of selected feature keys
 
         let settings = await ServerSettings.findOne({ guildId });
         if (!settings) settings = new ServerSettings({ guildId });
 
-        settings.features[featureKey] = !settings.features[featureKey];
+        const allFeatureKeys = [
+            'welcome', 'ticket', 'onboarding', 'stats', 'store', 
+            'moderation', 'autoresponse', 'voicegen', 'apply', 
+            'youtube', 'invite', 'goodbye', 'giveaway'
+        ];
+
+        // Enable selected, disable unselected
+        allFeatureKeys.forEach(key => {
+            settings.features[key] = selectedFeatures.includes(key);
+        });
+
         settings.markModified('features');
         await settings.save();
 
@@ -369,9 +394,9 @@ client.on('interactionCreate', async (interaction) => {
         if (!settings) settings = new ServerSettings({ guildId });
 
         if (settings.customLogoUrl) {
-            settings.customLogoUrl = null; // Revert to bot avatar
+            settings.customLogoUrl = null;
         } else {
-            settings.customLogoUrl = targetGuild ? targetGuild.iconURL() : null; // Use Server icon
+            settings.customLogoUrl = targetGuild ? targetGuild.iconURL() : null;
         }
 
         await settings.save();
@@ -385,4 +410,4 @@ mongoose.connect(process.env.MONGO_URI)
     .catch(err => console.error('MongoDB Connection Error:', err));
 
 client.login(process.env.DISCORD_TOKEN);
-            
+        
