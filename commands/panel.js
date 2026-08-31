@@ -1,4 +1,20 @@
 const { SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const ServerSettings = require('../models/serverSettings');
+
+const PAGE_TO_FEATURE = {
+    1: { key: 'welcome', name: 'Welcome System' },
+    2: { key: 'ticket', name: 'Ticket System' },
+    3: { key: 'onboarding', name: 'Onboarding System' },
+    4: { key: 'stats', name: 'Server Stats' },
+    5: { key: 'store', name: 'Store System' },
+    6: { key: 'moderation', name: 'Moderation System' },
+    7: { key: 'autoresponse', name: 'Auto Response' },
+    8: { key: 'voicegen', name: 'Voice Generator' },
+    9: { key: 'apply', name: 'Staff Application' },
+    10: { key: 'youtube', name: 'YouTube Notifier' },
+    11: { key: 'invite', name: 'Invite Tracker' },
+    12: { key: 'goodbye', name: 'Goodbye System' }
+};
 
 module.exports = {
     data: new SlashCommandBuilder()
@@ -43,15 +59,22 @@ module.exports = {
         const book = interaction.options.getInteger('book');
         const page = interaction.options.getInteger('page');
 
-        // Validation Checks
-        if (book === 1 && (page < 1 || page > 5)) {
-            return interaction.reply({ content: '❌ Only **Pages 1 to 5** are available in Book 1!', ephemeral: true });
-        }
-        if (book === 2 && (page < 6 || page > 10)) {
-            return interaction.reply({ content: '❌ Only **Pages 6 to 10** are available in Book 2!', ephemeral: true });
-        }
-        if (book === 3 && (page < 11 || page > 15)) {
-            return interaction.reply({ content: '❌ Only **Pages 11 to 15** are available in Book 3!', ephemeral: true });
+        // Page Range Validation
+        if (book === 1 && (page < 1 || page > 5)) return interaction.reply({ content: '❌ Only **Pages 1 to 5** are available in Book 1!', ephemeral: true });
+        if (book === 2 && (page < 6 || page > 10)) return interaction.reply({ content: '❌ Only **Pages 6 to 10** are available in Book 2!', ephemeral: true });
+        if (book === 3 && (page < 11 || page > 15)) return interaction.reply({ content: '❌ Only **Pages 11 to 15** are available in Book 3!', ephemeral: true });
+
+        // Database Feature Status Guard
+        const featureInfo = PAGE_TO_FEATURE[page];
+        if (featureInfo) {
+            const settings = await ServerSettings.findOne({ guildId: interaction.guild.id });
+            // Agar %manage me kisi feature ko uncheck (false) kiya hai to setup panel block ho jayega
+            if (settings && settings.features && settings.features[featureInfo.key] === false) {
+                return interaction.reply({
+                    content: `❌ The **${featureInfo.name}** is currently **DISABLED** for this server by the Bot Owner.\nContact the Bot Owner to enable this feature via \`%manage\`.`,
+                    ephemeral: true
+                });
+            }
         }
 
         // ================= BOOK 1 =================
@@ -128,40 +151,22 @@ module.exports = {
 
         // ================= BOOK 3 =================
         } else if (page === 11) {
-            const embed = new EmbedBuilder()
-                .setTitle('⚙️ [Book 3] Invite Tracker System')
-                .setDescription('Configure invite notifications & logs channel.')
-                .setColor('#5865F2');
-
+            const embed = new EmbedBuilder().setTitle('⚙️ [Book 3] Invite Tracker System').setDescription('Configure invite notifications & logs channel.').setColor('#5865F2');
             const row = new ActionRowBuilder().addComponents(
-                new ButtonBuilder()
-                    .setCustomId('open_invite_modal')
-                    .setLabel('Setup Invite System')
-                    .setEmoji('<a:WELCOME:1540171665047035996>')
-                    .setStyle(ButtonStyle.Primary)
+                new ButtonBuilder().setCustomId('open_invite_modal').setLabel('Setup Invite System').setEmoji('<a:WELCOME:1540171665047035996>').setStyle(ButtonStyle.Primary)
             );
             await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
 
         } else if (page === 12) {
-            const embed = new EmbedBuilder()
-                .setTitle('⚙️ [Book 3] Goodbye System')
-                .setDescription('Configure departure messages, leave channel, embed colors & banner.')
-                .setColor('#ED4245');
-
+            const embed = new EmbedBuilder().setTitle('⚙️ [Book 3] Goodbye System').setDescription('Configure departure messages, leave channel, embed colors & banner.').setColor('#ED4245');
             const row = new ActionRowBuilder().addComponents(
-                new ButtonBuilder()
-                    .setCustomId('open_goodbye_modal')
-                    .setLabel('Setup Goodbye')
-                    .setEmoji('<a:ALERT:1540171495022530701>')
-                    .setStyle(ButtonStyle.Danger)
+                new ButtonBuilder().setCustomId('open_goodbye_modal').setLabel('Setup Goodbye').setEmoji('<a:ALERT:1540171495022530701>').setStyle(ButtonStyle.Danger)
             );
             await interaction.reply({ embeds: [embed], components: [row], ephemeral: true });
-            
+
         } else if (page >= 13 && page <= 15) {
-            await interaction.reply({ 
-                content: `🚧 **[Book 3] Page ${page}** is currently under development!`, 
-                ephemeral: true 
-            });
+            await interaction.reply({ content: `🚧 **[Book 3] Page ${page}** is currently under development!`, ephemeral: true });
         }
     }
 };
+                                                                                                       
