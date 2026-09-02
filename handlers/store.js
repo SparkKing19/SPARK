@@ -12,7 +12,14 @@ const {
 } = require('discord.js');
 const StoreConfig = require('../models/store');
 
-// Step 1: Category Dropdown Panel
+// Price parser helper (e.g., "$10", "₹500", "20", "15.50" -> 10, 500, 20, 15.5)
+function parseNumericPrice(priceStr) {
+    if (typeof priceStr === 'number') return priceStr;
+    const match = String(priceStr).replace(/,/g, '').match(/[\d]+(?:\.[\d]+)?/);
+    return match ? parseFloat(match[0]) : 0;
+}
+
+// Category Dropdown Panel
 function createStoreCategoryPanel(config, isTest = false) {
     const embed = new EmbedBuilder()
         .setColor('#F1C40F')
@@ -24,7 +31,6 @@ function createStoreCategoryPanel(config, isTest = false) {
         embed.setImage(config.bannerUrl);
     }
 
-    // Extract unique categories
     const categories = Array.from(new Set((config.items || []).map(i => i.category).filter(Boolean)));
     const options = categories.length > 0
         ? categories.map(cat => ({
@@ -153,13 +159,11 @@ module.exports = (client) => {
             const rawCmds = interaction.fields.getTextInputValue('store_cmds');
             const bannerUrl = interaction.fields.getTextInputValue('store_banner');
 
-            // Items Parse
             const items = rawItems.split('||').map(entry => {
                 const parts = entry.split(',').map(p => p.trim());
                 return { category: parts[0] || 'General', name: parts[1] || 'Item', price: parts[2] || '$0.00' };
             }).filter(i => i.name);
 
-            // IDs Parse
             const idParts = rawIds.split(',').map(s => s.trim());
             const storeRoleId = idParts[0] || null;
             const panelChannelId = idParts[1] || null;
@@ -167,7 +171,6 @@ module.exports = (client) => {
             const cmdsChannelId = idParts[3] || null;
             const logsChannelId = idParts[4] || null;
 
-            // Texts Parse
             const textParts = rawTexts.split('||').map(s => s.trim());
             const panelDesc = textParts[0] || undefined;
             const orderDesc = textParts[1] || undefined;
@@ -175,7 +178,6 @@ module.exports = (client) => {
             const rejectedDm = textParts[3] || undefined;
             const pendingDm = textParts[4] || undefined;
 
-            // Commands Parse
             const commands = rawCmds.split('||').map(entry => {
                 const parts = entry.split(':');
                 return { itemName: parts[0]?.trim(), command: parts.slice(1).join(':').trim() };
@@ -207,7 +209,7 @@ module.exports = (client) => {
             await interaction.editReply({ content: '✅ Store System successfully configured and Category Panel sent!' });
         }
 
-        // 3. Demo Handlers
+        // 3. Demo Preview Handlers
         if (interaction.isStringSelectMenu() && (interaction.customId === 'test_store_category' || interaction.customId === 'test_store_item')) {
             return interaction.reply({ 
                 content: '⚠️ **[DEMO PREVIEW]** This is only a preview. Please place actual orders from the configured setup channel panel.', 
@@ -215,14 +217,13 @@ module.exports = (client) => {
             });
         }
 
-        // 4. Step 1 -> Category Selected: Send Items Dropdown
+        // 4. Step 1 -> Category Selected: Send Items Multi-Select Dropdown & List
         if (interaction.isStringSelectMenu() && interaction.customId === 'store_select_category') {
             const config = await StoreConfig.findOne({ guildId: interaction.guild.id });
             if (!config) return interaction.reply({ content: '⚠️ Store is not configured yet.', ephemeral: true });
 
             const selectedCatClean = interaction.values[0].replace('store_cat_', '');
             
-            // Filter items by selected category
             const categoryItems = config.items.filter(item => 
                 item.category.toLowerCase().replace(/\s+/g, '_') === selectedCatClean
             );
@@ -240,44 +241,79 @@ module.exports = (client) => {
                 };
             });
 
+            // Multi-Select dropdown (Min 1, Max = Total items up to 25)
             const itemsMenu = new StringSelectMenuBuilder()
                 .setCustomId('store_select_item')
-                .setPlaceholder(`Choose an item from ${categoryItems[0].category}...`)
+                .setPlaceholder(`Select 1 or more items from ${categoryItems[0].category}...`)
+                .setMinValues(1)
+                .setMaxValues(Math.min(itemOptions.length, 25))
                 .addOptions(itemOptions.slice(0, 25));
 
             const row = new ActionRowBuilder().addComponents(itemsMenu);
 
+            const itemsListing = categoryItems
+                .map((item, idx) => `**${idx + 1}.** \`${item.name}\` — **${item.price}**`)
+                .join('\n');
+
             const catEmbed = new EmbedBuilder()
                 .setColor('#F1C40F')
                 .setTitle(`📁 Category: ${categoryItems[0].category}`)
-                .setDescription('Select your desired **Item** from the dropdown menu below.')
+                .setDescription(
+                    `Here are the items available in this category:\n\n${itemsListing}\n\n` +
+                    `> Select **one or multiple items** from the dropdown below to calculate your total and proceed.`
+                )
                 .setTimestamp();
 
             await interaction.reply({ embeds: [catEmbed], components: [row], ephemeral: true });
         }
 
-        // 5. Step 2 -> Item Selected: Show Item Preview + Order Now Button
+        // 5. Step 2 -> Items Selected: Calculate Total Bill & Show Order Button
         if (interaction.isStringSelectMenu() && interaction.customId === 'store_select_item') {
             const config = await StoreConfig.findOne({ guildId: interaction.guild.id });
             if (!config) return interaction.reply({ content: '⚠️ Store is not configured yet.', ephemeral: true });
 
-            const itemIndex = parseInt(interaction.values[0].replace('store_item_', ''), 10);
-            const selectedItem = config.items[itemIndex] || config.items[0];
+            const selectedIndices = interaction.values.map(v => parseInt(v.replace('store_item_', ''), 10));
+            const selectedItems = selectedIndices.map(idx => config.items[idx]).filter(Boolean);
+
+            if (selectedItems.length === 0) {
+                return interaction.reply({ content: '❌ Invalid items selected.', ephemeral: true });
+            }
+
+            let totalNumeric = 0;
+            let currencySymbol = '$';
+
+            const summaryLines = selectedItems.map((item, idx) => {
+                const numeric = parseNumericPrice(item.price);
+                totalNumeric += numeric;
+
+                const detectedCurrency = String(item.price).replace(/[\d\s.,]/g, '');
+                if (detectedCurrency) currencySymbol = detectedCurrency;
+
+                return `\`${idx + 1}.\` **${item.name}** [${item.category}] — \`${item.price}\``;
+            });
+
+            const totalFormatted = `${currencySymbol}${totalNumeric % 1 === 0 ? totalNumeric : totalNumeric.toFixed(2)}`;
 
             const previewEmbed = new EmbedBuilder()
                 .setColor('#F1C40F')
-                .setTitle(`🛒 Selected: ${selectedItem.name}`)
-                .addFields(
-                    { name: '📁 Category', value: selectedItem.category, inline: true },
-                    { name: '💰 Price', value: selectedItem.price, inline: true }
+                .setTitle('🛒 Order Summary & Billing')
+                .setDescription(
+                    `### Selected Item(s) (${selectedItems.length})\n` +
+                    summaryLines.join('\n') +
+                    `\n\n──────────────────────────\n` +
+                    `💳 **Total Amount:** \`${totalFormatted}\`\n` +
+                    `──────────────────────────\n\n` +
+                    `Click **Proceed to Order** to enter your In-Game Name and open an order ticket.`
                 )
-                .setDescription('Click the **Order Now** button below to confirm your order.')
                 .setTimestamp();
+
+            // Store selected item indexes in button customId (comma separated)
+            const indexesPayload = selectedIndices.join('_');
 
             const row = new ActionRowBuilder().addComponents(
                 new ButtonBuilder()
-                    .setCustomId(`store_ordernow_${itemIndex}`)
-                    .setLabel('Order Now')
+                    .setCustomId(`store_ordernow_${indexesPayload}`)
+                    .setLabel(`Proceed to Order (${totalFormatted})`)
                     .setStyle(ButtonStyle.Success)
                     .setEmoji('🛍️')
             );
@@ -285,12 +321,12 @@ module.exports = (client) => {
             await interaction.update({ embeds: [previewEmbed], components: [row] });
         }
 
-        // 6. Step 3 -> Order Now Clicked: Open IGN Modal
+        // 6. Step 3 -> Proceed to Order Clicked: Open IGN Modal
         if (interaction.isButton() && interaction.customId.startsWith('store_ordernow_')) {
-            const itemIndex = interaction.customId.replace('store_ordernow_', '');
+            const indexesPayload = interaction.customId.replace('store_ordernow_', '');
 
             const modal = new ModalBuilder()
-                .setCustomId(`store_ign_modal_${itemIndex}`)
+                .setCustomId(`store_ign_modal_${indexesPayload}`)
                 .setTitle('In-Game Username Required');
 
             const ignInput = new TextInputBuilder()
@@ -304,17 +340,39 @@ module.exports = (client) => {
             await interaction.showModal(modal);
         }
 
-        // 7. Step 4 -> IGN Submitted: Create Order Channel
+        // 7. Step 4 -> IGN Submitted: Create Multi-Item Order Channel
         if (interaction.isModalSubmit() && interaction.customId.startsWith('store_ign_modal_')) {
             await interaction.deferReply({ ephemeral: true });
 
-            const itemIndex = parseInt(interaction.customId.replace('store_ign_modal_', ''), 10);
+            const indexesPayload = interaction.customId.replace('store_ign_modal_', '');
+            const selectedIndices = indexesPayload.split('_').map(Number);
             const inGameUsername = interaction.fields.getTextInputValue('store_ign_input').trim();
 
             const config = await StoreConfig.findOne({ guildId: interaction.guild.id });
             if (!config) return interaction.editReply({ content: '⚠️ Store is not configured yet.' });
 
-            const selectedItem = config.items[itemIndex] || { category: 'Store', name: 'Item', price: '$0.00' };
+            const selectedItems = selectedIndices.map(idx => config.items[idx]).filter(Boolean);
+            if (selectedItems.length === 0) return interaction.editReply({ content: '❌ Order items could not be loaded.' });
+
+            let totalNumeric = 0;
+            let currencySymbol = '$';
+
+            const itemNamesArray = [];
+            const categoryNamesSet = new Set();
+
+            selectedItems.forEach(item => {
+                const numeric = parseNumericPrice(item.price);
+                totalNumeric += numeric;
+                itemNamesArray.push(item.name);
+                categoryNamesSet.add(item.category);
+
+                const detectedCurrency = String(item.price).replace(/[\d\s.,]/g, '');
+                if (detectedCurrency) currencySymbol = detectedCurrency;
+            });
+
+            const combinedItemNames = itemNamesArray.join(', ');
+            const combinedCategories = Array.from(categoryNamesSet).join(', ');
+            const totalFormatted = `${currencySymbol}${totalNumeric % 1 === 0 ? totalNumeric : totalNumeric.toFixed(2)}`;
 
             const updatedConfig = await StoreConfig.findOneAndUpdate(
                 { guildId: interaction.guild.id },
@@ -362,9 +420,9 @@ module.exports = (client) => {
                             orderNumber: countStr,
                             userId: interaction.user.id,
                             username: inGameUsername,
-                            itemName: selectedItem.name,
-                            category: selectedItem.category,
-                            price: selectedItem.price,
+                            itemName: combinedItemNames,
+                            category: combinedCategories,
+                            price: totalFormatted,
                             channelId: orderChannel.id,
                             createdAt: new Date(),
                             lastNotified: new Date()
@@ -373,10 +431,14 @@ module.exports = (client) => {
                 }
             );
 
-            const orderText = (config.orderDesc || '✦ NEW ORDER RECEIVED ✦\n\n◆ **Category:** {category}\n◆ **Item:** {item}\n◆ **Price:** {price}\n◆ **IGN:** {username}\n◆ **Buyer:** {user}')
-                .replace(/{category}/gi, selectedItem.category)
-                .replace(/{item}/gi, selectedItem.name)
-                .replace(/{price}/gi, selectedItem.price)
+            const itemsBreakdown = selectedItems
+                .map((item, idx) => `\`${idx + 1}.\` **${item.name}** [${item.category}] — \`${item.price}\``)
+                .join('\n');
+
+            const orderText = (config.orderDesc || '✦ NEW ORDER RECEIVED ✦\n\n◆ **Category:** {category}\n◆ **Items:** {item}\n◆ **Total Billing:** {price}\n◆ **IGN:** {username}\n◆ **Buyer:** {user}')
+                .replace(/{category}/gi, combinedCategories)
+                .replace(/{item}/gi, combinedItemNames)
+                .replace(/{price}/gi, totalFormatted)
                 .replace(/{username}/gi, inGameUsername)
                 .replace(/{user}/gi, `<@${interaction.user.id}>`);
 
@@ -384,6 +446,10 @@ module.exports = (client) => {
                 .setColor('#2ECC71')
                 .setTitle(`🛍️ Order #${countStr}`)
                 .setDescription(orderText)
+                .addFields(
+                    { name: '📦 Detailed Cart Breakdown', value: itemsBreakdown, inline: false },
+                    { name: '💳 Total Billing Amount', value: `\`${totalFormatted}\``, inline: true }
+                )
                 .setFooter({ text: `Buyer: ${interaction.user.tag}` })
                 .setTimestamp();
 
@@ -409,7 +475,7 @@ module.exports = (client) => {
             await interaction.editReply({ content: `✅ Your order channel has been created: ${orderChannel}` });
         }
 
-        // 8. Handle Approve (Command Dispatch, DM & Store Logs)
+        // 8. Handle Approve (Executes all matching commands for multi-items)
         if (interaction.isButton() && interaction.customId.startsWith('order_approve_')) {
             const orderNum = interaction.customId.replace('order_approve_', '');
             const config = await StoreConfig.findOne({ guildId: interaction.guild.id });
@@ -426,15 +492,20 @@ module.exports = (client) => {
                 return interaction.reply({ content: '⚠️ Order details not found in database.', ephemeral: true });
             }
 
-            await interaction.reply({ content: '✅ Order APPROVED! Saving logs and deleting channel...' });
+            await interaction.reply({ content: '✅ Order APPROVED! Executing commands and saving logs...' });
 
-            // In-Game Command Execution
-            const matchingCmd = config.commands?.find(c => c.itemName.toLowerCase() === orderData.itemName.toLowerCase());
-            if (matchingCmd && config.cmdsChannelId) {
+            // In-Game Command Execution for all ordered items
+            if (config.cmdsChannelId) {
                 const cmdsChannel = interaction.guild.channels.cache.get(config.cmdsChannelId);
                 if (cmdsChannel) {
-                    const finalCmd = matchingCmd.command.replace(/{username}/gi, orderData.username);
-                    await cmdsChannel.send(finalCmd).catch(console.error);
+                    const boughtItemNames = orderData.itemName.split(',').map(s => s.trim().toLowerCase());
+                    for (const bought of boughtItemNames) {
+                        const matchingCmd = config.commands?.find(c => c.itemName.toLowerCase() === bought);
+                        if (matchingCmd) {
+                            const finalCmd = matchingCmd.command.replace(/{username}/gi, orderData.username);
+                            await cmdsChannel.send(finalCmd).catch(console.error);
+                        }
+                    }
                 }
             }
 
@@ -457,7 +528,7 @@ module.exports = (client) => {
                 await buyer.send({ embeds: [embed] }).catch(() => {});
             }
 
-            // Send to Store Logs Channel
+            // Store Logs
             if (config.logsChannelId) {
                 const logsChannel = interaction.guild.channels.cache.get(config.logsChannelId);
                 if (logsChannel) {
@@ -469,8 +540,8 @@ module.exports = (client) => {
                             { name: '🛡️ Approved By', value: `<@${interaction.user.id}>`, inline: true },
                             { name: '🎮 In-Game IGN', value: `\`${orderData.username}\``, inline: true },
                             { name: '📁 Category', value: orderData.category || 'General', inline: true },
-                            { name: '🛒 Item', value: orderData.itemName, inline: true },
-                            { name: '💰 Price', value: orderData.price, inline: true }
+                            { name: '🛒 Items', value: orderData.itemName, inline: true },
+                            { name: '💰 Total Billing', value: orderData.price, inline: true }
                         )
                         .setTimestamp();
 
@@ -488,7 +559,7 @@ module.exports = (client) => {
             }, 5000);
         }
 
-        // 9. Handle Reject (DM & Store Logs)
+        // 9. Handle Reject
         if (interaction.isButton() && interaction.customId.startsWith('order_reject_')) {
             const orderNum = interaction.customId.replace('order_reject_', '');
             const config = await StoreConfig.findOne({ guildId: interaction.guild.id });
@@ -507,7 +578,6 @@ module.exports = (client) => {
 
             await interaction.reply({ content: '❌ Order REJECTED! Notifying user and deleting channel...' });
 
-            // Buyer DM
             const buyer = await client.users.fetch(orderData.userId).catch(() => null);
             if (buyer) {
                 const dmMessage = (config.rejectedDm || '❌ Hey {user}, your order for **{item}** was REJECTED.')
@@ -526,7 +596,6 @@ module.exports = (client) => {
                 await buyer.send({ embeds: [embed] }).catch(() => {});
             }
 
-            // Send to Store Logs Channel
             if (config.logsChannelId) {
                 const logsChannel = interaction.guild.channels.cache.get(config.logsChannelId);
                 if (logsChannel) {
@@ -538,8 +607,8 @@ module.exports = (client) => {
                             { name: '🛡️ Rejected By', value: `<@${interaction.user.id}>`, inline: true },
                             { name: '🎮 In-Game IGN', value: `\`${orderData.username}\``, inline: true },
                             { name: '📁 Category', value: orderData.category || 'General', inline: true },
-                            { name: '🛒 Item', value: orderData.itemName, inline: true },
-                            { name: '💰 Price', value: orderData.price, inline: true }
+                            { name: '🛒 Items', value: orderData.itemName, inline: true },
+                            { name: '💰 Total Billing', value: orderData.price, inline: true }
                         )
                         .setTimestamp();
 
@@ -574,5 +643,5 @@ module.exports = (client) => {
         }
     });
 
-    console.log('✔ Store handler loaded.');
+    console.log('✔ Multi-Select Store handler loaded.');
 };
