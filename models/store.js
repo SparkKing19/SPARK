@@ -1,9 +1,11 @@
 const mongoose = require('mongoose');
 
 const storeItemSchema = new mongoose.Schema({
-    category: String,
-    name: String,
-    price: String
+    category: { type: String, default: 'General' },
+    name: { type: String, required: true },
+    price: { type: String, required: true },
+    isAmount: { type: Boolean, default: false },
+    isMonths: { type: Boolean, default: false }
 });
 
 const storeCmdSchema = new mongoose.Schema({
@@ -62,3 +64,4 @@ const storeSchema = new mongoose.Schema({
 });
 
 module.exports = mongoose.model('StoreConfig', storeSchema);
+        
