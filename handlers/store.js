@@ -12,14 +12,62 @@ const {
 } = require('discord.js');
 const StoreConfig = require('../models/store');
 
-// Price parser helper (e.g., "$10", "₹500", "20", "15.50" -> 10, 500, 20, 15.5)
 function parseNumericPrice(priceStr) {
     if (typeof priceStr === 'number') return priceStr;
     const match = String(priceStr).replace(/,/g, '').match(/[\d]+(?:\.[\d]+)?/);
     return match ? parseFloat(match[0]) : 0;
 }
 
-// Category Dropdown Panel
+function detectCurrencySymbol(priceStr) {
+    const sym = String(priceStr).replace(/[\d\s.,]/g, '');
+    return sym || '₹';
+}
+
+// Category: Items 1 (Price) - on | off, Item 2 (Price) - off | on || Category 2: ...
+function parseCustomFormat(rawText) {
+    const parsedItems = [];
+    const categoryBlocks = rawText.split('||').map(s => s.trim()).filter(Boolean);
+
+    for (const block of categoryBlocks) {
+        const colonIndex = block.indexOf(':');
+        if (colonIndex === -1) continue;
+
+        const category = block.slice(0, colonIndex).trim();
+        const itemsString = block.slice(colonIndex + 1).trim();
+
+        const itemEntries = itemsString.split(',').map(s => s.trim()).filter(Boolean);
+
+        for (const entry of itemEntries) {
+            // Match: Item Name (Price) - AmountFlag | MonthsFlag
+            // e.g.: VIP (100) - off | off OR COIN (₹1) - on | off
+            const regex = /^(.+?)\s*\(([^)]+)\)\s*(?:-\s*([a-zA-Z]+)\s*\|\s*([a-zA-Z]+))?$/;
+            const match = entry.match(regex);
+
+            if (match) {
+                const name = match[1].trim();
+                const price = match[2].trim();
+                const isAmount = match[3] ? match[3].trim().toLowerCase() === 'on' : false;
+                const isMonths = match[4] ? match[4].trim().toLowerCase() === 'on' : false;
+
+                parsedItems.push({ category, name, price, isAmount, isMonths });
+            } else {
+                // Fallback if flags are omitted: Item (Price)
+                const simpleMatch = entry.match(/^(.+?)\s*\(([^)]+)\)$/);
+                if (simpleMatch) {
+                    parsedItems.push({
+                        category,
+                        name: simpleMatch[1].trim(),
+                        price: simpleMatch[2].trim(),
+                        isAmount: false,
+                        isMonths: false
+                    });
+                }
+            }
+        }
+    }
+    return parsedItems;
+}
+
 function createStoreCategoryPanel(config, isTest = false) {
     const embed = new EmbedBuilder()
         .setColor('#F1C40F')
@@ -51,7 +99,7 @@ function createStoreCategoryPanel(config, isTest = false) {
 
 module.exports = (client) => {
 
-    // 12-Hour Pending Reminder Interval
+    // 12-Hour Pending Order Reminder
     setInterval(async () => {
         try {
             const configs = await StoreConfig.find({ 'pendingOrders.0': { $exists: true } });
@@ -101,8 +149,8 @@ module.exports = (client) => {
 
             const itemsInput = new TextInputBuilder()
                 .setCustomId('store_items')
-                .setLabel('Category, Item, Price (Sep by ||)')
-                .setPlaceholder('Ranks, VIP, $5 || Items, Sword, $2 || Coins, 1000 Coins, $1')
+                .setLabel('Category: Item (Price) - on|off || ...')
+                .setPlaceholder('RANKS: VIP (100) - off | off || COINS: COIN (₹1) - on | off || BOT: SPARK BOT (200) - off | on')
                 .setStyle(TextInputStyle.Paragraph)
                 .setValue(data.rawItems || '')
                 .setRequired(true);
@@ -126,7 +174,7 @@ module.exports = (client) => {
             const cmdsInput = new TextInputBuilder()
                 .setCustomId('store_cmds')
                 .setLabel('Cmds: Item:Cmd (Sep by ||)')
-                .setPlaceholder('VIP:lp user {username} parent set vip || Sword:give {username} diamond_sword 1')
+                .setPlaceholder('VIP:lp user {username} parent set vip || COIN:eco give {username} {amount}')
                 .setStyle(TextInputStyle.Paragraph)
                 .setValue(data.rawCmds || '')
                 .setRequired(false);
@@ -149,7 +197,7 @@ module.exports = (client) => {
             await interaction.showModal(modal);
         }
 
-        // 2. Save Modal Configuration
+        // 2. Save Modal Submission
         if (interaction.isModalSubmit() && interaction.customId === 'store_config_modal') {
             await interaction.deferReply({ ephemeral: true });
 
@@ -159,10 +207,7 @@ module.exports = (client) => {
             const rawCmds = interaction.fields.getTextInputValue('store_cmds');
             const bannerUrl = interaction.fields.getTextInputValue('store_banner');
 
-            const items = rawItems.split('||').map(entry => {
-                const parts = entry.split(',').map(p => p.trim());
-                return { category: parts[0] || 'General', name: parts[1] || 'Item', price: parts[2] || '$0.00' };
-            }).filter(i => i.name);
+            const items = parseCustomFormat(rawItems);
 
             const idParts = rawIds.split(',').map(s => s.trim());
             const storeRoleId = idParts[0] || null;
@@ -206,18 +251,10 @@ module.exports = (client) => {
                 }
             }
 
-            await interaction.editReply({ content: '✅ Store System successfully configured and Category Panel sent!' });
+            await interaction.editReply({ content: '✅ Store System successfully saved with custom category syntax!' });
         }
 
-        // 3. Demo Preview Handlers
-        if (interaction.isStringSelectMenu() && (interaction.customId === 'test_store_category' || interaction.customId === 'test_store_item')) {
-            return interaction.reply({ 
-                content: '⚠️ **[DEMO PREVIEW]** This is only a preview. Please place actual orders from the configured setup channel panel.', 
-                ephemeral: true 
-            });
-        }
-
-        // 4. Step 1 -> Category Selected: Send Items Multi-Select Dropdown & List
+        // 3. Category Selected -> Show Items Multi-Select
         if (interaction.isStringSelectMenu() && interaction.customId === 'store_select_category') {
             const config = await StoreConfig.findOne({ guildId: interaction.guild.id });
             if (!config) return interaction.reply({ content: '⚠️ Store is not configured yet.', ephemeral: true });
@@ -234,17 +271,21 @@ module.exports = (client) => {
 
             const itemOptions = categoryItems.map(item => {
                 const originalIndex = config.items.findIndex(i => i.name === item.name && i.category === item.category);
+                const flags = [];
+                if (item.isAmount) flags.push('Amount');
+                if (item.isMonths) flags.push('Months');
+                const flagTag = flags.length > 0 ? ` [${flags.join('/')}]` : '';
+
                 return {
-                    label: `${item.name} (${item.price})`.substring(0, 100),
+                    label: `${item.name} (${item.price})${flagTag}`.substring(0, 100),
                     value: `store_item_${originalIndex}`,
-                    description: `Price: ${item.price}`
+                    description: `Price: ${item.price}${flagTag}`
                 };
             });
 
-            // Multi-Select dropdown (Min 1, Max = Total items up to 25)
             const itemsMenu = new StringSelectMenuBuilder()
                 .setCustomId('store_select_item')
-                .setPlaceholder(`Select 1 or more items from ${categoryItems[0].category}...`)
+                .setPlaceholder(`Select item(s) from ${categoryItems[0].category}...`)
                 .setMinValues(1)
                 .setMaxValues(Math.min(itemOptions.length, 25))
                 .addOptions(itemOptions.slice(0, 25));
@@ -252,22 +293,28 @@ module.exports = (client) => {
             const row = new ActionRowBuilder().addComponents(itemsMenu);
 
             const itemsListing = categoryItems
-                .map((item, idx) => `**${idx + 1}.** \`${item.name}\` — **${item.price}**`)
+                .map((item, idx) => {
+                    const flags = [];
+                    if (item.isAmount) flags.push('Custom Quantity');
+                    if (item.isMonths) flags.push('Monthly Plan');
+                    const flagDesc = flags.length > 0 ? ` *(${flags.join(', ')})*` : '';
+                    return `**${idx + 1}.** \`${item.name}\` — **${item.price}**${flagDesc}`;
+                })
                 .join('\n');
 
             const catEmbed = new EmbedBuilder()
                 .setColor('#F1C40F')
                 .setTitle(`📁 Category: ${categoryItems[0].category}`)
                 .setDescription(
-                    `Here are the items available in this category:\n\n${itemsListing}\n\n` +
-                    `> Select **one or multiple items** from the dropdown below to calculate your total and proceed.`
+                    `Items available in this category:\n\n${itemsListing}\n\n` +
+                    `> Select **one or multiple items** below to proceed.`
                 )
                 .setTimestamp();
 
             await interaction.reply({ embeds: [catEmbed], components: [row], ephemeral: true });
         }
 
-        // 5. Step 2 -> Items Selected: Calculate Total Bill & Show Order Button
+        // 4. Items Selected -> Open IGN / Amount / Months Dynamic Modal
         if (interaction.isStringSelectMenu() && interaction.customId === 'store_select_item') {
             const config = await StoreConfig.findOne({ guildId: interaction.guild.id });
             if (!config) return interaction.reply({ content: '⚠️ Store is not configured yet.', ephemeral: true });
@@ -279,100 +326,111 @@ module.exports = (client) => {
                 return interaction.reply({ content: '❌ Invalid items selected.', ephemeral: true });
             }
 
-            let totalNumeric = 0;
-            let currencySymbol = '$';
-
-            const summaryLines = selectedItems.map((item, idx) => {
-                const numeric = parseNumericPrice(item.price);
-                totalNumeric += numeric;
-
-                const detectedCurrency = String(item.price).replace(/[\d\s.,]/g, '');
-                if (detectedCurrency) currencySymbol = detectedCurrency;
-
-                return `\`${idx + 1}.\` **${item.name}** [${item.category}] — \`${item.price}\``;
-            });
-
-            const totalFormatted = `${currencySymbol}${totalNumeric % 1 === 0 ? totalNumeric : totalNumeric.toFixed(2)}`;
-
-            const previewEmbed = new EmbedBuilder()
-                .setColor('#F1C40F')
-                .setTitle('🛒 Order Summary & Billing')
-                .setDescription(
-                    `### Selected Item(s) (${selectedItems.length})\n` +
-                    summaryLines.join('\n') +
-                    `\n\n──────────────────────────\n` +
-                    `💳 **Total Amount:** \`${totalFormatted}\`\n` +
-                    `──────────────────────────\n\n` +
-                    `Click **Proceed to Order** to enter your In-Game Name and open an order ticket.`
-                )
-                .setTimestamp();
-
-            // Store selected item indexes in button customId (comma separated)
-            const indexesPayload = selectedIndices.join('_');
-
-            const row = new ActionRowBuilder().addComponents(
-                new ButtonBuilder()
-                    .setCustomId(`store_ordernow_${indexesPayload}`)
-                    .setLabel(`Proceed to Order (${totalFormatted})`)
-                    .setStyle(ButtonStyle.Success)
-                    .setEmoji('🛍️')
-            );
-
-            await interaction.update({ embeds: [previewEmbed], components: [row] });
-        }
-
-        // 6. Step 3 -> Proceed to Order Clicked: Open IGN Modal
-        if (interaction.isButton() && interaction.customId.startsWith('store_ordernow_')) {
-            const indexesPayload = interaction.customId.replace('store_ordernow_', '');
+            const indicesPayload = selectedIndices.join('_');
+            const hasAmountItem = selectedItems.some(i => i.isAmount);
+            const hasMonthsItem = selectedItems.some(i => i.isMonths);
 
             const modal = new ModalBuilder()
-                .setCustomId(`store_ign_modal_${indexesPayload}`)
-                .setTitle('In-Game Username Required');
+                .setCustomId(`store_calc_modal_${indicesPayload}`)
+                .setTitle('Order Checkout Form');
 
             const ignInput = new TextInputBuilder()
-                .setCustomId('store_ign_input')
-                .setLabel('Enter In-Game Username (IGN)')
-                .setPlaceholder('e.g. ProGamer_123')
+                .setCustomId('store_ign')
+                .setLabel('In-Game Username (IGN)')
+                .setPlaceholder('Enter your player username')
                 .setStyle(TextInputStyle.Short)
                 .setRequired(true);
 
             modal.addComponents(new ActionRowBuilder().addComponents(ignInput));
+
+            if (hasAmountItem) {
+                const amountInput = new TextInputBuilder()
+                    .setCustomId('store_amount_input')
+                    .setLabel('Quantity / Amount (for coin/quantity items)')
+                    .setPlaceholder('e.g. 100')
+                    .setStyle(TextInputStyle.Short)
+                    .setValue('100')
+                    .setRequired(true);
+                modal.addComponents(new ActionRowBuilder().addComponents(amountInput));
+            }
+
+            if (hasMonthsItem) {
+                const monthsInput = new TextInputBuilder()
+                    .setCustomId('store_months_input')
+                    .setLabel('Duration in Months (for monthly items)')
+                    .setPlaceholder('e.g. 1, 3, 6, 12')
+                    .setStyle(TextInputStyle.Short)
+                    .setValue('1')
+                    .setRequired(true);
+                modal.addComponents(new ActionRowBuilder().addComponents(monthsInput));
+            }
+
             await interaction.showModal(modal);
         }
 
-        // 7. Step 4 -> IGN Submitted: Create Multi-Item Order Channel
-        if (interaction.isModalSubmit() && interaction.customId.startsWith('store_ign_modal_')) {
+        // 5. Checkout Modal Submitted -> Create Multi-Item Order Channel
+        if (interaction.isModalSubmit() && interaction.customId.startsWith('store_calc_modal_')) {
             await interaction.deferReply({ ephemeral: true });
 
-            const indexesPayload = interaction.customId.replace('store_ign_modal_', '');
-            const selectedIndices = indexesPayload.split('_').map(Number);
-            const inGameUsername = interaction.fields.getTextInputValue('store_ign_input').trim();
+            const indicesPayload = interaction.customId.replace('store_calc_modal_', '');
+            const selectedIndices = indicesPayload.split('_').map(Number);
+            const inGameUsername = interaction.fields.getTextInputValue('store_ign').trim();
+
+            let userAmount = 1;
+            let userMonths = 1;
+
+            try {
+                const rawAmt = interaction.fields.getTextInputValue('store_amount_input');
+                if (rawAmt) userAmount = Math.max(1, parseInt(rawAmt.trim(), 10) || 1);
+            } catch (_) {}
+
+            try {
+                const rawMth = interaction.fields.getTextInputValue('store_months_input');
+                if (rawMth) userMonths = Math.max(1, parseInt(rawMth.trim(), 10) || 1);
+            } catch (_) {}
 
             const config = await StoreConfig.findOne({ guildId: interaction.guild.id });
             if (!config) return interaction.editReply({ content: '⚠️ Store is not configured yet.' });
 
             const selectedItems = selectedIndices.map(idx => config.items[idx]).filter(Boolean);
-            if (selectedItems.length === 0) return interaction.editReply({ content: '❌ Order items could not be loaded.' });
+            if (selectedItems.length === 0) return interaction.editReply({ content: '❌ Items could not be loaded.' });
 
-            let totalNumeric = 0;
-            let currencySymbol = '$';
+            let totalBill = 0;
+            let currency = detectCurrencySymbol(selectedItems[0].price);
 
-            const itemNamesArray = [];
-            const categoryNamesSet = new Set();
+            const detailedLines = [];
+            const itemNamesList = [];
+            const categorySet = new Set();
 
-            selectedItems.forEach(item => {
-                const numeric = parseNumericPrice(item.price);
-                totalNumeric += numeric;
-                itemNamesArray.push(item.name);
-                categoryNamesSet.add(item.category);
+            for (const item of selectedItems) {
+                const unitPrice = parseNumericPrice(item.price);
+                categorySet.add(item.category);
 
-                const detectedCurrency = String(item.price).replace(/[\d\s.,]/g, '');
-                if (detectedCurrency) currencySymbol = detectedCurrency;
-            });
+                if (item.isAmount && item.isMonths) {
+                    const itemTotal = unitPrice * userAmount * userMonths;
+                    totalBill += itemTotal;
+                    itemNamesList.push(`${userAmount}× ${item.name} (${userMonths} Mo)`);
+                    detailedLines.push(`• **${item.name}** × \`${userAmount} Units\` × \`${userMonths} Mo\` ➜ **${currency}${itemTotal}**`);
+                } else if (item.isAmount) {
+                    const itemTotal = unitPrice * userAmount;
+                    totalBill += itemTotal;
+                    itemNamesList.push(`${userAmount}× ${item.name}`);
+                    detailedLines.push(`• **${item.name}** × \`${userAmount} Units\` @ \`${item.price}/ea\` ➜ **${currency}${itemTotal}**`);
+                } else if (item.isMonths) {
+                    const itemTotal = unitPrice * userMonths;
+                    totalBill += itemTotal;
+                    itemNamesList.push(`${item.name} (${userMonths} Months)`);
+                    detailedLines.push(`• **${item.name}** × \`${userMonths} Months\` @ \`${item.price}/mo\` ➜ **${currency}${itemTotal}**`);
+                } else {
+                    totalBill += unitPrice;
+                    itemNamesList.push(item.name);
+                    detailedLines.push(`• **${item.name}** @ \`${item.price}\` ➜ **${currency}${unitPrice}**`);
+                }
+            }
 
-            const combinedItemNames = itemNamesArray.join(', ');
-            const combinedCategories = Array.from(categoryNamesSet).join(', ');
-            const totalFormatted = `${currencySymbol}${totalNumeric % 1 === 0 ? totalNumeric : totalNumeric.toFixed(2)}`;
+            const totalFormatted = `${currency}${totalBill % 1 === 0 ? totalBill : totalBill.toFixed(2)}`;
+            const combinedCategories = Array.from(categorySet).join(', ');
+            const combinedItems = itemNamesList.join(', ');
 
             const updatedConfig = await StoreConfig.findOneAndUpdate(
                 { guildId: interaction.guild.id },
@@ -420,7 +478,7 @@ module.exports = (client) => {
                             orderNumber: countStr,
                             userId: interaction.user.id,
                             username: inGameUsername,
-                            itemName: combinedItemNames,
+                            itemName: combinedItems,
                             category: combinedCategories,
                             price: totalFormatted,
                             channelId: orderChannel.id,
@@ -431,13 +489,9 @@ module.exports = (client) => {
                 }
             );
 
-            const itemsBreakdown = selectedItems
-                .map((item, idx) => `\`${idx + 1}.\` **${item.name}** [${item.category}] — \`${item.price}\``)
-                .join('\n');
-
             const orderText = (config.orderDesc || '✦ NEW ORDER RECEIVED ✦\n\n◆ **Category:** {category}\n◆ **Items:** {item}\n◆ **Total Billing:** {price}\n◆ **IGN:** {username}\n◆ **Buyer:** {user}')
                 .replace(/{category}/gi, combinedCategories)
-                .replace(/{item}/gi, combinedItemNames)
+                .replace(/{item}/gi, combinedItems)
                 .replace(/{price}/gi, totalFormatted)
                 .replace(/{username}/gi, inGameUsername)
                 .replace(/{user}/gi, `<@${interaction.user.id}>`);
@@ -447,8 +501,9 @@ module.exports = (client) => {
                 .setTitle(`🛍️ Order #${countStr}`)
                 .setDescription(orderText)
                 .addFields(
-                    { name: '📦 Detailed Cart Breakdown', value: itemsBreakdown, inline: false },
-                    { name: '💳 Total Billing Amount', value: `\`${totalFormatted}\``, inline: true }
+                    { name: '📋 Itemized Cart Breakdown', value: detailedLines.join('\n'), inline: false },
+                    { name: '💳 Total Billing Amount', value: `\`${totalFormatted}\``, inline: true },
+                    { name: '🎮 In-Game IGN', value: `\`${inGameUsername}\``, inline: true }
                 )
                 .setFooter({ text: `Buyer: ${interaction.user.tag}` })
                 .setTimestamp();
@@ -472,10 +527,10 @@ module.exports = (client) => {
                 components: [actionRow]
             });
 
-            await interaction.editReply({ content: `✅ Your order channel has been created: ${orderChannel}` });
+            await interaction.editReply({ content: `✅ Your order ticket has been created: ${orderChannel}` });
         }
 
-        // 8. Handle Approve (Executes all matching commands for multi-items)
+        // 6. Handle Approve
         if (interaction.isButton() && interaction.customId.startsWith('order_approve_')) {
             const orderNum = interaction.customId.replace('order_approve_', '');
             const config = await StoreConfig.findOne({ guildId: interaction.guild.id });
@@ -492,24 +547,25 @@ module.exports = (client) => {
                 return interaction.reply({ content: '⚠️ Order details not found in database.', ephemeral: true });
             }
 
-            await interaction.reply({ content: '✅ Order APPROVED! Executing commands and saving logs...' });
+            await interaction.reply({ content: '✅ Order APPROVED! Executing commands and logging...' });
 
-            // In-Game Command Execution for all ordered items
             if (config.cmdsChannelId) {
                 const cmdsChannel = interaction.guild.channels.cache.get(config.cmdsChannelId);
                 if (cmdsChannel) {
-                    const boughtItemNames = orderData.itemName.split(',').map(s => s.trim().toLowerCase());
-                    for (const bought of boughtItemNames) {
-                        const matchingCmd = config.commands?.find(c => c.itemName.toLowerCase() === bought);
+                    const boughtItems = orderData.itemName.split(',').map(s => s.trim().toLowerCase());
+                    for (const bought of boughtItems) {
+                        const baseName = bought.replace(/\(.*\)/g, '').replace(/\d+×/g, '').trim();
+                        const matchingCmd = config.commands?.find(c => c.itemName.toLowerCase() === baseName);
                         if (matchingCmd) {
-                            const finalCmd = matchingCmd.command.replace(/{username}/gi, orderData.username);
+                            const finalCmd = matchingCmd.command
+                                .replace(/{username}/gi, orderData.username)
+                                .replace(/{user}/gi, `<@${orderData.userId}>`);
                             await cmdsChannel.send(finalCmd).catch(console.error);
                         }
                     }
                 }
             }
 
-            // Buyer DM
             const buyer = await client.users.fetch(orderData.userId).catch(() => null);
             if (buyer) {
                 const dmMessage = (config.approvedDm || '✅ Hey {user}, your order for **{item}** has been APPROVED!')
@@ -528,7 +584,6 @@ module.exports = (client) => {
                 await buyer.send({ embeds: [embed] }).catch(() => {});
             }
 
-            // Store Logs
             if (config.logsChannelId) {
                 const logsChannel = interaction.guild.channels.cache.get(config.logsChannelId);
                 if (logsChannel) {
@@ -536,7 +591,7 @@ module.exports = (client) => {
                         .setColor('#2ECC71')
                         .setTitle(`📦 Order Approved: #${orderNum}`)
                         .addFields(
-                            { name: '👤 Buyer', value: `<@${orderData.userId}> (${orderData.userId})`, inline: true },
+                            { name: '👤 Buyer', value: `<@${orderData.userId}>`, inline: true },
                             { name: '🛡️ Approved By', value: `<@${interaction.user.id}>`, inline: true },
                             { name: '🎮 In-Game IGN', value: `\`${orderData.username}\``, inline: true },
                             { name: '📁 Category', value: orderData.category || 'General', inline: true },
@@ -559,7 +614,7 @@ module.exports = (client) => {
             }, 5000);
         }
 
-        // 9. Handle Reject
+        // 7. Handle Reject
         if (interaction.isButton() && interaction.customId.startsWith('order_reject_')) {
             const orderNum = interaction.customId.replace('order_reject_', '');
             const config = await StoreConfig.findOne({ guildId: interaction.guild.id });
@@ -603,7 +658,7 @@ module.exports = (client) => {
                         .setColor('#ED4245')
                         .setTitle(`🚫 Order Rejected: #${orderNum}`)
                         .addFields(
-                            { name: '👤 Buyer', value: `<@${orderData.userId}> (${orderData.userId})`, inline: true },
+                            { name: '👤 Buyer', value: `<@${orderData.userId}>`, inline: true },
                             { name: '🛡️ Rejected By', value: `<@${interaction.user.id}>`, inline: true },
                             { name: '🎮 In-Game IGN', value: `\`${orderData.username}\``, inline: true },
                             { name: '📁 Category', value: orderData.category || 'General', inline: true },
@@ -627,7 +682,7 @@ module.exports = (client) => {
         }
     });
 
-    // 10. Secret Test Preview (§store)
+    // 8. Test Preview
     client.on('messageCreate', async (message) => {
         if (message.author.bot || !message.guild) return;
 
@@ -636,12 +691,12 @@ module.exports = (client) => {
             const { embed, row } = createStoreCategoryPanel(config, true);
 
             await message.reply({ 
-                content: '**[TEST PREVIEW] Store Category Menu (Demo Only):**', 
+                content: '**[TEST PREVIEW] Store Category Menu:**', 
                 embeds: [embed], 
                 components: [row] 
             });
         }
     });
 
-    console.log('✔ Multi-Select Store handler loaded.');
+    console.log('✔ Custom Syntax Store handler loaded.');
 };
