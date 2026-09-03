@@ -8,26 +8,22 @@ const {
 } = require('discord.js');
 const OnboardingConfig = require('../models/onboarding');
 
-// Parser: (emoji) Title: Question - Ans 1 (RoleID) - Ans 2 (RoleID) | on/off || ...
 function parseExactFormat(rawConfig, rawChannels) {
     const channelList = rawChannels.split('||').map(s => s.trim()).filter(Boolean);
     const stepBlocks = rawConfig.split('||').map(s => s.trim()).filter(Boolean);
     const steps = [];
 
     stepBlocks.forEach((block, index) => {
-        // 1. Separate Flag (| on / | off)
         const pipeParts = block.split('|');
         const mainPart = pipeParts[0]?.trim() || '';
         const isMultiple = pipeParts[1] ? pipeParts[1].trim().toLowerCase() === 'on' : false;
 
-        // 2. Separate Header from Body via colon (:)
         const colonIndex = mainPart.indexOf(':');
         if (colonIndex === -1) return;
 
         const headerPart = mainPart.slice(0, colonIndex).trim();
         const bodyPart = mainPart.slice(colonIndex + 1).trim();
 
-        // 3. Extract Emoji & Title
         let emoji = '⭐';
         let title = headerPart;
 
@@ -37,13 +33,11 @@ function parseExactFormat(rawConfig, rawChannels) {
             title = emojiMatch[2].trim() || 'Onboarding';
         }
 
-        // 4. Separate Question from Options using the first hyphen (-)
         const dashParts = bodyPart.split('-').map(s => s.trim()).filter(Boolean);
         if (dashParts.length < 2) return;
 
-        const question = dashParts[0]; // Pehla part Question hai
-        const rawOptions = dashParts.slice(1); // Baaki saare Options hain
-
+        const question = dashParts[0];
+        const rawOptions = dashParts.slice(1);
         const parsedOptions = [];
 
         rawOptions.forEach(opt => {
@@ -82,7 +76,6 @@ function parseExactFormat(rawConfig, rawChannels) {
     return steps;
 }
 
-// Build Step Dropdown Embed & ActionRow
 function buildStepPayload(step, stepIndex, isTest = false) {
     const embed = new EmbedBuilder()
         .setColor('#5865F2')
@@ -94,10 +87,11 @@ function buildStepPayload(step, stepIndex, isTest = false) {
         .setFooter({ text: `Onboarding Step #${stepIndex + 1}` })
         .setTimestamp();
 
-    const menuOptions = step.options.map(opt => {
+    // Make dropdown value unique by combining roleId + optIndex to prevent duplicate crash
+    const menuOptions = step.options.map((opt, optIdx) => {
         const item = {
             label: opt.label.substring(0, 100),
-            value: opt.roleId,
+            value: `${opt.roleId}_${optIdx}`,
             description: `Toggle role: ${opt.label}`.substring(0, 100)
         };
         if (opt.emoji) item.emoji = opt.emoji;
@@ -163,7 +157,7 @@ module.exports = (client) => {
 
             if (steps.length === 0) {
                 return interaction.editReply({ 
-                    content: '❌ Invalid format! Please make sure your format follows: `(emoji) Title: Question - Ans 1 (ROLE_ID) - Ans 2 (ROLE_ID) | on/off`' 
+                    content: '❌ Invalid format! Please follow: `(emoji) Title: Question - Ans 1 (ROLE_ID) - Ans 2 (ROLE_ID) | on/off`' 
                 });
             }
 
@@ -176,7 +170,6 @@ module.exports = (client) => {
             let sentCount = 0;
             const dispatchLogs = [];
 
-            // Dispatch to target channels
             for (let i = 0; i < saved.steps.length; i++) {
                 const step = saved.steps[i];
                 if (step.channelId) {
@@ -221,8 +214,12 @@ module.exports = (client) => {
 
             const step = data.steps[stepIndex];
             const member = interaction.member;
-            const selectedRoleIds = interaction.values;
-            const stepAllRoleIds = step.options.map(o => o.roleId);
+            
+            // Extract raw role IDs by stripping the trailing index (_0, _1, etc.)
+            const selectedRoleIds = Array.from(new Set(
+                interaction.values.map(val => val.split('_')[0])
+            ));
+            const stepAllRoleIds = Array.from(new Set(step.options.map(o => o.roleId)));
 
             const added = [];
             const removed = [];
@@ -278,6 +275,6 @@ module.exports = (client) => {
         }
     });
 
-    console.log('✔ Exact Syntax Onboarding handler loaded.');
+    console.log('✔ Duplicate-Safe Onboarding handler loaded.');
 };
-    
+                
