@@ -4,29 +4,118 @@ const {
     TextInputStyle, 
     ActionRowBuilder, 
     EmbedBuilder, 
-    ButtonBuilder, 
-    ButtonStyle 
+    StringSelectMenuBuilder 
 } = require('discord.js');
 const OnboardingConfig = require('../models/onboarding');
 
-function buildStepPayload(step, index, isTest = false) {
+// Parse: (emoji) Title: Question, ans option 1 - ans option 2 | on/off || ...
+function parseOnboardingConfig(rawConfig, rawChannels) {
+    const channelList = rawChannels.split('||').map(s => s.trim()).filter(Boolean);
+    const stepBlocks = rawConfig.split('||').map(s => s.trim()).filter(Boolean);
+    const steps = [];
+
+    stepBlocks.forEach((block, index) => {
+        const colonIndex = block.indexOf(':');
+        if (colonIndex === -1) return;
+
+        // Extract Title and optional Emoji
+        const headerPart = block.slice(0, colonIndex).trim();
+        const contentPart = block.slice(colonIndex + 1).trim();
+
+        let emoji = '⭐';
+        let title = headerPart;
+
+        const emojiMatch = headerPart.match(/^(\p{Extended_Pictographic}|<a?:[a-zA-Z0-9_~]+:\d+>)\s*(.*)$/u);
+        if (emojiMatch) {
+            emoji = emojiMatch[1];
+            title = emojiMatch[2].trim() || 'Onboarding';
+        }
+
+        // Split question and answer options
+        const commaIndex = contentPart.indexOf(',');
+        if (commaIndex === -1) return;
+
+        const question = contentPart.slice(0, commaIndex).trim();
+        const optionsAndFlag = contentPart.slice(commaIndex + 1).trim();
+
+        // Split options & on/off multiple flag
+        const pipeParts = optionsAndFlag.split('|');
+        const optionsPart = pipeParts[0]?.trim() || '';
+        const isMultiple = pipeParts[1] ? pipeParts[1].trim().toLowerCase() === 'on' : false;
+
+        // Split individual answers (separated by hyphen -)
+        const rawOptions = optionsPart.split('-').map(s => s.trim()).filter(Boolean);
+        const parsedOptions = [];
+
+        rawOptions.forEach(opt => {
+            // Match: Emoji Label (@RoleID or RoleID)
+            const optMatch = opt.match(/^(?:(\p{Extended_Pictographic}|<a?:[a-zA-Z0-9_~]+:\d+>)\s*)?(.+?)\s*(?:<@&|@)?(\d{17,20})>?$/u);
+            if (optMatch) {
+                parsedOptions.push({
+                    emoji: optMatch[1] || null,
+                    label: optMatch[2].trim(),
+                    roleId: optMatch[3]
+                });
+            } else {
+                // Fallback: Label (RoleID)
+                const fallbackMatch = opt.match(/(.+?)\s*\((\d{17,20})\)/);
+                if (fallbackMatch) {
+                    parsedOptions.push({
+                        emoji: null,
+                        label: fallbackMatch[1].trim(),
+                        roleId: fallbackMatch[2]
+                    });
+                }
+            }
+        });
+
+        if (parsedOptions.length > 0) {
+            steps.push({
+                emoji,
+                title,
+                question,
+                isMultiple,
+                channelId: channelList[index] || channelList[0] || null,
+                options: parsedOptions
+            });
+        }
+    });
+
+    return steps;
+}
+
+// Build Step Dropdown Embed & ActionRow
+function buildStepPayload(step, stepIndex, isTest = false) {
     const embed = new EmbedBuilder()
         .setColor('#5865F2')
         .setTitle(`${step.emoji} ${step.title}`)
-        .setDescription(`${step.question}\n\n**Role:** <@&${step.roleId}>`)
-        .setFooter({ text: `Onboarding Step #${index + 1}` })
+        .setDescription(
+            `${step.question}\n\n` +
+            `*${step.isMultiple ? '☑️ You can select multiple options.' : '🔘 Select only one option from the menu.'}*`
+        )
+        .setFooter({ text: `Onboarding Step #${stepIndex + 1}` })
         .setTimestamp();
 
-    const button = new ButtonBuilder()
-        .setCustomId(isTest ? `test_onboarding_${index}` : `onboarding_claim_${step.roleId}`)
-        .setLabel(`Get ${step.title}`)
-        .setStyle(ButtonStyle.Primary);
+    const menuOptions = step.options.map(opt => {
+        const item = {
+            label: opt.label.substring(0, 100),
+            value: opt.roleId,
+            description: `Toggle the @${opt.label} role`
+        };
+        if (opt.emoji) item.emoji = opt.emoji;
+        return item;
+    });
 
-    if (step.emoji) {
-        button.setEmoji(step.emoji);
-    }
+    const maxValues = step.isMultiple ? menuOptions.length : 1;
 
-    const row = new ActionRowBuilder().addComponents(button);
+    const selectMenu = new StringSelectMenuBuilder()
+        .setCustomId(isTest ? `test_onboarding_${stepIndex}` : `onboarding_select_${stepIndex}`)
+        .setPlaceholder(step.question.length > 100 ? `${step.question.substring(0, 97)}...` : step.question)
+        .setMinValues(0)
+        .setMaxValues(maxValues)
+        .addOptions(menuOptions.slice(0, 25));
+
+    const row = new ActionRowBuilder().addComponents(selectMenu);
     return { embed, row };
 }
 
@@ -43,17 +132,17 @@ module.exports = (client) => {
 
             const configInput = new TextInputBuilder()
                 .setCustomId('onboarding_config_input')
-                .setLabel('Emoji, Title, Question, RoleID (Max 5)')
-                .setPlaceholder('📢, Announcements, Get pinged for updates?, 123456789 || 🎮, Gamer, Ping for gaming?, 987654321')
+                .setLabel('Steps Config')
+                .setPlaceholder('📢 Alerts: Pick updates, 🔔 Updates (ROLE_ID) - 🎁 Giveaways (ROLE_ID) | on || ...')
                 .setStyle(TextInputStyle.Paragraph)
                 .setValue(data.rawConfig || '')
                 .setRequired(true);
 
             const channelsInput = new TextInputBuilder()
                 .setCustomId('onboarding_channels_input')
-                .setLabel('Channel IDs (Separated by ||)')
-                .setPlaceholder('CHANNEL_ID_1 || CHANNEL_ID_2 || CHANNEL_ID_3')
-                .setStyle(TextInputStyle.Paragraph)
+                .setLabel('Destination Channel IDs (Sep by ||)')
+                .setPlaceholder('CHANNEL_ID_1 || CHANNEL_ID_2')
+                .setStyle(TextInputStyle.Short)
                 .setValue(data.rawChannels || '')
                 .setRequired(true);
 
@@ -72,22 +161,12 @@ module.exports = (client) => {
             const rawConfig = interaction.fields.getTextInputValue('onboarding_config_input');
             const rawChannels = interaction.fields.getTextInputValue('onboarding_channels_input');
 
-            const configParts = rawConfig.split('||').map(s => s.trim()).filter(Boolean).slice(0, 5);
-            const channelParts = rawChannels.split('||').map(s => s.trim()).filter(Boolean).slice(0, 5);
+            const steps = parseOnboardingConfig(rawConfig, rawChannels);
 
-            const steps = [];
-
-            for (let i = 0; i < configParts.length; i++) {
-                const subParts = configParts[i].split(',').map(p => p.trim());
-                const emoji = subParts[0] || '⭐';
-                const title = subParts[1] || 'Role';
-                const question = subParts[2] || 'Click below to get this role!';
-                const roleId = subParts[3] || null;
-                const channelId = channelParts[i] || channelParts[0] || null;
-
-                if (roleId) {
-                    steps.push({ emoji, title, question, roleId, channelId });
-                }
+            if (steps.length === 0) {
+                return interaction.editReply({ 
+                    content: '❌ Invalid syntax! Please follow: `(emoji) Title: Question, Option1 (ROLE_ID) - Option2 (ROLE_ID) | on/off`' 
+                });
             }
 
             const saved = await OnboardingConfig.findOneAndUpdate(
@@ -96,7 +175,7 @@ module.exports = (client) => {
                 { upsert: true, new: true }
             );
 
-            // Send Embeds to respective channels
+            // Send interactive dropdown panels to destination channels
             for (let i = 0; i < saved.steps.length; i++) {
                 const step = saved.steps[i];
                 if (step.channelId) {
@@ -109,40 +188,69 @@ module.exports = (client) => {
             }
 
             await interaction.editReply({ 
-                content: `✅ Onboarding Setup Complete! Total **${saved.steps.length}** onboarding step(s) configure ho gaye hain.` 
+                content: `✅ Onboarding Setup Complete! Dispatched **${saved.steps.length}** interactive dropdown step(s).` 
             });
         }
 
-        // 3. Demo Preview Button Click
-        if (interaction.isButton() && interaction.customId.startsWith('test_onboarding_')) {
+        // 3. Demo Preview Response
+        if (interaction.isStringSelectMenu() && interaction.customId.startsWith('test_onboarding_')) {
             return interaction.reply({ 
-                content: '⚠️ **[DEMO PREVIEW]** Ye sirf test preview hai. Real role assign hone ke liye configured channel ke buttons use karein.', 
+                content: '⚠️ **[DEMO PREVIEW]** This is only a preview menu. Roles are not toggled here.', 
                 ephemeral: true 
             });
         }
 
-        // 4. Real Role Toggle Interaction
-        if (interaction.isButton() && interaction.customId.startsWith('onboarding_claim_')) {
-            const roleId = interaction.customId.replace('onboarding_claim_', '');
-            const role = interaction.guild.roles.cache.get(roleId);
+        // 4. Real Dropdown Role Toggle Handler
+        if (interaction.isStringSelectMenu() && interaction.customId.startsWith('onboarding_select_')) {
+            const stepIndex = parseInt(interaction.customId.replace('onboarding_select_', ''), 10);
+            const data = await OnboardingConfig.findOne({ guildId: interaction.guild.id });
 
-            if (!role) {
-                return interaction.reply({ content: '❌ Ye role server me exist nahi karta ya delete ho chuka hai.', ephemeral: true });
+            if (!data || !data.steps || !data.steps[stepIndex]) {
+                return interaction.reply({ content: '❌ Onboarding configuration not found.', ephemeral: true });
             }
 
+            const step = data.steps[stepIndex];
             const member = interaction.member;
+            const selectedRoleIds = interaction.values; // Selected role IDs in the menu
+            const stepAllRoleIds = step.options.map(o => o.roleId);
 
-            if (member.roles.cache.has(roleId)) {
-                await member.roles.remove(roleId).catch(() => {});
-                return interaction.reply({ content: `➖ <@&${roleId}> role aapse **hata** diya gaya hai.`, ephemeral: true });
-            } else {
-                await member.roles.add(roleId).catch(() => {});
-                return interaction.reply({ content: `➕ <@&${roleId}> role aapko **assign** kar diya gaya hai!`, ephemeral: true });
+            const added = [];
+            const removed = [];
+
+            // If it is single-choice, remove all other roles belonging to this step first
+            if (!step.isMultiple) {
+                for (const rId of stepAllRoleIds) {
+                    if (member.roles.cache.has(rId) && !selectedRoleIds.includes(rId)) {
+                        await member.roles.remove(rId).catch(() => {});
+                        removed.push(`<@&${rId}>`);
+                    }
+                }
             }
+
+            // Sync selected roles
+            for (const rId of stepAllRoleIds) {
+                const hasRole = member.roles.cache.has(rId);
+                const isSelected = selectedRoleIds.includes(rId);
+
+                if (isSelected && !hasRole) {
+                    await member.roles.add(rId).catch(() => {});
+                    added.push(`<@&${rId}>`);
+                } else if (!isSelected && hasRole) {
+                    await member.roles.remove(rId).catch(() => {});
+                    removed.push(`<@&${rId}>`);
+                }
+            }
+
+            let responseMsg = '✅ **Roles Updated Successfully:**\n';
+            if (added.length > 0) responseMsg += `➕ Added: ${added.join(', ')}\n`;
+            if (removed.length > 0) responseMsg += `➖ Removed: ${removed.join(', ')}\n`;
+            if (added.length === 0 && removed.length === 0) responseMsg = 'ℹ️ No role changes were made.';
+
+            return interaction.reply({ content: responseMsg, ephemeral: true });
         }
     });
 
-    // 5. Test Command: §onboarding
+    // 5. Preview Command: §onboarding
     client.on('messageCreate', async (message) => {
         if (message.author.bot || !message.guild) return;
 
@@ -150,7 +258,7 @@ module.exports = (client) => {
             const data = await OnboardingConfig.findOne({ guildId: message.guild.id });
 
             if (!data || !data.steps || data.steps.length === 0) {
-                return message.reply('⚠️ Pehle `/panel page:3` run karke onboarding steps setup karein!');
+                return message.reply('⚠️ Please configure onboarding via `/panel book:1 page:3` first!');
             }
 
             await message.reply({ content: `**[TEST PREVIEW] Total Onboarding Steps: ${data.steps.length}**` });
@@ -162,5 +270,5 @@ module.exports = (client) => {
         }
     });
 
-    console.log('✔ Onboarding handler loaded.');
+    console.log('✔ Dropdown Onboarding handler loaded.');
 };
