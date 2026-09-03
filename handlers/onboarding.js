@@ -8,65 +8,63 @@ const {
 } = require('discord.js');
 const OnboardingConfig = require('../models/onboarding');
 
-// Parse: (emoji) Title: Question, ans option 1 - ans option 2 | on/off || ...
-function parseOnboardingConfig(rawConfig, rawChannels) {
+// Parser: (emoji) Title: Question - Ans 1 (RoleID) - Ans 2 (RoleID) | on/off || ...
+function parseExactFormat(rawConfig, rawChannels) {
     const channelList = rawChannels.split('||').map(s => s.trim()).filter(Boolean);
     const stepBlocks = rawConfig.split('||').map(s => s.trim()).filter(Boolean);
     const steps = [];
 
     stepBlocks.forEach((block, index) => {
-        const colonIndex = block.indexOf(':');
+        // 1. Separate Flag (| on / | off)
+        const pipeParts = block.split('|');
+        const mainPart = pipeParts[0]?.trim() || '';
+        const isMultiple = pipeParts[1] ? pipeParts[1].trim().toLowerCase() === 'on' : false;
+
+        // 2. Separate Header from Body via colon (:)
+        const colonIndex = mainPart.indexOf(':');
         if (colonIndex === -1) return;
 
-        // Extract Title and optional Emoji
-        const headerPart = block.slice(0, colonIndex).trim();
-        const contentPart = block.slice(colonIndex + 1).trim();
+        const headerPart = mainPart.slice(0, colonIndex).trim();
+        const bodyPart = mainPart.slice(colonIndex + 1).trim();
 
+        // 3. Extract Emoji & Title
         let emoji = '⭐';
         let title = headerPart;
 
         const emojiMatch = headerPart.match(/^(\p{Extended_Pictographic}|<a?:[a-zA-Z0-9_~]+:\d+>)\s*(.*)$/u);
         if (emojiMatch) {
-            emoji = emojiMatch[1];
+            emoji = emojiMatch[1] || '⭐';
             title = emojiMatch[2].trim() || 'Onboarding';
         }
 
-        // Split question and answer options
-        const commaIndex = contentPart.indexOf(',');
-        if (commaIndex === -1) return;
+        // 4. Separate Question from Options using the first hyphen (-)
+        const dashParts = bodyPart.split('-').map(s => s.trim()).filter(Boolean);
+        if (dashParts.length < 2) return;
 
-        const question = contentPart.slice(0, commaIndex).trim();
-        const optionsAndFlag = contentPart.slice(commaIndex + 1).trim();
+        const question = dashParts[0]; // Pehla part Question hai
+        const rawOptions = dashParts.slice(1); // Baaki saare Options hain
 
-        // Split options & on/off multiple flag
-        const pipeParts = optionsAndFlag.split('|');
-        const optionsPart = pipeParts[0]?.trim() || '';
-        const isMultiple = pipeParts[1] ? pipeParts[1].trim().toLowerCase() === 'on' : false;
-
-        // Split individual answers (separated by hyphen -)
-        const rawOptions = optionsPart.split('-').map(s => s.trim()).filter(Boolean);
         const parsedOptions = [];
 
         rawOptions.forEach(opt => {
-            // Match: Emoji Label (@RoleID or RoleID)
-            const optMatch = opt.match(/^(?:(\p{Extended_Pictographic}|<a?:[a-zA-Z0-9_~]+:\d+>)\s*)?(.+?)\s*(?:<@&|@)?(\d{17,20})>?$/u);
-            if (optMatch) {
-                parsedOptions.push({
-                    emoji: optMatch[1] || null,
-                    label: optMatch[2].trim(),
-                    roleId: optMatch[3]
-                });
-            } else {
-                // Fallback: Label (RoleID)
-                const fallbackMatch = opt.match(/(.+?)\s*\((\d{17,20})\)/);
-                if (fallbackMatch) {
-                    parsedOptions.push({
-                        emoji: null,
-                        label: fallbackMatch[1].trim(),
-                        roleId: fallbackMatch[2]
-                    });
-                }
+            const roleMatch = opt.match(/(\d{17,20})/);
+            if (!roleMatch) return;
+
+            const roleId = roleMatch[1];
+            let labelText = opt.replace(/\(?<@&?\d{17,20}>?\)?/, '').trim();
+
+            let optEmoji = null;
+            const optEmojiMatch = labelText.match(/^(\p{Extended_Pictographic}|<a?:[a-zA-Z0-9_~]+:\d+>)\s*(.*)$/u);
+            if (optEmojiMatch) {
+                optEmoji = optEmojiMatch[1];
+                labelText = optEmojiMatch[2].trim();
             }
+
+            parsedOptions.push({
+                emoji: optEmoji,
+                label: labelText || `Role ${roleId}`,
+                roleId
+            });
         });
 
         if (parsedOptions.length > 0) {
@@ -90,8 +88,8 @@ function buildStepPayload(step, stepIndex, isTest = false) {
         .setColor('#5865F2')
         .setTitle(`${step.emoji} ${step.title}`)
         .setDescription(
-            `${step.question}\n\n` +
-            `*${step.isMultiple ? '☑️ You can select multiple options.' : '🔘 Select only one option from the menu.'}*`
+            `**${step.question}**\n\n` +
+            `*${step.isMultiple ? '☑️ You can select multiple roles from the menu.' : '🔘 Select a single role from the menu below.'}*`
         )
         .setFooter({ text: `Onboarding Step #${stepIndex + 1}` })
         .setTimestamp();
@@ -100,7 +98,7 @@ function buildStepPayload(step, stepIndex, isTest = false) {
         const item = {
             label: opt.label.substring(0, 100),
             value: opt.roleId,
-            description: `Toggle the @${opt.label} role`
+            description: `Toggle role: ${opt.label}`.substring(0, 100)
         };
         if (opt.emoji) item.emoji = opt.emoji;
         return item;
@@ -132,15 +130,15 @@ module.exports = (client) => {
 
             const configInput = new TextInputBuilder()
                 .setCustomId('onboarding_config_input')
-                .setLabel('Steps Config')
-                .setPlaceholder('📢 Alerts: Pick updates, 🔔 Updates (ROLE_ID) - 🎁 Giveaways (ROLE_ID) | on || ...')
+                .setLabel('(emoji) Title: question - opt 1 (ID) | on')
+                .setPlaceholder('🔔 Updates: Pick alerts - 📢 Updates (ROLE_ID) - 🎁 Giveaways (ROLE_ID) | on || ...')
                 .setStyle(TextInputStyle.Paragraph)
                 .setValue(data.rawConfig || '')
                 .setRequired(true);
 
             const channelsInput = new TextInputBuilder()
                 .setCustomId('onboarding_channels_input')
-                .setLabel('Destination Channel IDs (Sep by ||)')
+                .setLabel('Channel IDs (Separated by ||)')
                 .setPlaceholder('CHANNEL_ID_1 || CHANNEL_ID_2')
                 .setStyle(TextInputStyle.Short)
                 .setValue(data.rawChannels || '')
@@ -154,18 +152,18 @@ module.exports = (client) => {
             await interaction.showModal(modal);
         }
 
-        // 2. Save Modal Configuration
+        // 2. Save Modal Configuration & Send to Channels
         if (interaction.isModalSubmit() && interaction.customId === 'onboarding_config_modal') {
             await interaction.deferReply({ ephemeral: true });
 
             const rawConfig = interaction.fields.getTextInputValue('onboarding_config_input');
             const rawChannels = interaction.fields.getTextInputValue('onboarding_channels_input');
 
-            const steps = parseOnboardingConfig(rawConfig, rawChannels);
+            const steps = parseExactFormat(rawConfig, rawChannels);
 
             if (steps.length === 0) {
                 return interaction.editReply({ 
-                    content: '❌ Invalid syntax! Please follow: `(emoji) Title: Question, Option1 (ROLE_ID) - Option2 (ROLE_ID) | on/off`' 
+                    content: '❌ Invalid format! Please make sure your format follows: `(emoji) Title: Question - Ans 1 (ROLE_ID) - Ans 2 (ROLE_ID) | on/off`' 
                 });
             }
 
@@ -175,20 +173,32 @@ module.exports = (client) => {
                 { upsert: true, new: true }
             );
 
-            // Send interactive dropdown panels to destination channels
+            let sentCount = 0;
+            const dispatchLogs = [];
+
+            // Dispatch to target channels
             for (let i = 0; i < saved.steps.length; i++) {
                 const step = saved.steps[i];
                 if (step.channelId) {
-                    const targetChannel = interaction.guild.channels.cache.get(step.channelId);
-                    if (targetChannel) {
-                        const { embed, row } = buildStepPayload(step, i, false);
-                        await targetChannel.send({ embeds: [embed], components: [row] }).catch(() => {});
+                    try {
+                        const targetChannel = await interaction.guild.channels.fetch(step.channelId).catch(() => null);
+                        if (targetChannel) {
+                            const { embed, row } = buildStepPayload(step, i, false);
+                            await targetChannel.send({ embeds: [embed], components: [row] });
+                            sentCount++;
+                            dispatchLogs.push(`✔ Sent Step #${i + 1} to <#${step.channelId}>`);
+                        } else {
+                            dispatchLogs.push(`✖ Could not find channel \`${step.channelId}\``);
+                        }
+                    } catch (err) {
+                        console.error(`Error sending onboarding step to ${step.channelId}:`, err);
+                        dispatchLogs.push(`✖ Error sending to \`${step.channelId}\`: ${err.message}`);
                     }
                 }
             }
 
             await interaction.editReply({ 
-                content: `✅ Onboarding Setup Complete! Dispatched **${saved.steps.length}** interactive dropdown step(s).` 
+                content: `✅ Onboarding configured! Successfully delivered **${sentCount}/${saved.steps.length}** panels.\n\n${dispatchLogs.join('\n')}` 
             });
         }
 
@@ -200,7 +210,7 @@ module.exports = (client) => {
             });
         }
 
-        // 4. Real Dropdown Role Toggle Handler
+        // 4. Role Toggle Handler
         if (interaction.isStringSelectMenu() && interaction.customId.startsWith('onboarding_select_')) {
             const stepIndex = parseInt(interaction.customId.replace('onboarding_select_', ''), 10);
             const data = await OnboardingConfig.findOne({ guildId: interaction.guild.id });
@@ -211,13 +221,12 @@ module.exports = (client) => {
 
             const step = data.steps[stepIndex];
             const member = interaction.member;
-            const selectedRoleIds = interaction.values; // Selected role IDs in the menu
+            const selectedRoleIds = interaction.values;
             const stepAllRoleIds = step.options.map(o => o.roleId);
 
             const added = [];
             const removed = [];
 
-            // If it is single-choice, remove all other roles belonging to this step first
             if (!step.isMultiple) {
                 for (const rId of stepAllRoleIds) {
                     if (member.roles.cache.has(rId) && !selectedRoleIds.includes(rId)) {
@@ -227,7 +236,6 @@ module.exports = (client) => {
                 }
             }
 
-            // Sync selected roles
             for (const rId of stepAllRoleIds) {
                 const hasRole = member.roles.cache.has(rId);
                 const isSelected = selectedRoleIds.includes(rId);
@@ -250,7 +258,7 @@ module.exports = (client) => {
         }
     });
 
-    // 5. Preview Command: §onboarding
+    // 5. Test Command: §onboarding
     client.on('messageCreate', async (message) => {
         if (message.author.bot || !message.guild) return;
 
@@ -270,5 +278,6 @@ module.exports = (client) => {
         }
     });
 
-    console.log('✔ Dropdown Onboarding handler loaded.');
+    console.log('✔ Exact Syntax Onboarding handler loaded.');
 };
+    
