@@ -8,31 +8,41 @@ const {
 } = require('discord.js');
 const OnboardingConfig = require('../models/onboarding');
 
+// Safe Parser using Semicolon (;) as Title Separator
 function parseExactFormat(rawConfig, rawChannels) {
     const channelList = rawChannels.split('||').map(s => s.trim()).filter(Boolean);
     const stepBlocks = rawConfig.split('||').map(s => s.trim()).filter(Boolean);
     const steps = [];
 
     stepBlocks.forEach((block, index) => {
+        // 1. Separate flag (| on / | off)
         const pipeParts = block.split('|');
         const mainPart = pipeParts[0]?.trim() || '';
         const isMultiple = pipeParts[1] ? pipeParts[1].trim().toLowerCase() === 'on' : false;
 
-        const colonIndex = mainPart.indexOf(':');
-        if (colonIndex === -1) return;
+        // 2. Separate Title from Body using Semicolon (;)
+        const semiIndex = mainPart.indexOf(';');
+        if (semiIndex === -1) return;
 
-        const headerPart = mainPart.slice(0, colonIndex).trim();
-        const bodyPart = mainPart.slice(colonIndex + 1).trim();
+        const headerPart = mainPart.slice(0, semiIndex).trim();
+        const bodyPart = mainPart.slice(semiIndex + 1).trim();
 
+        // 3. Extract Emoji & Title from headerPart
         let emoji = '⭐';
         let title = headerPart;
 
-        const emojiMatch = headerPart.match(/^(\p{Extended_Pictographic}|<a?:[a-zA-Z0-9_~]+:\d+>)\s*(.*)$/u);
-        if (emojiMatch) {
-            emoji = emojiMatch[1] || '⭐';
-            title = emojiMatch[2].trim() || 'Onboarding';
+        const customEmojiMatch = headerPart.match(/^<a?:[a-zA-Z0-9_~]+:\d+>/);
+        const unicodeEmojiMatch = headerPart.match(/^\p{Extended_Pictographic}/u);
+
+        if (customEmojiMatch) {
+            emoji = customEmojiMatch[0];
+            title = headerPart.slice(emoji.length).trim() || `Step #${index + 1}`;
+        } else if (unicodeEmojiMatch) {
+            emoji = unicodeEmojiMatch[0];
+            title = headerPart.slice(emoji.length).trim() || `Step #${index + 1}`;
         }
 
+        // 4. Split Question and Options by hyphen (-)
         const dashParts = bodyPart.split('-').map(s => s.trim()).filter(Boolean);
         if (dashParts.length < 2) return;
 
@@ -45,18 +55,25 @@ function parseExactFormat(rawConfig, rawChannels) {
             if (!roleMatch) return;
 
             const roleId = roleMatch[1];
-            let labelText = opt.replace(/\(?<@&?\d{17,20}>?\)?/, '').trim();
-
+            let cleanLabel = opt;
             let optEmoji = null;
-            const optEmojiMatch = labelText.match(/^(\p{Extended_Pictographic}|<a?:[a-zA-Z0-9_~]+:\d+>)\s*(.*)$/u);
-            if (optEmojiMatch) {
-                optEmoji = optEmojiMatch[1];
-                labelText = optEmojiMatch[2].trim();
+
+            const optCustom = opt.match(/^<a?:[a-zA-Z0-9_~]+:\d+>/);
+            const optUnicode = opt.match(/^\p{Extended_Pictographic}/u);
+
+            if (optCustom) {
+                optEmoji = optCustom[0];
+                cleanLabel = opt.slice(optEmoji.length).trim();
+            } else if (optUnicode) {
+                optEmoji = optUnicode[0];
+                cleanLabel = opt.slice(optEmoji.length).trim();
             }
+
+            cleanLabel = cleanLabel.replace(/\(?<@&?\d{17,20}>?\)?/, '').trim();
 
             parsedOptions.push({
                 emoji: optEmoji,
-                label: labelText || `Role ${roleId}`,
+                label: cleanLabel || `Role ${roleId}`,
                 roleId
             });
         });
@@ -76,6 +93,7 @@ function parseExactFormat(rawConfig, rawChannels) {
     return steps;
 }
 
+// Build Step Dropdown Embed & ActionRow
 function buildStepPayload(step, stepIndex, isTest = false) {
     const embed = new EmbedBuilder()
         .setColor('#5865F2')
@@ -87,7 +105,6 @@ function buildStepPayload(step, stepIndex, isTest = false) {
         .setFooter({ text: `Onboarding Step #${stepIndex + 1}` })
         .setTimestamp();
 
-    // Make dropdown value unique by combining roleId + optIndex to prevent duplicate crash
     const menuOptions = step.options.map((opt, optIdx) => {
         const item = {
             label: opt.label.substring(0, 100),
@@ -124,8 +141,8 @@ module.exports = (client) => {
 
             const configInput = new TextInputBuilder()
                 .setCustomId('onboarding_config_input')
-                .setLabel('(emoji) Title: question - opt 1 (ID) | on')
-                .setPlaceholder('🔔 Updates: Pick alerts - 📢 Updates (ROLE_ID) - 🎁 Giveaways (ROLE_ID) | on || ...')
+                .setLabel('(emoji) Title; question - opt (ID) | on')
+                .setPlaceholder('🔔 Updates; Pick alerts - 📢 Updates (ROLE_ID) - 🎁 Giveaways (ROLE_ID) | on || ...')
                 .setStyle(TextInputStyle.Paragraph)
                 .setValue(data.rawConfig || '')
                 .setRequired(true);
@@ -146,7 +163,7 @@ module.exports = (client) => {
             await interaction.showModal(modal);
         }
 
-        // 2. Save Modal Configuration & Send to Channels
+        // 2. Save Modal Configuration & Dispatch
         if (interaction.isModalSubmit() && interaction.customId === 'onboarding_config_modal') {
             await interaction.deferReply({ ephemeral: true });
 
@@ -157,7 +174,7 @@ module.exports = (client) => {
 
             if (steps.length === 0) {
                 return interaction.editReply({ 
-                    content: '❌ Invalid format! Please follow: `(emoji) Title: Question - Ans 1 (ROLE_ID) - Ans 2 (ROLE_ID) | on/off`' 
+                    content: '❌ Invalid format! Please follow: `(emoji) Title; Question - Ans 1 (ROLE_ID) - Ans 2 (ROLE_ID) | on/off`' 
                 });
             }
 
@@ -214,8 +231,7 @@ module.exports = (client) => {
 
             const step = data.steps[stepIndex];
             const member = interaction.member;
-            
-            // Extract raw role IDs by stripping the trailing index (_0, _1, etc.)
+
             const selectedRoleIds = Array.from(new Set(
                 interaction.values.map(val => val.split('_')[0])
             ));
@@ -275,6 +291,6 @@ module.exports = (client) => {
         }
     });
 
-    console.log('✔ Duplicate-Safe Onboarding handler loaded.');
+    console.log('✔ Semicolon-Separator Onboarding handler loaded.');
 };
-                
+            
