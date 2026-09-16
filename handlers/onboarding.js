@@ -69,11 +69,17 @@ function parseExactFormat(rawConfig, rawChannels) {
                 cleanLabel = opt.slice(optEmoji.length).trim();
             }
 
-            cleanLabel = cleanLabel.replace(/\(?<@&?\d{17,20}>?\)?/, '').trim();
+            // Strips out brackets, mentions, and raw IDs completely from label
+            cleanLabel = cleanLabel
+                .replace(/\(?<@&?\d{17,20}>?\)?/g, '')
+                .replace(/\(\d{17,20}\)/g, '')
+                .replace(/\d{17,20}/g, '')
+                .replace(/[()]/g, '')
+                .trim();
 
             parsedOptions.push({
                 emoji: optEmoji,
-                label: cleanLabel || `Role ${roleId}`,
+                label: cleanLabel || `Role`,
                 roleId
             });
         });
@@ -291,6 +297,6 @@ module.exports = (client) => {
         }
     });
 
-    console.log('✔ Semicolon-Separator Onboarding handler loaded.');
+    console.log('✔ Clean Label Onboarding handler loaded.');
 };
-            
+        
