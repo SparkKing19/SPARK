@@ -349,7 +349,7 @@ module.exports = (client) => {
                     .setLabel('Quantity / Amount (for coin/quantity items)')
                     .setPlaceholder('e.g. 100')
                     .setStyle(TextInputStyle.Short)
-                    .setValue('100')
+                    .setValue('1')
                     .setRequired(true);
                 modal.addComponents(new ActionRowBuilder().addComponents(amountInput));
             }
