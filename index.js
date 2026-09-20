@@ -443,16 +443,16 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-// ====== ONE-TIME DATABASE MIGRATION FUNCTION ======
+// ====== ONE-TIME DATA MIGRATION ======
 async function runAutoMigration() {
-    const oldUri = process.env.OLD_MONGO_URI;
-    const newUri = process.env.MONGO_URI;
+    const oldUri = process.env.MONGO_URI;
+    const newUri = process.env.NEW_MONGO_URI;
 
-    if (!oldUri || !newUri || oldUri === newUri) return;
+    if (!newUri) return;
 
     try {
         console.log('🔄 Connecting to databases for migration...');
-        const oldConn = await mongoose.createConnection(oldUri).asPromise();
+        const oldConn = mongoose.connection;
         const newConn = await mongoose.createConnection(newUri).asPromise();
 
         const collections = await oldConn.db.listCollections().toArray();
@@ -475,15 +475,13 @@ async function runAutoMigration() {
         }
 
         console.log('🎉 ALL DATA HAS BEEN MIGRATED TO MONGODB ATLAS!');
-        await oldConn.close();
         await newConn.close();
     } catch (e) {
-        console.error('❌ Auto-migration error:', e.message);
+        console.error('❌ Migration Error:', e.message);
     }
 }
-// ==================================================
+// =====================================
 
-// Database Connection & Startup
 mongoose.connect(process.env.MONGO_URI)
     .then(async () => {
         console.log('MongoDB Connected');
