@@ -134,7 +134,6 @@ async function buildFeatureManager(guildId) {
     const guild = client.guilds.cache.get(guildId);
     const f = settings.features;
 
-    // Fetch Bot's actual member object in that guild to check current guild avatar
     const botMember = guild ? await guild.members.fetch(client.user.id).catch(() => null) : null;
     const currentAvatar = botMember ? botMember.displayAvatarURL() : client.user.displayAvatarURL();
 
@@ -222,7 +221,7 @@ client.on('messageCreate', async (message) => {
         const options = guilds.slice(0, 25).map(g => ({
             label: g.name.substring(0, 100),
             value: `leave_guild_${g.id}`,
-            description: `Members: ${g.memberCount} | ID: ${g.id}`
+            description: `Members: ${g.memberCount} \vert{} ID:${g.id}`
         }));
 
         const selectMenu = new StringSelectMenuBuilder()
@@ -413,13 +412,11 @@ client.on('interactionCreate', async (interaction) => {
 
         try {
             if (settings.customLogoUrl) {
-                // Revert bot's server avatar to default
                 await rest.patch(Routes.guildMember(guildId, '@me'), {
                     body: { avatar: null }
                 });
                 settings.customLogoUrl = null;
             } else {
-                // Apply server's icon as bot's server-specific profile avatar
                 const guildIconUrl = targetGuild.iconURL({ extension: 'png', size: 1024 });
                 if (!guildIconUrl) {
                     return interaction.followUp({ content: '❌ This server does not have an icon set.', ephemeral: true });
@@ -446,9 +443,52 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
+// ====== ONE-TIME DATABASE MIGRATION FUNCTION ======
+async function runAutoMigration() {
+    const oldUri = process.env.OLD_MONGO_URI;
+    const newUri = process.env.MONGO_URI;
+
+    if (!oldUri || !newUri || oldUri === newUri) return;
+
+    try {
+        console.log('🔄 Connecting to databases for migration...');
+        const oldConn = await mongoose.createConnection(oldUri).asPromise();
+        const newConn = await mongoose.createConnection(newUri).asPromise();
+
+        const collections = await oldConn.db.listCollections().toArray();
+
+        for (const col of collections) {
+            const colName = col.name;
+            if (colName.startsWith('system.')) continue;
+
+            const docs = await oldConn.db.collection(colName).find().toArray();
+            if (docs.length > 0) {
+                for (const doc of docs) {
+                    await newConn.db.collection(colName).replaceOne(
+                        { _id: doc._id },
+                        doc,
+                        { upsert: true }
+                    );
+                }
+                console.log(`📦 Shifted ${docs.length} documents for [${colName}]`);
+            }
+        }
+
+        console.log('🎉 ALL DATA HAS BEEN MIGRATED TO MONGODB ATLAS!');
+        await oldConn.close();
+        await newConn.close();
+    } catch (e) {
+        console.error('❌ Auto-migration error:', e.message);
+    }
+}
+// ==================================================
+
+// Database Connection & Startup
 mongoose.connect(process.env.MONGO_URI)
-    .then(() => console.log('MongoDB Connected'))
+    .then(async () => {
+        console.log('MongoDB Connected');
+        await runAutoMigration();
+    })
     .catch(err => console.error('MongoDB Connection Error:', err));
 
 client.login(process.env.DISCORD_TOKEN);
-            
