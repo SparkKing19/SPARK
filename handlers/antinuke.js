@@ -49,6 +49,10 @@ module.exports = (client) => {
         const config = await ModerationConfig.findOne({ guildId: member.guild.id });
         if (!config || !config.antiNukeEnabled) return;
 
+        // Ensure array safety
+        if (!Array.isArray(config.whitelistedBots)) config.whitelistedBots = [];
+        if (!Array.isArray(config.extraOwners)) config.extraOwners = [];
+
         const auditLogs = await member.guild.fetchAuditLogs({ limit: 1, type: AuditLogEvent.BotAdd }).catch(() => null);
         const entry = auditLogs?.entries.first();
         const executor = entry?.executor;
@@ -56,6 +60,7 @@ module.exports = (client) => {
         const isServerOwner = executor?.id === member.guild.ownerId;
         const isExtraOwner = config.extraOwners.includes(executor?.id);
 
+        // Agar bot add karne wala Server Owner ya Extra Owner nahi hai, turant bot ban aur inviter punish
         if (!isServerOwner && !isExtraOwner) {
             await member.ban({ reason: '🛡️ Anti-Nuke: Unauthorized Bot Addition' }).catch(() => {});
 
@@ -83,7 +88,7 @@ module.exports = (client) => {
             return;
         }
 
-        // 30 Seconds Cooldown Timer
+        // Agar Server Owner ya Extra Owner ne add kiya hai, toh 30 Seconds ka timer start
         const timeout = setTimeout(async () => {
             const currentConfig = await ModerationConfig.findOne({ guildId: member.guild.id });
             const isWhitelisted = currentConfig?.whitelistedBots?.includes(member.id);
@@ -98,7 +103,7 @@ module.exports = (client) => {
                 );
             }
             pendingBots.delete(member.id);
-        }, 30000); // 30 seconds cooldown
+        }, 30000); // 30 seconds
 
         pendingBots.set(member.id, { timeout, guildId: member.guild.id });
     });
@@ -115,9 +120,9 @@ module.exports = (client) => {
         const executor = entry.executor;
         if (!executor || executor.id === client.user.id) return;
 
-        const isWhitelisted = config.whitelistedBots.includes(executor.id) || 
-                              config.whitelistedUsers.includes(executor.id) || 
-                              config.extraOwners.includes(executor.id) || 
+        const isWhitelisted = (config.whitelistedBots || []).includes(executor.id) || 
+                              (config.whitelistedUsers || []).includes(executor.id) || 
+                              (config.extraOwners || []).includes(executor.id) || 
                               executor.id === guild.ownerId;
 
         if (!isWhitelisted) {
@@ -146,8 +151,8 @@ module.exports = (client) => {
         const config = await ModerationConfig.findOne({ guildId: newMember.guild.id });
         if (!config || !config.antiNukeEnabled) return;
 
-        const isWhitelisted = config.whitelistedUsers.includes(newMember.id) || 
-                              config.extraOwners.includes(newMember.id) || 
+        const isWhitelisted = (config.whitelistedUsers || []).includes(newMember.id) || 
+                              (config.extraOwners || []).includes(newMember.id) || 
                               newMember.id === newMember.guild.ownerId;
 
         if (!isWhitelisted) {
@@ -177,12 +182,17 @@ module.exports = (client) => {
 
         const args = message.content.slice(1).trim().split(/ +/);
         const cmd = args.shift()?.toLowerCase();
-        const config = await ModerationConfig.findOne({ guildId: message.guild.id }) || new ModerationConfig({ guildId: message.guild.id });
+        let config = await ModerationConfig.findOne({ guildId: message.guild.id });
+        if (!config) config = await ModerationConfig.create({ guildId: message.guild.id });
+
+        if (!Array.isArray(config.extraOwners)) config.extraOwners = [];
+        if (!Array.isArray(config.whitelistedBots)) config.whitelistedBots = [];
+        if (!Array.isArray(config.whitelistedUsers)) config.whitelistedUsers = [];
 
         const isOwner = message.author.id === message.guild.ownerId;
         const isExtraOwner = config.extraOwners.includes(message.author.id);
 
-        // A. Anti-Nuke Toggle
+        // A. Anti-Nuke Toggle (%antinuke enable/disable)
         if (cmd === 'antinuke') {
             if (!isOwner && !isExtraOwner) {
                 return sendTempDenial(message, 'you do not have permission to configure Anti-Nuke.');
@@ -200,55 +210,82 @@ module.exports = (client) => {
             return message.reply(`Anti-Nuke is currently **${config.antiNukeEnabled ? 'ENABLED' : 'DISABLED'}**.`);
         }
 
-        // B. Extra Owner Management (%extraowner add/remove @user)
+        // B. Extra Owner Management (%extraowner add/remove @user or ID)
         if (cmd === 'extraowner') {
             if (!isOwner) {
                 return sendTempDenial(message, 'only the Server Owner can manage Extra Owners.');
             }
             const sub = args[0]?.toLowerCase();
-            const target = message.mentions.users.first() || await client.users.fetch(args[1]).catch(() => null);
-            if (!target) return message.reply('Usage: `%extraowner add @user` or `%extraowner remove @user`');
+            const rawTarget = args[1]?.replace(/[<@!>]/g, '');
+
+            if (!['add', 'remove'].includes(sub) || !rawTarget) {
+                return message.reply('❌ Usage: `%extraowner add @user` or `%extraowner remove @user`');
+            }
+
+            const target = await client.users.fetch(rawTarget).catch(() => null);
+            if (!target) return message.reply('❌ User not found.');
 
             if (sub === 'add') {
-                if (config.extraOwners.includes(target.id)) return message.reply('User is already an Extra Owner.');
+                if (config.extraOwners.includes(target.id)) return message.reply('⚠️ User is already an Extra Owner.');
                 config.extraOwners.push(target.id);
+                config.markModified('extraOwners');
                 await config.save();
                 return message.reply(`✅ <@${target.id}> is now registered as an **Extra Owner**.`);
             } else if (sub === 'remove') {
                 config.extraOwners = config.extraOwners.filter(id => id !== target.id);
+                config.markModified('extraOwners');
                 await config.save();
                 return message.reply(`❌ Removed <@${target.id}> from Extra Owners.`);
             }
         }
 
-        // C. Whitelist Management (%wl add/remove @user)
+        // C. Whitelist Management (%wl add/remove @user/bot or ID)
         if (cmd === 'wl') {
             if (!isOwner && !isExtraOwner) {
                 return sendTempDenial(message, 'only Server Owner and Extra Owners can manage Whitelist.');
             }
+
             const sub = args[0]?.toLowerCase();
-            const target = message.mentions.users.first() || await client.users.fetch(args[1]).catch(() => null);
-            if (!target) return message.reply('Usage: `%wl add @user/bot` or `%wl remove @user/bot`');
+            const rawTarget = args[1]?.replace(/[<@!>]/g, '');
+
+            if (!['add', 'remove'].includes(sub) || !rawTarget) {
+                return message.reply('❌ Usage: `%wl add @user/bot` ya `%wl add <ID>`');
+            }
+
+            const target = await client.users.fetch(rawTarget).catch(() => null);
+            if (!target) {
+                return message.reply('❌ Invalid ID/User. User ya Bot find nahi hua.');
+            }
 
             const isBot = target.bot;
             const targetArray = isBot ? 'whitelistedBots' : 'whitelistedUsers';
 
             if (sub === 'add') {
-                if (config[targetArray].includes(target.id)) return message.reply('Target is already whitelisted.');
+                if (config[targetArray].includes(target.id)) {
+                    return message.reply(`⚠️ <@${target.id}> pehle se hi Whitelisted hai.`);
+                }
+
                 config[targetArray].push(target.id);
+                config.markModified(targetArray);
                 await config.save();
 
-                // Agar bot whitelist ho gaya to pending auto-ban timeout cancel kar dein
+                // 30 seconds auto-ban pending timer cancel karein
                 if (isBot && pendingBots.has(target.id)) {
                     clearTimeout(pendingBots.get(target.id).timeout);
                     pendingBots.delete(target.id);
                 }
 
-                return message.reply(`✅ <@${target.id}> (${isBot ? 'Bot' : 'User'}) is now **Whitelisted**.`);
+                return message.reply(`✅ <@${target.id}> (${isBot ? 'Bot' : 'User'}) successfully **Whitelisted** ho gaya hai!`);
             } else if (sub === 'remove') {
+                if (!config[targetArray].includes(target.id)) {
+                    return message.reply(`⚠️ <@${target.id}> Whitelist me nahi hai.`);
+                }
+
                 config[targetArray] = config[targetArray].filter(id => id !== target.id);
+                config.markModified(targetArray);
                 await config.save();
-                return message.reply(`❌ Removed <@${target.id}> from Whitelist.`);
+
+                return message.reply(`❌ <@${target.id}> ko Whitelist se remove kar diya gaya.`);
             }
         }
 
