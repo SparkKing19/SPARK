@@ -42,7 +42,7 @@ async function sendTempDenial(message, text) {
 
 module.exports = (client) => {
 
-    // 1. Unauthorized Bot Add & 10-Second Timer
+    // 1. Unauthorized Bot Add & 30-Second Timer
     client.on('guildMemberAdd', async (member) => {
         if (!member.user.bot) return;
 
@@ -83,21 +83,22 @@ module.exports = (client) => {
             return;
         }
 
+        // 30 Seconds Cooldown Timer
         const timeout = setTimeout(async () => {
             const currentConfig = await ModerationConfig.findOne({ guildId: member.guild.id });
             const isWhitelisted = currentConfig?.whitelistedBots?.includes(member.id);
 
             if (!isWhitelisted) {
-                await member.ban({ reason: '🛡️ Anti-Nuke: Bot not whitelisted within 10 seconds' }).catch(() => {});
+                await member.ban({ reason: '🛡️ Anti-Nuke: Bot not whitelisted within 30 seconds' }).catch(() => {});
                 await logAction(
                     member.guild, 
                     config, 
                     '⏳ Anti-Nuke: Bot Auto-Banned', 
-                    `**Bot:** ${member.user.tag} was not whitelisted within **10 seconds** and has been banned.`
+                    `**Bot:** ${member.user.tag} was not whitelisted within **30 seconds** and has been banned.`
                 );
             }
             pendingBots.delete(member.id);
-        }, 10000);
+        }, 30000); // 30 seconds cooldown
 
         pendingBots.set(member.id, { timeout, guildId: member.guild.id });
     });
@@ -236,6 +237,13 @@ module.exports = (client) => {
                 if (config[targetArray].includes(target.id)) return message.reply('Target is already whitelisted.');
                 config[targetArray].push(target.id);
                 await config.save();
+
+                // Agar bot whitelist ho gaya to pending auto-ban timeout cancel kar dein
+                if (isBot && pendingBots.has(target.id)) {
+                    clearTimeout(pendingBots.get(target.id).timeout);
+                    pendingBots.delete(target.id);
+                }
+
                 return message.reply(`✅ <@${target.id}> (${isBot ? 'Bot' : 'User'}) is now **Whitelisted**.`);
             } else if (sub === 'remove') {
                 config[targetArray] = config[targetArray].filter(id => id !== target.id);
@@ -334,4 +342,3 @@ module.exports = (client) => {
 
     console.log('✔ Anti-Nuke & Permission Handler loaded.');
 };
-            
