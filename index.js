@@ -270,26 +270,54 @@ client.on('messageCreate', async (message) => {
         return message.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(selectMenu)] });
     }
 
-    // C. Bot Owner Database Storage Inspector (%storage in DM)
+        // C. Bot Owner Database Storage Inspector (%storage in DM)
     if (message.channel.isDMBased() && isBotOwner && cmd === '%storage') {
-        const guilds = Array.from(client.guilds.cache.values());
-        if (guilds.length === 0) return message.reply('❌ The bot is not currently in any servers.');
+        const db = mongoose.connection.db;
+        const collections = await db.listCollections().toArray();
 
-        const options = guilds.slice(0, 25).map(g => ({
-            label: g.name.substring(0, 100),
-            value: `storage_guild_${g.id}`,
-            description: `Inspect database footprint for ID: ${g.id}`
-        }));
+        // Database me jitne bhi unique guildIds hain unko collect karo
+        const storedGuildIds = new Set();
+
+        for (const col of collections) {
+            if (col.name.startsWith('system.')) continue;
+            const collection = db.collection(col.name);
+
+            // Dono patterns check: guildId aur guild_id
+            const ids1 = await collection.distinct('guildId');
+            const ids2 = await collection.distinct('guild_id');
+
+            ids1.forEach(id => { if (id && typeof id === 'string') storedGuildIds.add(id); });
+            ids2.forEach(id => { if (id && typeof id === 'string') storedGuildIds.add(id); });
+        }
+
+        const uniqueGuildIds = Array.from(storedGuildIds);
+
+        if (uniqueGuildIds.length === 0) {
+            return message.reply('ℹ️ Database me kisi bhi server ka koi data maujood nahi hai.');
+        }
+
+        // Dropdown menu ke options build karein (Max 25 allowed by Discord)
+        const options = uniqueGuildIds.slice(0, 25).map(gId => {
+            const cachedGuild = client.guilds.cache.get(gId);
+            const serverName = cachedGuild ? cachedGuild.name : `Left Guild (${gId})`;
+            const statusTag = cachedGuild ? '🟢 In Server' : '🔴 Bot Left';
+
+            return {
+                label: serverName.substring(0, 100),
+                value: `storage_guild_${gId}`,
+                description: `${statusTag} \vert{} ID:${gId}`
+            };
+        });
 
         const selectMenu = new StringSelectMenuBuilder()
             .setCustomId('owner_storage_server_select')
-            .setPlaceholder('Select a server to view DB storage...')
+            .setPlaceholder('Select a server having DB records...')
             .addOptions(options);
 
         const embed = new EmbedBuilder()
             .setColor('#E67E22')
-            .setTitle('💾 MongoDB Storage Inspector')
-            .setDescription('Select a server from the dropdown to analyze its database storage footprint and manage data clearing.')
+            .setTitle('💾 MongoDB Stored Servers Directory')
+            .setDescription(`Found **${uniqueGuildIds.length} server(s)** with active records in the database.\nServers marked as **🔴 Bot Left** are no longer hosting the bot but still consume MongoDB storage.`)
             .setThumbnail(client.user.displayAvatarURL())
             .setTimestamp();
 
@@ -468,12 +496,13 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
-    // F. %storage: Select Server & Calculate Database Footprint
+        // F. %storage: Select Server & Calculate Database Footprint
     if (interaction.isStringSelectMenu() && interaction.customId === 'owner_storage_server_select') {
         await interaction.deferReply();
         const guildId = interaction.values[0].replace('storage_guild_', '');
         const targetGuild = client.guilds.cache.get(guildId);
-        const guildName = targetGuild ? targetGuild.name : `Guild ${guildId}`;
+        const guildName = targetGuild ? targetGuild.name : `Left Server (${guildId})`;
+        const guildStatus = targetGuild ? '🟢 Currently Active' : '🔴 Bot has Left';
 
         const db = mongoose.connection.db;
         const collections = await db.listCollections().toArray();
@@ -509,9 +538,10 @@ client.on('interactionCreate', async (interaction) => {
             .setTitle(`💾 Storage Footprint: ${guildName}`)
             .setDescription(breakdown.length > 0 ? breakdown.join('\n') : '*No database records found for this server.*')
             .addFields(
+                { name: 'Status', value: `\`${guildStatus}\``, inline: true },
                 { name: 'Total Documents', value: `\`${totalRecords}\``, inline: true },
                 { name: 'Total Size', value: `\`${sizeInKB} KB\` (\`${sizeInMB} MB\`)`, inline: true },
-                { name: 'Server ID', value: `\`${guildId}\``, inline: true }
+                { name: 'Server ID', value: `\`${guildId}\``, inline: false }
             )
             .setFooter({ text: 'Warning: Clearing data will permanently remove all server configurations!' })
             .setTimestamp();
