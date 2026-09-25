@@ -134,7 +134,6 @@ async function buildFeatureManager(guildId) {
     const guild = client.guilds.cache.get(guildId);
     const f = settings.features;
 
-    // Fetch Bot's actual member object in that guild to check current guild avatar
     const botMember = guild ? await guild.members.fetch(client.user.id).catch(() => null) : null;
     const currentAvatar = botMember ? botMember.displayAvatarURL() : client.user.displayAvatarURL();
 
@@ -205,7 +204,7 @@ async function buildFeatureManager(guildId) {
     };
 }
 
-// 4. Bot Owner DM Commands (%control, %manage, %clear) & %help System
+// 4. Bot Owner DM Commands (%control, %manage, %storage, %clear) & %help System
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
@@ -222,7 +221,7 @@ client.on('messageCreate', async (message) => {
         const options = guilds.slice(0, 25).map(g => ({
             label: g.name.substring(0, 100),
             value: `leave_guild_${g.id}`,
-            description: `Members: ${g.memberCount} | ID: ${g.id}`
+            description: `Members: ${g.memberCount} \vert{} ID:${g.id}`
         }));
 
         const selectMenu = new StringSelectMenuBuilder()
@@ -271,7 +270,33 @@ client.on('messageCreate', async (message) => {
         return message.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(selectMenu)] });
     }
 
-    // C. DM Message Purge (%clear <amount>)
+    // C. Bot Owner Database Storage Inspector (%storage in DM)
+    if (message.channel.isDMBased() && isBotOwner && cmd === '%storage') {
+        const guilds = Array.from(client.guilds.cache.values());
+        if (guilds.length === 0) return message.reply('❌ The bot is not currently in any servers.');
+
+        const options = guilds.slice(0, 25).map(g => ({
+            label: g.name.substring(0, 100),
+            value: `storage_guild_${g.id}`,
+            description: `Inspect database footprint for ID: ${g.id}`
+        }));
+
+        const selectMenu = new StringSelectMenuBuilder()
+            .setCustomId('owner_storage_server_select')
+            .setPlaceholder('Select a server to view DB storage...')
+            .addOptions(options);
+
+        const embed = new EmbedBuilder()
+            .setColor('#E67E22')
+            .setTitle('💾 MongoDB Storage Inspector')
+            .setDescription('Select a server from the dropdown to analyze its database storage footprint and manage data clearing.')
+            .setThumbnail(client.user.displayAvatarURL())
+            .setTimestamp();
+
+        return message.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(selectMenu)] });
+    }
+
+    // D. DM Message Purge (%clear <amount>)
     if (message.channel.isDMBased() && isBotOwner && (cmd === '%clear' || cmd === '%purge')) {
         const amount = parseInt(args[1], 10) || 10;
         const fetched = await message.channel.messages.fetch({ limit: Math.min(amount + 1, 100) });
@@ -283,7 +308,7 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // D. %help Command
+    // E. %help Command
     if (cmd === '%help') {
         const helpEmbed = new EmbedBuilder()
             .setColor('#5865F2')
@@ -292,7 +317,7 @@ client.on('messageCreate', async (message) => {
             .addFields(
                 {
                     name: '👑 Bot Owner Controls (% prefix in DM)',
-                    value: '• `%control` - Server list, bot profile & force leave\n• `%manage` - Multi-select feature checklist & Server Avatar changer\n• `%clear <amount>` - DM message cleaner',
+                    value: '• `%control` - Server list, bot profile & force leave\n• `%manage` - Multi-select feature checklist & Server Avatar changer\n• `%storage` - View server MongoDB usage & wipe data\n• `%clear <amount>` - DM message cleaner',
                     inline: false
                 },
                 {
@@ -413,13 +438,11 @@ client.on('interactionCreate', async (interaction) => {
 
         try {
             if (settings.customLogoUrl) {
-                // Revert bot's server avatar to default
                 await rest.patch(Routes.guildMember(guildId, '@me'), {
                     body: { avatar: null }
                 });
                 settings.customLogoUrl = null;
             } else {
-                // Apply server's icon as bot's server-specific profile avatar
                 const guildIconUrl = targetGuild.iconURL({ extension: 'png', size: 1024 });
                 if (!guildIconUrl) {
                     return interaction.followUp({ content: '❌ This server does not have an icon set.', ephemeral: true });
@@ -444,11 +467,98 @@ client.on('interactionCreate', async (interaction) => {
             });
         }
     }
+
+    // F. %storage: Select Server & Calculate Database Footprint
+    if (interaction.isStringSelectMenu() && interaction.customId === 'owner_storage_server_select') {
+        await interaction.deferReply();
+        const guildId = interaction.values[0].replace('storage_guild_', '');
+        const targetGuild = client.guilds.cache.get(guildId);
+        const guildName = targetGuild ? targetGuild.name : `Guild ${guildId}`;
+
+        const db = mongoose.connection.db;
+        const collections = await db.listCollections().toArray();
+
+        let totalBytes = 0;
+        let totalRecords = 0;
+        const breakdown = [];
+
+        for (const col of collections) {
+            if (col.name.startsWith('system.')) continue;
+
+            const collection = db.collection(col.name);
+            const docs = await collection.find({
+                $or: [{ guildId: guildId }, { guild_id: guildId }]
+            }).toArray();
+
+            if (docs.length > 0) {
+                totalRecords += docs.length;
+                let colBytes = 0;
+                for (const doc of docs) {
+                    colBytes += Buffer.byteLength(JSON.stringify(doc), 'utf8');
+                }
+                totalBytes += colBytes;
+                breakdown.push(`• **${col.name}**: \`${docs.length}\` docs (~${(colBytes / 1024).toFixed(2)} KB)`);
+            }
+        }
+
+        const sizeInKB = (totalBytes / 1024).toFixed(2);
+        const sizeInMB = (totalBytes / (1024 * 1024)).toFixed(3);
+
+        const storageEmbed = new EmbedBuilder()
+            .setColor('#E67E22')
+            .setTitle(`💾 Storage Footprint: ${guildName}`)
+            .setDescription(breakdown.length > 0 ? breakdown.join('\n') : '*No database records found for this server.*')
+            .addFields(
+                { name: 'Total Documents', value: `\`${totalRecords}\``, inline: true },
+                { name: 'Total Size', value: `\`${sizeInKB} KB\` (\`${sizeInMB} MB\`)`, inline: true },
+                { name: 'Server ID', value: `\`${guildId}\``, inline: true }
+            )
+            .setFooter({ text: 'Warning: Clearing data will permanently remove all server configurations!' })
+            .setTimestamp();
+
+        const actionRow = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId(`wipe_data_${guildId}`)
+                .setLabel('Clear All Server Data')
+                .setEmoji('🗑️')
+                .setStyle(ButtonStyle.Danger)
+                .setDisabled(totalRecords === 0)
+        );
+
+        return interaction.editReply({ embeds: [storageEmbed], components: [actionRow] });
+    }
+
+    // G. %storage: Clear / Wipe Server MongoDB Data
+    if (interaction.isButton() && interaction.customId.startsWith('wipe_data_')) {
+        const guildId = interaction.customId.replace('wipe_data_', '');
+        await interaction.deferUpdate();
+
+        const db = mongoose.connection.db;
+        const collections = await db.listCollections().toArray();
+        let deletedTotal = 0;
+
+        for (const col of collections) {
+            if (col.name.startsWith('system.')) continue;
+            const res = await db.collection(col.name).deleteMany({
+                $or: [{ guildId: guildId }, { guild_id: guildId }]
+            });
+            deletedTotal += res.deletedCount;
+        }
+
+        const clearedEmbed = new EmbedBuilder()
+            .setColor('#2ECC71')
+            .setTitle('✅ Server Database Wiped')
+            .setDescription(`Successfully cleared all database records belonging to Guild ID: \`${guildId}\`.`)
+            .addFields({ name: 'Total Records Deleted', value: `\`${deletedTotal} documents\``, inline: true })
+            .setTimestamp();
+
+        return interaction.editReply({ embeds: [clearedEmbed], components: [] });
+    }
 });
 
+// Database Connection
 mongoose.connect(process.env.MONGO_URI)
-    .then(() => console.log('MongoDB Connected'))
+    .then(() => console.log('MongoDB Connected to Atlas'))
     .catch(err => console.error('MongoDB Connection Error:', err));
 
 client.login(process.env.DISCORD_TOKEN);
-            
