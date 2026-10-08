@@ -62,20 +62,41 @@ client.on('interactionCreate', async (interaction) => {
             if (modCfg?.extraOwners?.includes(interaction.user.id)) isExtraOwner = true;
         }
 
-        if (!isBotOwner && !isServerOwner && !isExtraOwner) {
-            return interaction.reply({
-                content: '❌ Access Denied: Command execution is strictly restricted to Bot Owners, Server Owner, and Extra Owners.',
-                ephemeral: true
-            });
+        // Agar Bot Owner hai, toh seedha execute hone do (Full Bypass)
+        if (isBotOwner) {
+            try {
+                return await command.execute(interaction);
+            } catch (err) {
+                console.error(`Error executing command ${interaction.commandName}:`, err);
+                return;
+            }
+        }
+
+        // Agar /staff command hai, toh normal staff members ko bhi permission do
+        // (Bina iske normal staff /staff command use nahi kar payenge)
+        if (interaction.commandName !== 'staff') {
+            if (!isServerOwner && !isExtraOwner) {
+                return interaction.reply({
+                    content: '❌ Access Denied: Command execution is strictly restricted to Bot Owners, Server Owner, and Extra Owners.',
+                    ephemeral: true
+                });
+            }
         }
 
         try {
             await command.execute(interaction);
         } catch (err) {
             console.error(`Error executing command ${interaction.commandName}:`, err);
+            const errorMsg = { content: '❌ Command execute karte waqt error aayi!', ephemeral: true };
+            if (interaction.replied || interaction.deferred) {
+                await interaction.followUp(errorMsg).catch(() => {});
+            } else {
+                await interaction.reply(errorMsg).catch(() => {});
+            }
         }
     }
 });
+
 
 // 2. Auto-load All Feature Handlers
 const handlerFiles = fs.readdirSync(path.join(__dirname, 'handlers')).filter(file => file.endsWith('.js'));
