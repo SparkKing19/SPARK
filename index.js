@@ -8,7 +8,8 @@ const {
     ActionRowBuilder, 
     StringSelectMenuBuilder, 
     ButtonBuilder, 
-    ButtonStyle 
+    ButtonStyle,
+    PermissionFlagsBits
 } = require('discord.js');
 const mongoose = require('mongoose');
 const fs = require('fs');
