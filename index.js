@@ -59,9 +59,15 @@ client.on('interactionCreate', async (interaction) => {
 
         let isExtraOwner = false;
         if (interaction.guild) {
-            const modCfg = await ModerationConfig.findOne({ guildId: interaction.guild.id });
-            if (modCfg?.extraOwners?.includes(interaction.user.id)) isExtraOwner = true;
+        // Agar bot owner hai toh direct extra owner ban gaya, database check karne ki bhi zaroorat nahi
+            if (isBotOwner) {
+                isExtraOwner = true;
+            } else {
+                const modCfg = await ModerationConfig.findOne({ guildId: interaction.guild.id });
+                if (modCfg?.extraOwners?.includes(interaction.user.id)) isExtraOwner = true;
+            }
         }
+
 
         // Agar Bot Owner hai, toh seedha execute hone do (Full Bypass)
         if (isBotOwner) {
