@@ -1,419 +1,318 @@
-const { Player } = require('discord-player');
 const { 
-    EmbedBuilder, 
-    ActionRowBuilder, 
-    ButtonBuilder, 
-    ButtonStyle 
-} = require('discord.js');
+    joinVoiceChannel, 
+    createAudioPlayer, 
+    createAudioResource, 
+    AudioPlayerStatus, 
+    VoiceConnectionStatus, 
+    entersState 
+} = require('@discordjs/voice');
 const playdl = require('play-dl');
+const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const ModerationConfig = require('../models/moderation');
 const MusicConfig = require('../models/musicConfig');
 
-// Permanent Bot Owners
 const BOT_OWNERS = ['1266728371719508062', '1474216218792558735'];
 
-// In-Memory Host Session Tracker: guildId -> { hostId, voiceChannelId }
-const activeSessions = new Map();
+// guildId -> { connection, player, queue: [], current: null, hostId: null, channel: null, isPlaying: false, loop: false }
+const serverQueues = new Map();
 
 async function checkIsOwner(guild, userId) {
     if (BOT_OWNERS.includes(userId)) return true;
     if (guild.ownerId === userId) return true;
-
     const modConfig = await ModerationConfig.findOne({ guildId: guild.id });
     if (modConfig?.extraOwners && modConfig.extraOwners.includes(userId)) return true;
-
     return false;
 }
 
-module.exports = async (client) => {
-    const player = new Player(client, {
-        ytdlOptions: {
-            quality: 'highestaudio',
-            highWaterMark: 1 << 25
+async function playNext(guildId) {
+    const sQueue = serverQueues.get(guildId);
+    if (!sQueue) return;
+
+    if (sQueue.queue.length === 0) {
+        sQueue.isPlaying = false;
+        sQueue.current = null;
+        const mConfig = await MusicConfig.findOne({ guildId });
+        if (!mConfig?.isAlwaysOn) {
+            setTimeout(() => {
+                const check = serverQueues.get(guildId);
+                if (check && !check.isPlaying && check.queue.length === 0) {
+                    check.connection?.destroy();
+                    serverQueues.delete(guildId);
+                }
+            }, 60000);
         }
-    });
+        return;
+    }
 
-    await player.extractors.loadDefault().catch(() => {});
+    const track = sQueue.loop && sQueue.current ? sQueue.current : sQueue.queue.shift();
+    sQueue.current = track;
+    sQueue.isPlaying = true;
 
-    // Auto reconnect to 24/7 Always Channels on bot start
-    client.once('ready', async () => {
-        const configs = await MusicConfig.find({ isAlwaysOn: true });
-        for (const cfg of configs) {
-            const guild = client.guilds.cache.get(cfg.guildId);
-            if (!guild) continue;
-            const channel = guild.channels.cache.get(cfg.alwaysChannelId);
-            if (!channel) continue;
+    try {
+        // play-dl direct stream
+        let stream = await playdl.stream(track.url, { quality: 2 }).catch(async () => {
+            // agar YouTube stream block ho, soundcloud par search karke stream uthao
+            const sc = await playdl.search(track.title, { source: { soundcloud: 'tracks' }, limit: 1 });
+            if (sc.length > 0) return await playdl.stream(sc[0].url);
+            return null;
+        });
 
-            try {
-                const queue = player.nodes.create(guild, {
-                    metadata: { channel: guild.systemChannel },
-                    leaveOnEmpty: false,
-                    leaveOnEnd: false,
-                    volume: 80
-                });
-                if (!queue.connection) await queue.connect(channel);
-            } catch (_) {}
+        if (!stream) {
+            sQueue.channel?.send(`⚠️ Stream nahi mil saki: **${track.title}**, agla song check kar rahe hain...`);
+            return playNext(guildId);
         }
-    });
 
-    // Voice State Update: Session release
-    client.on('voiceStateUpdate', (oldState, newState) => {
-        const guildId = oldState.guild.id;
-        const session = activeSessions.get(guildId);
-        if (!session) return;
+        const resource = createAudioResource(stream.stream, {
+            inputType: stream.type,
+            inlineVolume: true
+        });
+        resource.volume?.setVolume(0.8);
 
-        if (oldState.id === session.hostId && oldState.channelId !== newState.channelId) {
-            activeSessions.delete(guildId);
-        }
-    });
-
-    // Player Events
-    player.events.on('playerStart', (queue, track) => {
-        const session = activeSessions.get(queue.guild.id);
-        const hostTag = session ? `<@${session.hostId}>` : `${track.requestedBy}`;
+        sQueue.player.play(resource);
 
         const embed = new EmbedBuilder()
             .setColor('#2ECC71')
             .setTitle('🎶 Now Playing')
             .setDescription(`**[${track.title}](${track.url})**`)
             .addFields(
-                { name: 'Duration', value: `\`${track.duration}\``, inline: true },
-                { name: 'Host / Controller', value: hostTag, inline: true },
-                { name: 'Voice Channel', value: `${queue.channel?.name}`, inline: true }
+                { name: 'Duration', value: `\`${track.duration || 'Live/Unknown'}\``, inline: true },
+                { name: 'Host / Controller', value: `<@${sQueue.hostId}>`, inline: true }
             )
-            .setThumbnail(track.thumbnail || null)
-            .setFooter({ text: '🔒 Session Locked: Sirf Host aur Owners control kar sakte hain!' });
+            .setThumbnail(track.thumbnail || null);
 
         const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-                .setCustomId('music_pause_resume')
-                .setLabel('Pause / Resume')
-                .setEmoji('⏯️')
-                .setStyle(ButtonStyle.Primary),
-            new ButtonBuilder()
-                .setCustomId('music_skip')
-                .setLabel('Skip')
-                .setEmoji('⏭️')
-                .setStyle(ButtonStyle.Secondary),
-            new ButtonBuilder()
-                .setCustomId('music_stop')
-                .setLabel('Stop')
-                .setEmoji('⏹️')
-                .setStyle(ButtonStyle.Danger),
-            new ButtonBuilder()
-                .setCustomId('music_loop')
-                .setLabel('Loop')
-                .setEmoji('🔁')
-                .setStyle(ButtonStyle.Secondary)
+            new ButtonBuilder().setCustomId('m_pause_resume').setLabel('Pause / Resume').setEmoji('⏯️').setStyle(ButtonStyle.Primary),
+            new ButtonBuilder().setCustomId('m_skip').setLabel('Skip').setEmoji('⏭️').setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder().setCustomId('m_stop').setLabel('Stop').setEmoji('⏹️').setStyle(ButtonStyle.Danger),
+            new ButtonBuilder().setCustomId('m_loop').setLabel('Loop').setEmoji('🔁').setStyle(ButtonStyle.Secondary)
         );
 
-        queue.metadata?.channel?.send({ embeds: [embed], components: [row] }).catch(() => {});
-    });
+        sQueue.channel?.send({ embeds: [embed], components: [row] }).catch(() => {});
+    } catch (err) {
+        console.error('Play Stream Error:', err);
+        sQueue.channel?.send(`⚠️ Error playing track: \`${err.message}\``);
+        playNext(guildId);
+    }
+}
 
-    player.events.on('emptyChannel', async (queue) => {
-        const cfg = await MusicConfig.findOne({ guildId: queue.guild.id });
-        if (cfg?.isAlwaysOn && cfg.alwaysChannelId === queue.channel?.id) {
-            return;
-        }
-        activeSessions.delete(queue.guild.id);
-        queue.metadata?.channel?.send('🚪 VC khali hone par playback stop ho gaya.').catch(() => {});
-    });
-
-    player.events.on('playerError', (queue, error) => {
-        console.error('Audio Stream Error:', error);
-        queue.metadata?.channel?.send(`⚠️ Stream playback issue: \`${error.message}\``).catch(() => {});
-    });
-
-    player.events.on('error', (queue, error) => {
-        console.error('General Queue Error:', error);
-    });
-
-    // Commands Engine
+module.exports = async (client) => {
     client.on('messageCreate', async (message) => {
         if (message.author.bot || !message.guild || !message.content.startsWith('%')) return;
 
         const args = message.content.slice(1).trim().split(/ +/);
         const cmd = args.shift()?.toLowerCase();
-
         const isOwner = await checkIsOwner(message.guild, message.author.id);
 
-        // 1. %join & %join always
+        // %join & %join always
         if (cmd === 'join') {
-            if (!isOwner) {
-                return message.reply('❌ Sirf **Bot Owner, Server Owner ya Extra Owner** hi `%join` use kar sakte hain.');
-            }
-
-            const voiceChannel = message.member?.voice?.channel;
-            if (!voiceChannel) {
-                return message.reply('❌ Pehle kisi Voice Channel me join karo!');
-            }
+            if (!isOwner) return message.reply('❌ Sirf Bot Owner, Server Owner ya Extra Owner hi `%join` chala sakte hain.');
+            const vc = message.member?.voice?.channel;
+            if (!vc) return message.reply('❌ Pehle kisi Voice Channel me join karo!');
 
             const sub = args[0]?.toLowerCase();
             let mConfig = await MusicConfig.findOne({ guildId: message.guild.id }) || new MusicConfig({ guildId: message.guild.id });
 
             if (sub === 'always') {
-                if (mConfig.isAlwaysOn && mConfig.alwaysChannelId === voiceChannel.id) {
+                if (mConfig.isAlwaysOn && mConfig.alwaysChannelId === vc.id) {
                     mConfig.isAlwaysOn = false;
                     mConfig.alwaysChannelId = null;
                     await mConfig.save();
-                    return message.reply(`🔓 <#${voiceChannel.id}> se **Always-On (24/7)** mode remove kar diya gaya.`);
+                    return message.reply(`🔓 <#${vc.id}> se Always-On mode hata diya gaya.`);
                 } else {
                     mConfig.isAlwaysOn = true;
-                    mConfig.alwaysChannelId = voiceChannel.id;
+                    mConfig.alwaysChannelId = vc.id;
                     await mConfig.save();
-
-                    const queue = player.nodes.create(message.guild, {
-                        metadata: { channel: message.channel },
-                        leaveOnEmpty: false,
-                        leaveOnEnd: false,
-                        volume: 80
-                    });
-
-                    if (!queue.connection) await queue.connect(voiceChannel);
-
-                    return message.reply(`🔒 <#${voiceChannel.id}> ab **Always-On (24/7 Music Channel)** set ho gaya hai! Bot leave nahi karega.`);
                 }
             }
 
-            const queue = player.nodes.create(message.guild, {
-                metadata: { channel: message.channel },
-                leaveOnEmpty: true,
-                leaveOnEmptyCooldown: 30000,
-                leaveOnEnd: false,
-                volume: 80
+            const connection = joinVoiceChannel({
+                channelId: vc.id,
+                guildId: message.guild.id,
+                adapterCreator: message.guild.voiceAdapterCreator
             });
 
-            if (!queue.connection) await queue.connect(voiceChannel);
-            return message.reply(`✅ Connected to **${voiceChannel.name}**!`);
+            return message.reply(`✅ Connected to **${vc.name}**!`);
         }
 
-        const canControl = () => {
-            if (isOwner) return true;
-            const session = activeSessions.get(message.guild.id);
-            if (!session) return true;
-            return session.hostId === message.author.id;
-        };
-
-        // 2. %play
+        // %play
         if (cmd === 'play' || cmd === 'p') {
             const query = args.join(' ');
-            if (!query) return message.reply('ℹ️ **Usage:** `%play <song title ya link>`');
+            if (!query) return message.reply('ℹ️ **Usage:** `%play <song name ya link>`');
 
-            const voiceChannel = message.member?.voice?.channel;
-            if (!voiceChannel) {
-                return message.reply('❌ Pehle kisi Voice Channel me join karo!');
-            }
+            const vc = message.member?.voice?.channel;
+            if (!vc) return message.reply('❌ Pehle kisi Voice Channel me join karo!');
 
-            const session = activeSessions.get(message.guild.id);
-            if (session && session.hostId !== message.author.id && !isOwner) {
-                const currentHostInVC = voiceChannel.members.has(session.hostId);
-                if (currentHostInVC) {
-                    return message.reply(`⚠️ Music abhi <@${session.hostId}> ke control me hai!`);
+            let sQueue = serverQueues.get(message.guild.id);
+            if (sQueue && sQueue.hostId && sQueue.hostId !== message.author.id && !isOwner) {
+                if (vc.members.has(sQueue.hostId)) {
+                    return message.reply(`⚠️ Music abhi <@${sQueue.hostId}> ke control me hai!`);
                 }
             }
 
             const waitMsg = await message.reply('🔍 Searching audio stream...');
 
+            let trackInfo = null;
             try {
-                let searchResult = await player.search(query, { requestedBy: message.author }).catch(() => null);
-
-                if (!searchResult || !searchResult.tracks.length) {
-                    searchResult = await player.search(`soundcloud:search:${query}`, { requestedBy: message.author }).catch(() => null);
+                if (query.startsWith('http')) {
+                    const info = await playdl.video_info(query).catch(() => null);
+                    if (info) {
+                        trackInfo = {
+                            title: info.video_details.title,
+                            url: info.video_details.url,
+                            duration: info.video_details.durationRaw,
+                            thumbnail: info.video_details.thumbnails[0]?.url
+                        };
+                    }
                 }
 
-                if (!searchResult || !searchResult.tracks.length) {
-                    return waitMsg.edit('❌ Koi song match nahi hua.');
-                }
-
-                const mConfig = await MusicConfig.findOne({ guildId: message.guild.id });
-                const is24_7 = mConfig?.isAlwaysOn && mConfig.alwaysChannelId === voiceChannel.id;
-
-                const { track } = await player.play(voiceChannel, searchResult, {
-                    nodeOptions: {
-                        metadata: { channel: message.channel },
-                        volume: 80,
-                        leaveOnEmpty: !is24_7,
-                        leaveOnEmptyCooldown: 30000,
-                        leaveOnEnd: false,
-                        bufferingTimeout: 15000,
-                        // Stream Bridge to avoid quiet / frozen audio
-                        async onBeforeCreateStream(t, source) {
-                            if (source === 'youtube' || t.url.includes('youtube.com') || t.url.includes('youtu.be')) {
-                                try {
-                                    const stream = await playdl.stream(t.url, { discordPlayerCompatibility: true });
-                                    return stream.stream;
-                                } catch (_) {}
-                            }
-                            return null;
+                if (!trackInfo) {
+                    // Search on YouTube first, fallback to SoundCloud
+                    const ytSearch = await playdl.search(query, { limit: 1, source: { youtube: 'video' } }).catch(() => []);
+                    if (ytSearch.length > 0) {
+                        trackInfo = {
+                            title: ytSearch[0].title,
+                            url: ytSearch[0].url,
+                            duration: ytSearch[0].durationRaw,
+                            thumbnail: ytSearch[0].thumbnails[0]?.url
+                        };
+                    } else {
+                        const scSearch = await playdl.search(query, { limit: 1, source: { soundcloud: 'tracks' } }).catch(() => []);
+                        if (scSearch.length > 0) {
+                            trackInfo = {
+                                title: scSearch[0].name,
+                                url: scSearch[0].url,
+                                duration: scSearch[0].durationInSec ? `${Math.floor(scSearch[0].durationInSec / 60)}:${scSearch[0].durationInSec % 60}` : 'Unknown',
+                                thumbnail: scSearch[0].thumbnail
+                            };
                         }
                     }
-                });
-
-                if (!activeSessions.has(message.guild.id)) {
-                    activeSessions.set(message.guild.id, {
-                        hostId: message.author.id,
-                        voiceChannelId: voiceChannel.id
-                    });
                 }
 
-                return waitMsg.edit(`✅ Added to queue: **${track.title}** (\`${track.duration}\`)\n🔒 **Session Host:** <@${message.author.id}>`);
+                if (!trackInfo) return waitMsg.edit('❌ Koi song match nahi hua.');
+
+                if (!sQueue) {
+                    const connection = joinVoiceChannel({
+                        channelId: vc.id,
+                        guildId: message.guild.id,
+                        adapterCreator: message.guild.voiceAdapterCreator
+                    });
+
+                    const player = createAudioPlayer();
+                    connection.subscribe(player);
+
+                    player.on(AudioPlayerStatus.Idle, () => playNext(message.guild.id));
+                    player.on('error', (err) => {
+                        console.error('Audio Player Internal Error:', err);
+                        playNext(message.guild.id);
+                    });
+
+                    sQueue = {
+                        connection,
+                        player,
+                        queue: [],
+                        current: null,
+                        hostId: message.author.id,
+                        channel: message.channel,
+                        isPlaying: false,
+                        loop: false
+                    };
+                    serverQueues.set(message.guild.id, sQueue);
+                }
+
+                sQueue.channel = message.channel;
+                if (!sQueue.hostId) sQueue.hostId = message.author.id;
+                sQueue.queue.push(trackInfo);
+
+                await waitMsg.edit(`✅ Added to queue: **${trackInfo.title}**\n🔒 **Host:** <@${sQueue.hostId}>`);
+
+                if (!sQueue.isPlaying) {
+                    playNext(message.guild.id);
+                }
             } catch (err) {
-                console.error('Play error:', err);
-                return waitMsg.edit(`❌ Playback error: \`${err.message}\``);
+                console.error(err);
+                return waitMsg.edit(`❌ Playback setup error: \`${err.message}\``);
             }
         }
 
-        // 3. %skip
-        if (cmd === 'skip' || cmd === 'next') {
-            if (!canControl()) {
-                const session = activeSessions.get(message.guild.id);
-                return message.reply(`❌ Sirf Host (<@${session.hostId}>) skip kar sakta hai!`);
-            }
+        // %skip, %stop, %pause, %resume, %loop
+        const sQueue = serverQueues.get(message.guild.id);
+        const canControl = () => isOwner || (sQueue && sQueue.hostId === message.author.id);
 
-            const queue = player.nodes.get(message.guild.id);
-            if (!queue || !queue.isPlaying()) return message.reply('❌ Koi song play nahi ho raha.');
-            queue.node.skip();
-            return message.reply('⏭️ Song skip kar diya gaya.');
+        if (cmd === 'skip') {
+            if (!sQueue || !sQueue.isPlaying) return message.reply('❌ Koi gaana nahi chal raha.');
+            if (!canControl()) return message.reply(`❌ Sirf host <@${sQueue.hostId}> skip kar sakta hai!`);
+            sQueue.player.stop();
+            return message.reply('⏭️ Skipped!');
         }
 
-        // 4. %stop / %leave
-        if (cmd === 'stop' || cmd === 'leave') {
-            if (!canControl()) {
-                const session = activeSessions.get(message.guild.id);
-                return message.reply(`❌ Sirf Host (<@${session.hostId}>) ya Owners stop kar sakte hain!`);
-            }
-
-            const queue = player.nodes.get(message.guild.id);
-            if (!queue) return message.reply('❌ Bot kisi VC me nahi hai.');
-
-            activeSessions.delete(message.guild.id);
-
-            const mConfig = await MusicConfig.findOne({ guildId: message.guild.id });
-            if (mConfig?.isAlwaysOn && mConfig.alwaysChannelId === queue.channel?.id) {
-                queue.tracks.clear();
-                queue.node.stop();
-                return message.reply('⏹️ Music stopped (Always-On active).');
-            } else {
-                queue.delete();
-                return message.reply('⏹️ Music stopped and bot left VC.');
-            }
+        if (cmd === 'stop') {
+            if (!sQueue) return message.reply('❌ Bot VC me nahi hai.');
+            if (!canControl()) return message.reply('❌ Sirf host ya owner stop kar sakte hain.');
+            sQueue.queue = [];
+            sQueue.player.stop();
+            sQueue.connection?.destroy();
+            serverQueues.delete(message.guild.id);
+            return message.reply('⏹️ Playback stopped aur bot disconnected.');
         }
 
-        // 5. %pause / %resume
-        if (cmd === 'pause' || cmd === 'resume') {
-            if (!canControl()) {
-                const session = activeSessions.get(message.guild.id);
-                return message.reply(`❌ Sirf Host (<@${session.hostId}>) ya Owners control kar sakte hain!`);
-            }
-
-            const queue = player.nodes.get(message.guild.id);
-            if (!queue || !queue.isPlaying()) return message.reply('❌ Koi song active nahi hai.');
-            if (queue.node.isPaused()) {
-                queue.node.resume();
-                return message.reply('▶️ Resumed.');
-            } else {
-                queue.node.pause();
-                return message.reply('⏸️ Paused.');
-            }
+        if (cmd === 'pause') {
+            if (!sQueue) return message.reply('❌ Koi song nahi chal raha.');
+            if (!canControl()) return message.reply('❌ Control denied.');
+            sQueue.player.pause();
+            return message.reply('⏸️ Paused.');
         }
 
-        // 6. %queue
-        if (cmd === 'queue' || cmd === 'q') {
-            const queue = player.nodes.get(message.guild.id);
-            if (!queue || !queue.isPlaying()) return message.reply('❌ Queue empty hai.');
-
-            const current = queue.currentTrack;
-            const tracks = queue.tracks.toArray().slice(0, 10);
-            const list = tracks.map((t, idx) => `**${idx + 1}.** [${t.title}](${t.url}) - \`${t.duration}\``).join('\n');
-            const session = activeSessions.get(message.guild.id);
-
-            const embed = new EmbedBuilder()
-                .setColor('#3498DB')
-                .setTitle(`🎶 Server Queue - ${message.guild.name}`)
-                .setDescription(
-                    `**Now Playing:**\n[${current.title}](${current.url})\n\n` +
-                    `**Current Host:** ${session ? `<@${session.hostId}>` : 'None'}\n\n` +
-                    `**Up Next:**\n${list || '*No upcoming tracks*'}`
-                );
-
-            return message.reply({ embeds: [embed] });
+        if (cmd === 'resume') {
+            if (!sQueue) return message.reply('❌ Koi song nahi chal raha.');
+            if (!canControl()) return message.reply('❌ Control denied.');
+            sQueue.player.unpause();
+            return message.reply('▶️ Resumed.');
         }
 
-        // 7. %loop
         if (cmd === 'loop') {
-            if (!canControl()) {
-                const session = activeSessions.get(message.guild.id);
-                return message.reply(`❌ Sirf Host (<@${session.hostId}>) ya Owners loop switch kar sakte hain!`);
-            }
-
-            const queue = player.nodes.get(message.guild.id);
-            if (!queue || !queue.isPlaying()) return message.reply('❌ Koi track play nahi ho raha.');
-
-            const mode = queue.repeatMode === 1 ? 0 : 1;
-            queue.setRepeatMode(mode);
-            return message.reply(`🔁 Loop mode **${mode === 1 ? 'ENABLED' : 'DISABLED'}**.`);
+            if (!sQueue) return message.reply('❌ Koi playback active nahi hai.');
+            if (!canControl()) return message.reply('❌ Control denied.');
+            sQueue.loop = !sQueue.loop;
+            return message.reply(`🔁 Loop: **${sQueue.loop ? 'ON' : 'OFF'}**`);
         }
     });
 
-    // Buttons Handler
+    // Buttons
     client.on('interactionCreate', async (interaction) => {
-        if (!interaction.isButton() || !interaction.customId.startsWith('music_')) return;
-
-        const queue = player.nodes.get(interaction.guild.id);
-        if (!queue || !queue.isPlaying()) {
-            return interaction.reply({ content: '❌ Current playback inactive hai.', ephemeral: true });
-        }
+        if (!interaction.isButton() || !interaction.customId.startsWith('m_')) return;
+        const sQueue = serverQueues.get(interaction.guild.id);
+        if (!sQueue || !sQueue.isPlaying) return interaction.reply({ content: '❌ Playback inactive hai.', ephemeral: true });
 
         const isOwner = await checkIsOwner(interaction.guild, interaction.user.id);
-        const session = activeSessions.get(interaction.guild.id);
-
-        if (session && session.hostId !== interaction.user.id && !isOwner) {
-            const hostInVC = queue.channel?.members.has(session.hostId);
-            if (hostInVC) {
-                return interaction.reply({ 
-                    content: `⚠️ Controller locked hai! Sirf host <@${session.hostId}> ya Owners control kar sakte hain.`, 
-                    ephemeral: true 
-                });
-            }
+        if (sQueue.hostId !== interaction.user.id && !isOwner) {
+            return interaction.reply({ content: `⚠️ Controller locked hai host <@${sQueue.hostId}> ke paas!`, ephemeral: true });
         }
 
-        const action = interaction.customId.replace('music_', '');
-
+        const action = interaction.customId.replace('m_', '');
         if (action === 'pause_resume') {
-            if (queue.node.isPaused()) {
-                queue.node.resume();
+            if (sQueue.player.state.status === AudioPlayerStatus.Paused) {
+                sQueue.player.unpause();
                 return interaction.reply({ content: '▶️ Resumed.', ephemeral: true });
             } else {
-                queue.node.pause();
+                sQueue.player.pause();
                 return interaction.reply({ content: '⏸️ Paused.', ephemeral: true });
             }
         }
-
         if (action === 'skip') {
-            queue.node.skip();
+            sQueue.player.stop();
             return interaction.reply({ content: '⏭️ Skipped.', ephemeral: true });
         }
-
         if (action === 'stop') {
-            activeSessions.delete(interaction.guild.id);
-            const mConfig = await MusicConfig.findOne({ guildId: interaction.guild.id });
-            if (mConfig?.isAlwaysOn && mConfig.alwaysChannelId === queue.channel?.id) {
-                queue.tracks.clear();
-                queue.node.stop();
-                return interaction.reply({ content: '⏹️ Stopped. (24/7 VC Active).', ephemeral: true });
-            } else {
-                queue.delete();
-                return interaction.reply({ content: '⏹️ Stopped & Left VC.', ephemeral: true });
-            }
+            sQueue.queue = [];
+            sQueue.player.stop();
+            sQueue.connection?.destroy();
+            serverQueues.delete(interaction.guild.id);
+            return interaction.reply({ content: '⏹️ Stopped.', ephemeral: true });
         }
-
         if (action === 'loop') {
-            const mode = queue.repeatMode === 1 ? 0 : 1;
-            queue.setRepeatMode(mode);
-            return interaction.reply({ content: `🔁 Loop set to: **${mode === 1 ? 'ON' : 'OFF'}**`, ephemeral: true });
+            sQueue.loop = !sQueue.loop;
+            return interaction.reply({ content: `🔁 Loop: **${sQueue.loop ? 'ON' : 'OFF'}**`, ephemeral: true });
         }
     });
-
-    console.log('✔ Secured Music System with Session Lock & Always-Join loaded.');
 };
                     
