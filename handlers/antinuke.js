@@ -24,9 +24,8 @@ const DANGEROUS_PERMS = [
     PermissionFlagsBits.MentionEveryone
 ];
 
-const actionBuckets = new Map(); // executorId -> { count, lastTime }
+const actionBuckets = new Map();
 
-// Logging helper
 async function logAction(guild, config, title, description, color = '#ED4245') {
     if (!config?.modLogsChannelId) return;
     const channel = guild.channels.cache.get(config.modLogsChannelId);
@@ -40,7 +39,6 @@ async function logAction(guild, config, title, description, color = '#ED4245') {
     await channel.send({ embeds: [embed] }).catch(() => {});
 }
 
-// Strip dangerous permissions immediately
 async function stripDangerousPerms(member, reason) {
     if (!member || member.id === member.guild.ownerId) return;
     const dangerousRoles = member.roles.cache.filter(role => 
@@ -51,28 +49,42 @@ async function stripDangerousPerms(member, reason) {
     }
 }
 
-// Backup creator helper (Safe threads, categories, overwrites)
+// Backup creator helper (Preserves types, positions & dynamic overwrites)
 async function createGuildBackup(guild, creatorId, customId = null, isAuto = false) {
     const backupId = customId || `auto_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
+    // 1. Roles sorted by position
     const roles = guild.roles.cache
         .filter(r => r.id !== guild.id)
+        .sort((a, b) => b.position - a.position)
         .map(r => ({
             name: r.name,
             color: r.color,
             hoist: r.hoist,
+            position: r.position,
             permissions: r.permissions ? r.permissions.bitfield.toString() : '0',
             mentionable: r.mentionable
         }));
 
+    // 2. Channels sorted by rawPosition
     const channels = guild.channels.cache
         .filter(c => !c.isThread?.())
+        .sort((a, b) => (a.rawPosition ?? 0) - (b.rawPosition ?? 0))
         .map(c => {
             const overwrites = [];
             if (c.permissionOverwrites?.cache) {
                 c.permissionOverwrites.cache.forEach(p => {
+                    let targetName = null;
+                    let isEveryone = (p.id === guild.id);
+
+                    if (!isEveryone) {
+                        const targetRole = guild.roles.cache.get(p.id);
+                        if (targetRole) targetName = targetRole.name;
+                    }
+
                     overwrites.push({
-                        id: p.id,
+                        isEveryone,
+                        roleName: targetName,
                         type: p.type,
                         allow: p.allow ? p.allow.bitfield.toString() : '0',
                         deny: p.deny ? p.deny.bitfield.toString() : '0'
@@ -83,6 +95,9 @@ async function createGuildBackup(guild, creatorId, customId = null, isAuto = fal
             return {
                 name: c.name,
                 type: c.type,
+                topic: c.topic || null,
+                nsfw: Boolean(c.nsfw),
+                rateLimitPerUser: c.rateLimitPerUser || 0,
                 parentName: c.parent ? c.parent.name : null,
                 position: c.rawPosition ?? 0,
                 permissionOverwrites: overwrites
@@ -104,7 +119,6 @@ async function createGuildBackup(guild, creatorId, customId = null, isAuto = fal
 
     await backupDoc.save();
 
-    // 10 minutes auto-cleanup for auto backups
     if (isAuto) {
         setTimeout(async () => {
             await ServerBackup.deleteOne({ backupId }).catch(() => {});
@@ -132,7 +146,7 @@ module.exports = (client) => {
         const isServerOwner = executor?.id === member.guild.ownerId;
         const isExtraOwner = isBotOwner || (config.extraOwners && config.extraOwners.includes(executor?.id));
 
-        // RULE 1: Unverified adder ban
+        // Rule 1: Unauthorized bot adder ban
         if (!isServerOwner && !isExtraOwner) {
             await member.ban({ reason: '🛡️ Anti-Nuke: Unauthorized Bot Addition' }).catch(() => {});
 
@@ -153,13 +167,13 @@ module.exports = (client) => {
             return;
         }
 
-        // RULE 2: Unwhitelisted bot neutralized
+        // Rule 2: Unwhitelisted bot neutralized
         const isWhitelisted = config.whitelistedBots && config.whitelistedBots.includes(member.id);
         if (!isWhitelisted) {
             await stripDangerousPerms(member, 'Anti-Nuke: Unwhitelisted Bot Neutralized');
         }
 
-        // RULE 4: Instant Full Server Auto-Backup & DM Notify
+        // Rule 4: Instant Full Server Auto-Backup & DM Notify
         try {
             const backupId = await createGuildBackup(member.guild, client.user.id, null, true);
 
@@ -239,7 +253,7 @@ module.exports = (client) => {
     client.on('guildBanAdd', b => b.guild && instantDefense(b.guild, AuditLogEvent.MemberBanAdd, 'Member Ban'));
     client.on('guildMemberRemove', m => m.guild && instantDefense(m.guild, AuditLogEvent.MemberKick, 'Member Kick'));
 
-    // Everyone Ping Spam Attack Blocker
+    // Everyone Ping Spam Blocker
     client.on('messageCreate', async (message) => {
         if (!message.guild || message.author.bot) return;
 
@@ -262,7 +276,7 @@ module.exports = (client) => {
         }
     });
 
-    // 5. SPECIAL COMMANDS ENGINE (%extraowner, %wl, %pr, %antinuke, %backup, %clean)
+    // 5. PREFIX COMMANDS ENGINE
     client.on('messageCreate', async (message) => {
         if (message.author.bot || !message.guild || !message.content.startsWith('%')) return;
 
@@ -362,23 +376,20 @@ module.exports = (client) => {
             const action = args[0]?.toLowerCase();
             const backupId = args[1];
 
-            // A. CREATE BACKUP
+            // 1. CREATE
             if (action === 'create') {
                 if (!backupId) return message.reply('❌ Custom Backup ID provide karo: `%backup create <backupId>`');
                 
                 const existing = await ServerBackup.findOne({ backupId });
                 if (existing) return message.reply('❌ Yeh Backup ID pehle se exist karti hai. Koi doosri ID choose karo.');
 
-                // LIMIT CHECKS
                 if (isBotOwner) {
-                    // Bot Owner max 3 permanent backups
                     const ownerBackups = await ServerBackup.find({ creatorId: message.author.id, isAutoBackup: false });
                     if (ownerBackups.length >= 3) {
                         const idsList = ownerBackups.map(b => `• \`${b.backupId}\``).join('\n');
                         return message.reply(`❌ **Bot Owner Backup Limit Exceeded (Max 3)!**\nNaya backup create karne se pehle inme se koi ek delete karo:\n${idsList}\n\n*Command:* \`%backup delete <backupId>\``);
                     }
                 } else {
-                    // Server Owner / Extra Owner max 1 permanent backup per server
                     const serverBackups = await ServerBackup.find({ guildId: message.guild.id, isAutoBackup: false });
                     if (serverBackups.length >= 1) {
                         const existingId = serverBackups[0].backupId;
@@ -390,12 +401,11 @@ module.exports = (client) => {
                 return message.reply(`✅ Backup successfully created with ID: \`${backupId}\``);
             }
 
-            // B. DELETE BACKUP
+            // 2. DELETE
             if (action === 'delete') {
                 if (!backupId) return message.reply('Usage: `%backup delete <backupId>`');
 
                 let query = { backupId, isAutoBackup: false };
-                // Agar bot owner nahi hai toh sirf usi server ka delete kar sakta hai
                 if (!isBotOwner) {
                     query.guildId = message.guild.id;
                 }
@@ -405,68 +415,128 @@ module.exports = (client) => {
                 return message.reply(`🗑️ Backup \`${backupId}\` successfully delete ho gaya.`);
             }
 
-            // C. LOAD BACKUP (Cross-Server Enabled)
+            // 3. LOAD
             if (action === 'load') {
                 if (!backupId) return message.reply('Usage: `%backup load <backupId>`');
 
-                // Cross-server support: Kisi bhi server me load ho sakta hai
                 const backupDoc = await ServerBackup.findOne({ backupId });
                 if (!backupDoc) return message.reply('❌ Backup ID nahi mili.');
 
-                await message.reply('⏳ **Restoring server template...** Channels aur Roles build ho rahe hain...');
+                await message.reply('⏳ **Restoring exact server architecture...** Line-by-line categories, channels aur permissions sync ho rahe hain...');
 
                 const bData = backupDoc.data;
+                const roleMap = new Map();
 
-                // 1. Roles Restore
+                // A. Restore Roles
                 if (bData.roles && Array.isArray(bData.roles)) {
-                    for (const rData of bData.roles) {
-                        const exists = message.guild.roles.cache.find(r => r.name === rData.name);
-                        if (!exists) {
-                            await message.guild.roles.create({
+                    for (const rData of bData.roles.slice().reverse()) {
+                        let role = message.guild.roles.cache.find(r => r.name === rData.name);
+                        if (!role) {
+                            role = await message.guild.roles.create({
                                 name: rData.name,
                                 color: rData.color,
                                 hoist: rData.hoist,
+                                permissions: BigInt(rData.permissions || '0'),
                                 mentionable: rData.mentionable,
-                                reason: `Backup load: ${backupId}`
-                            }).catch(() => {});
-                        }
-                    }
-                }
-
-                // 2. Categories & Channels Restore
-                if (bData.channels && Array.isArray(bData.channels)) {
-                    const categories = bData.channels.filter(c => c.type === 4);
-                    const nonCategories = bData.channels.filter(c => c.type !== 4);
-
-                    const categoryMap = new Map();
-
-                    for (const cat of categories) {
-                        let targetCat = message.guild.channels.cache.find(c => c.name === cat.name && c.type === 4);
-                        if (!targetCat) {
-                            targetCat = await message.guild.channels.create({
-                                name: cat.name,
-                                type: 4,
-                                reason: `Backup load: ${backupId}`
+                                reason: `Backup Template: ${backupId}`
                             }).catch(() => null);
                         }
-                        if (targetCat) categoryMap.set(cat.name, targetCat.id);
+                        if (role) roleMap.set(role.name, role);
+                    }
+                }
+
+                // B. Overwrites Helper
+                const buildOverwrites = (overwritesList) => {
+                    if (!overwritesList || !Array.isArray(overwritesList)) return [];
+                    const result = [];
+
+                    for (const ow of overwritesList) {
+                        let targetId = null;
+
+                        if (ow.isEveryone) {
+                            targetId = message.guild.roles.everyone.id;
+                        } else if (ow.roleName && roleMap.has(ow.roleName)) {
+                            targetId = roleMap.get(ow.roleName).id;
+                        } else if (ow.roleName) {
+                            const found = message.guild.roles.cache.find(r => r.name === ow.roleName);
+                            if (found) targetId = found.id;
+                        }
+
+                        if (targetId) {
+                            result.push({
+                                id: targetId,
+                                allow: BigInt(ow.allow || '0'),
+                                deny: BigInt(ow.deny || '0')
+                            });
+                        }
+                    }
+                    return result;
+                };
+
+                // C. Restore Categories in Order
+                const categoryChannels = (bData.channels || [])
+                    .filter(c => c.type === 4 || c.type === ChannelType.GuildCategory)
+                    .sort((a, b) => a.position - b.position);
+
+                const categoryMap = new Map();
+
+                for (const cat of categoryChannels) {
+                    let targetCat = message.guild.channels.cache.find(c => c.name === cat.name && c.type === 4);
+                    const overwrites = buildOverwrites(cat.permissionOverwrites);
+
+                    if (!targetCat) {
+                        targetCat = await message.guild.channels.create({
+                            name: cat.name,
+                            type: ChannelType.GuildCategory,
+                            position: cat.position,
+                            permissionOverwrites: overwrites,
+                            reason: `Backup Layout: ${backupId}`
+                        }).catch(() => null);
+                    } else if (overwrites.length > 0) {
+                        await targetCat.permissionOverwrites.set(overwrites).catch(() => {});
                     }
 
-                    for (const chData of nonCategories) {
-                        const exists = message.guild.channels.cache.find(c => c.name === chData.name);
-                        if (!exists) {
-                            const parentId = chData.parentName ? categoryMap.get(chData.parentName) : null;
-                            await message.guild.channels.create({
-                                name: chData.name,
-                                type: chData.type,
-                                parent: parentId || undefined,
-                                reason: `Backup load: ${backupId}`
-                            }).catch(() => {});
+                    if (targetCat) categoryMap.set(cat.name, targetCat.id);
+                }
+
+                // D. Restore Text, Announcement, Voice & Stage Channels in Order
+                const childChannels = (bData.channels || [])
+                    .filter(c => c.type !== 4 && c.type !== ChannelType.GuildCategory)
+                    .sort((a, b) => a.position - b.position);
+
+                for (const ch of childChannels) {
+                    const parentId = ch.parentName ? categoryMap.get(ch.parentName) : null;
+                    let targetChannel = message.guild.channels.cache.find(c => c.name === ch.name && c.type === ch.type);
+                    const overwrites = buildOverwrites(ch.permissionOverwrites);
+
+                    let resolvedType = ch.type;
+                    if (resolvedType === 5 && !message.guild.features.includes('COMMUNITY')) {
+                        resolvedType = ChannelType.GuildText;
+                    }
+
+                    if (!targetChannel) {
+                        await message.guild.channels.create({
+                            name: ch.name,
+                            type: resolvedType,
+                            topic: ch.topic || undefined,
+                            nsfw: ch.nsfw || false,
+                            rateLimitPerUser: ch.rateLimitPerUser || 0,
+                            position: ch.position,
+                            parent: parentId || undefined,
+                            permissionOverwrites: overwrites,
+                            reason: `Backup Layout: ${backupId}`
+                        }).catch(() => {});
+                    } else {
+                        if (parentId && targetChannel.parentId !== parentId) {
+                            await targetChannel.setParent(parentId, { lockPermissions: false }).catch(() => {});
+                        }
+                        if (overwrites.length > 0) {
+                            await targetChannel.permissionOverwrites.set(overwrites).catch(() => {});
                         }
                     }
                 }
 
-                return message.channel.send(`✅ Server template successfully restored from Backup ID: \`${backupId}\`!`);
+                return message.channel.send(`✅ **Full Server Template Loaded Successfully!**\n• Backup ID: \`${backupId}\`\n• Categories, Channels, Order & Permissions properly synced.`);
             }
         }
     });
