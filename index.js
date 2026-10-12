@@ -81,8 +81,11 @@ client.on('interactionCreate', async (interaction) => {
             }
         }
 
-        // Agar /staff command hai, toh normal staff members ko bhi permission do
-        if (interaction.commandName !== 'staff') {
+        // Moderation commands ki list jise staff members access kar sakte hain
+        const modCommands = ['lock', 'unlock', 'purge', 'role', 'ban', 'kick', 'timeout', 'untimeout', 'unban', 'warn', 'slowmode'];
+
+        // Agar command moderation list me NAHI hai (jaise /panel wagera), toh sirf Server Owner aur Extra Owners hi chala payenge
+        if (!modCommands.includes(interaction.commandName)) {
             if (!isServerOwner && !isExtraOwner) {
                 return interaction.reply({
                     content: '❌ Access Denied: Command execution is strictly restricted to Bot Owners, Server Owner, and Extra Owners.',
@@ -90,6 +93,7 @@ client.on('interactionCreate', async (interaction) => {
                 });
             }
         }
+        
 
         try {
             await command.execute(interaction);
