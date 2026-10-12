@@ -49,16 +49,37 @@ async function playNext(guildId) {
     sQueue.isPlaying = true;
 
     try {
-        // play-dl direct stream
-        let stream = await playdl.stream(track.url, { quality: 2 }).catch(async () => {
-            // agar YouTube stream block ho, soundcloud par search karke stream uthao
-            const sc = await playdl.search(track.title, { source: { soundcloud: 'tracks' }, limit: 1 });
-            if (sc.length > 0) return await playdl.stream(sc[0].url);
-            return null;
-        });
+        let stream = null;
+
+        // 1. YouTube direct stream attempt
+        if (track.source === 'yt' || track.url.includes('youtube.com') || track.url.includes('youtu.be')) {
+            try {
+                stream = await playdl.stream(track.url, { quality: 2 });
+            } catch (_) {
+                stream = null;
+            }
+        }
+
+        // 2. SoundCloud fallback (client_id safe)
+        if (!stream) {
+            try {
+                let scTrackUrl = track.source === 'sc' ? track.url : null;
+                if (!scTrackUrl) {
+                    const scResults = await playdl.search(track.title, { source: { soundcloud: 'tracks' }, limit: 1 }).catch(() => []);
+                    if (scResults && scResults.length > 0) {
+                        scTrackUrl = scResults[0].url;
+                    }
+                }
+                if (scTrackUrl) {
+                    stream = await playdl.stream(scTrackUrl);
+                }
+            } catch (scErr) {
+                console.error('SoundCloud stream error:', scErr);
+            }
+        }
 
         if (!stream) {
-            sQueue.channel?.send(`⚠️ Stream nahi mil saki: **${track.title}**, agla song check kar rahe hain...`);
+            sQueue.channel?.send(`⚠️ Stream fetch nahi ho saki: **${track.title}**, skipping to next...`);
             return playNext(guildId);
         }
 
@@ -96,6 +117,17 @@ async function playNext(guildId) {
 }
 
 module.exports = async (client) => {
+    // Client ID initialize for SoundCloud (Fixes client_id undefined crash)
+    try {
+        const scClientID = await playdl.getFreeClientID().catch(() => null);
+        if (scClientID) {
+            await playdl.setToken({ soundcloud: { client_id: scClientID } }).catch(() => {});
+            console.log('✔ SoundCloud Free Client ID Initialized.');
+        }
+    } catch (e) {
+        console.error('Failed to init SoundCloud token:', e);
+    }
+
     client.on('messageCreate', async (message) => {
         if (message.author.bot || !message.guild || !message.content.startsWith('%')) return;
 
@@ -125,7 +157,7 @@ module.exports = async (client) => {
                 }
             }
 
-            const connection = joinVoiceChannel({
+            joinVoiceChannel({
                 channelId: vc.id,
                 guildId: message.guild.id,
                 adapterCreator: message.guild.voiceAdapterCreator
@@ -153,36 +185,53 @@ module.exports = async (client) => {
 
             let trackInfo = null;
             try {
+                // Direct Link Check
                 if (query.startsWith('http')) {
-                    const info = await playdl.video_info(query).catch(() => null);
-                    if (info) {
-                        trackInfo = {
-                            title: info.video_details.title,
-                            url: info.video_details.url,
-                            duration: info.video_details.durationRaw,
-                            thumbnail: info.video_details.thumbnails[0]?.url
-                        };
+                    if (query.includes('soundcloud.com')) {
+                        const scData = await playdl.soundcloud(query).catch(() => null);
+                        if (scData) {
+                            trackInfo = {
+                                title: scData.name,
+                                url: scData.url,
+                                duration: scData.durationInSec ? `${Math.floor(scData.durationInSec / 60)}:${scData.durationInSec % 60}` : 'Unknown',
+                                thumbnail: scData.thumbnail,
+                                source: 'sc'
+                            };
+                        }
+                    } else {
+                        const info = await playdl.video_info(query).catch(() => null);
+                        if (info) {
+                            trackInfo = {
+                                title: info.video_details.title,
+                                url: info.video_details.url,
+                                duration: info.video_details.durationRaw,
+                                thumbnail: info.video_details.thumbnails[0]?.url,
+                                source: 'yt'
+                            };
+                        }
                     }
                 }
 
+                // Title Search
                 if (!trackInfo) {
-                    // Search on YouTube first, fallback to SoundCloud
                     const ytSearch = await playdl.search(query, { limit: 1, source: { youtube: 'video' } }).catch(() => []);
-                    if (ytSearch.length > 0) {
+                    if (ytSearch && ytSearch.length > 0) {
                         trackInfo = {
                             title: ytSearch[0].title,
                             url: ytSearch[0].url,
                             duration: ytSearch[0].durationRaw,
-                            thumbnail: ytSearch[0].thumbnails[0]?.url
+                            thumbnail: ytSearch[0].thumbnails[0]?.url,
+                            source: 'yt'
                         };
                     } else {
                         const scSearch = await playdl.search(query, { limit: 1, source: { soundcloud: 'tracks' } }).catch(() => []);
-                        if (scSearch.length > 0) {
+                        if (scSearch && scSearch.length > 0) {
                             trackInfo = {
                                 title: scSearch[0].name,
                                 url: scSearch[0].url,
                                 duration: scSearch[0].durationInSec ? `${Math.floor(scSearch[0].durationInSec / 60)}:${scSearch[0].durationInSec % 60}` : 'Unknown',
-                                thumbnail: scSearch[0].thumbnail
+                                thumbnail: scSearch[0].thumbnail,
+                                source: 'sc'
                             };
                         }
                     }
@@ -229,59 +278,59 @@ module.exports = async (client) => {
                     playNext(message.guild.id);
                 }
             } catch (err) {
-                console.error(err);
-                return waitMsg.edit(`❌ Playback setup error: \`${err.message}\``);
+                console.error('Play command error:', err);
+                return waitMsg.edit(`❌ Playback error: \`${err.message}\``);
             }
         }
 
-        // %skip, %stop, %pause, %resume, %loop
+        // Controls
         const sQueue = serverQueues.get(message.guild.id);
         const canControl = () => isOwner || (sQueue && sQueue.hostId === message.author.id);
 
         if (cmd === 'skip') {
-            if (!sQueue || !sQueue.isPlaying) return message.reply('❌ Koi gaana nahi chal raha.');
+            if (!sQueue || !sQueue.isPlaying) return message.reply('❌ Koi song play nahi ho raha.');
             if (!canControl()) return message.reply(`❌ Sirf host <@${sQueue.hostId}> skip kar sakta hai!`);
             sQueue.player.stop();
-            return message.reply('⏭️ Skipped!');
+            return message.reply('⏭️ Track skipped!');
         }
 
         if (cmd === 'stop') {
             if (!sQueue) return message.reply('❌ Bot VC me nahi hai.');
-            if (!canControl()) return message.reply('❌ Sirf host ya owner stop kar sakte hain.');
+            if (!canControl()) return message.reply('❌ Control denied.');
             sQueue.queue = [];
             sQueue.player.stop();
             sQueue.connection?.destroy();
             serverQueues.delete(message.guild.id);
-            return message.reply('⏹️ Playback stopped aur bot disconnected.');
+            return message.reply('⏹️ Stopped and disconnected.');
         }
 
         if (cmd === 'pause') {
-            if (!sQueue) return message.reply('❌ Koi song nahi chal raha.');
+            if (!sQueue || !sQueue.isPlaying) return message.reply('❌ Koi song play nahi ho raha.');
             if (!canControl()) return message.reply('❌ Control denied.');
             sQueue.player.pause();
             return message.reply('⏸️ Paused.');
         }
 
         if (cmd === 'resume') {
-            if (!sQueue) return message.reply('❌ Koi song nahi chal raha.');
+            if (!sQueue) return message.reply('❌ Koi playback nahi hai.');
             if (!canControl()) return message.reply('❌ Control denied.');
             sQueue.player.unpause();
             return message.reply('▶️ Resumed.');
         }
 
         if (cmd === 'loop') {
-            if (!sQueue) return message.reply('❌ Koi playback active nahi hai.');
+            if (!sQueue || !sQueue.isPlaying) return message.reply('❌ Koi song play nahi ho raha.');
             if (!canControl()) return message.reply('❌ Control denied.');
             sQueue.loop = !sQueue.loop;
             return message.reply(`🔁 Loop: **${sQueue.loop ? 'ON' : 'OFF'}**`);
         }
     });
 
-    // Buttons
+    // Button interactions
     client.on('interactionCreate', async (interaction) => {
         if (!interaction.isButton() || !interaction.customId.startsWith('m_')) return;
         const sQueue = serverQueues.get(interaction.guild.id);
-        if (!sQueue || !sQueue.isPlaying) return interaction.reply({ content: '❌ Playback inactive hai.', ephemeral: true });
+        if (!sQueue || !sQueue.isPlaying) return interaction.reply({ content: '❌ Inactive playback.', ephemeral: true });
 
         const isOwner = await checkIsOwner(interaction.guild, interaction.user.id);
         if (sQueue.hostId !== interaction.user.id && !isOwner) {
@@ -315,4 +364,4 @@ module.exports = async (client) => {
         }
     });
 };
-                    
+                        
