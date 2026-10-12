@@ -54,7 +54,7 @@ async function sendNowPlaying(message, player, client, status = 'Playing') {
 }
 
 module.exports = function registerMusicCommands(client) {
-    client.on('messageCreate', async message => {
+    client.on('messageCreate', async (message) => {
         if (message.author.bot || !message.guild || !message.content.startsWith(PREFIX)) return;
 
         const content = message.content.slice(PREFIX.length).trim();
@@ -62,6 +62,7 @@ module.exports = function registerMusicCommands(client) {
         const firstSpace = content.indexOf(' ');
         const command = (firstSpace === -1 ? content : content.slice(0, firstSpace)).toLowerCase();
         const input = firstSpace === -1 ? '' : content.slice(firstSpace + 1).trim();
+
         const aliases = {
             left: 'leave',
             dc: 'leave',
@@ -73,6 +74,7 @@ module.exports = function registerMusicCommands(client) {
             next: 'skip',
             unpause: 'resume'
         };
+
         const cmd = aliases[command] || command;
         const known = new Set([
             'join', 'leave', 'play', 'pause', 'resume', 'skip', 'stop',
@@ -82,10 +84,7 @@ module.exports = function registerMusicCommands(client) {
         if (!known.has(cmd)) return;
 
         if (!client.lavalink) {
-            return message.reply('Music backend is not configured yet. Set up the Lavalink service and its environment variables first.');
-        }
-        if (!client.lavalink.nodeManager?.nodes?.size && !client.lavalink.nodeManager?.nodes?.length) {
-            // The manager can exist while the node is still connecting; commands below will show the actionable error if needed.
+            return message.reply('Music backend is not configured yet. Check environment variables.');
         }
 
         try {
@@ -114,6 +113,14 @@ module.exports = function registerMusicCommands(client) {
                 return message.reply({ embeds: [embed] });
             }
 
+            // Connection Check Before Join or Play
+            if (cmd === 'join' || cmd === 'play') {
+                const activeNodes = [...client.lavalink.nodeManager.nodes.values()].filter(n => n.connected);
+                if (activeNodes.length === 0) {
+                    return message.reply('❌ Lavalink node is offline or connecting. Check the node status in console.');
+                }
+            }
+
             if (cmd === 'join') {
                 const voice = await ensureSameVoiceChannel(message, getPlayer(client, message.guild.id));
                 if (!voice) return;
@@ -135,6 +142,7 @@ module.exports = function registerMusicCommands(client) {
                 const voice = await ensureSameVoiceChannel(message, getPlayer(client, message.guild.id));
                 if (!voice) return;
                 await message.channel.sendTyping().catch(() => {});
+
                 const player = makePlayer(client, message, voice);
                 player.textChannelId = message.channel.id;
                 if (!player.voiceChannelId) player.voiceChannelId = voice.id;
@@ -142,13 +150,13 @@ module.exports = function registerMusicCommands(client) {
 
                 const result = await player.search({ query: input }, message.author);
                 const tracks = result?.tracks || [];
-                if (!tracks.length) return message.reply('No tracks found. Check the query/URL or make sure the Lavalink source plugin is configured.');
+                if (!tracks.length) return message.reply('No tracks found for that query.');
 
                 const isPlaylist = Boolean(result.playlistInfo?.name || result.loadType === 'playlist');
                 if (isPlaylist) {
                     player.queue.add(tracks);
                     if (!player.playing && !player.paused) await player.play();
-                    return message.reply(`Added **${tracks.length} tracks** from the playlist to the queue.`);
+                    return message.reply(`Added **${tracks.length} tracks** from playlist to queue.`);
                 }
 
                 const track = tracks[0];
@@ -201,7 +209,7 @@ module.exports = function registerMusicCommands(client) {
                 const lines = upcoming.slice(0, 15).map((track, index) => {
                     const title = track.info?.title || track.title || 'Unknown track';
                     const duration = formatDuration(track.info?.duration ?? track.duration ?? 0);
-                    return `**${index + 1}.** ${title} — \`${duration}\``;
+                    return `**${index + 1}.**${title} — \`${duration}\``;
                 });
                 const embed = new EmbedBuilder()
                     .setColor(COLOR)
@@ -251,7 +259,7 @@ module.exports = function registerMusicCommands(client) {
             }
 
             if (cmd === 'seek') {
-                const match = input.match(/^(?:(\d+):)?(\d{1,2}):(\d{1,2})$/) || input.match(/^(\d+):(\d{1,2})$/);
+                const match = input.match(/^(?:(\d+):)?(\d{1,2}):(\d{1,2})$/) \vert{}\vert{} input.match(/^(\d+):(\d{1,2})$/);
                 if (!match) return message.reply('Usage: `%seek 1:30` or `%seek 1:02:15`');
                 let seconds;
                 if (match.length === 4) seconds = Number(match[1] || 0) * 3600 + Number(match[2]) * 60 + Number(match[3]);
@@ -263,10 +271,8 @@ module.exports = function registerMusicCommands(client) {
             }
         } catch (error) {
             console.error(`[SPARK MUSIC] %${cmd} failed:`, error);
-            const detail = /node|connect|available/i.test(error.message || '')
-                ? 'The Lavalink server may be offline or still connecting.'
-                : 'Check the Lavalink configuration and audio source.';
-            return message.reply(`Music command failed. ${detail}`).catch(() => {});
+            return message.reply('Music command failed. Please check if the Lavalink node is online.').catch(() => {});
         }
     });
 };
+                    
