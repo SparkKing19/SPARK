@@ -5,25 +5,24 @@ const MusicConfig = require('../models/musicConfig');
 
 const BOT_OWNERS = ['1266728371719508062', '1474216218792558735'];
 
-// Reliable Public Lavalink v4 Nodes
+// Fast & Active Public Lavalink v4 Nodes
 const Nodes = [
     {
-        name: 'AjieDev-Lavalink',
+        name: 'AjieDev-Node',
         url: 'lava-v4.ajieblogs.eu.org:80',
         auth: 'https://dsc.gg/ajidevserver',
         secure: false
     },
     {
-        name: 'Lavalink-Public-Node',
+        name: 'Serenetia-Node',
         url: 'lavalink.serenetia.com:443',
         auth: 'youshallnotpass',
         secure: true
     }
 ];
 
-// In-Memory Trackers
-const activeSessions = new Map(); // guildId -> { hostId, voiceChannelId }
-const serverQueues = new Map();   // guildId -> { queue: [], current: null, player: null, textChannel: null, loop: false }
+const activeSessions = new Map();
+const serverQueues = new Map();
 
 async function checkIsOwner(guild, userId) {
     if (BOT_OWNERS.includes(userId)) return true;
@@ -34,7 +33,7 @@ async function checkIsOwner(guild, userId) {
 }
 
 module.exports = async (client) => {
-    // 1. Initialize Lavalink (Shoukaku)
+    // Shoukaku Lavalink Client Setup
     const shoukaku = new Shoukaku(new Connectors.DiscordJS(client), Nodes, {
         moveOnDisconnect: true,
         resume: false,
@@ -44,11 +43,9 @@ module.exports = async (client) => {
 
     client.shoukaku = shoukaku;
 
-    shoukaku.on('ready', (name) => console.log(`✔ Lavalink Node Connected: [${name}]`));
-    shoukaku.on('error', (name, error) => console.error(`✖ Lavalink Node Error [${name}]:`, error));
-    shoukaku.on('close', (name, code, reason) => console.warn(`! Lavalink Closed [${name}]: Code ${code}, Reason:${reason}`));
+    shoukaku.on('ready', (name) => console.log(`✔ Lavalink Connected: [${name}]`));
+    shoukaku.on('error', (name, error) => console.error(`✖ Lavalink Error [${name}]:`, error));
 
-    // Function: Play next track in queue
     async function playTrack(guildId) {
         const sData = serverQueues.get(guildId);
         if (!sData) return;
@@ -88,7 +85,7 @@ module.exports = async (client) => {
                 { name: 'Host / Controller', value: session ? `<@${session.hostId}>` : 'None', inline: true }
             )
             .setThumbnail(track.info.artworkUrl || null)
-            .setFooter({ text: '⚡ Lavalink High-Performance Audio Engine' });
+            .setFooter({ text: '⚡ High Performance Lavalink Engine' });
 
         const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder().setCustomId('lav_pause_resume').setLabel('Pause / Resume').setEmoji('⏯️').setStyle(ButtonStyle.Primary),
@@ -100,18 +97,15 @@ module.exports = async (client) => {
         sData.textChannel?.send({ embeds: [embed], components: [row] }).catch(() => {});
     }
 
-    // Voice State Update: Release Session Lock
     client.on('voiceStateUpdate', (oldState, newState) => {
         const guildId = oldState.guild.id;
         const session = activeSessions.get(guildId);
         if (!session) return;
-
         if (oldState.id === session.hostId && oldState.channelId !== newState.channelId) {
             activeSessions.delete(guildId);
         }
     });
 
-    // Message Command Engine
     client.on('messageCreate', async (message) => {
         if (message.author.bot || !message.guild || !message.content.startsWith('%')) return;
 
@@ -119,9 +113,9 @@ module.exports = async (client) => {
         const cmd = args.shift()?.toLowerCase();
         const isOwner = await checkIsOwner(message.guild, message.author.id);
 
-        // 1. %join & %join always
+        // %join
         if (cmd === 'join') {
-            if (!isOwner) return message.reply('❌ Sirf Bot Owner, Server Owner ya Extra Owner hi `%join` use kar sakte hain.');
+            if (!isOwner) return message.reply('❌ Sirf Owners `%join` use kar sakte hain.');
             const vc = message.member?.voice?.channel;
             if (!vc) return message.reply('❌ Pehle kisi Voice Channel me join karo!');
 
@@ -133,7 +127,7 @@ module.exports = async (client) => {
                     mConfig.isAlwaysOn = false;
                     mConfig.alwaysChannelId = null;
                     await mConfig.save();
-                    return message.reply(`🔓 <#${vc.id}> se **Always-On** mode disable kar diya gaya.`);
+                    return message.reply(`🔓 <#${vc.id}> se **Always-On** mode hata diya gaya.`);
                 } else {
                     mConfig.isAlwaysOn = true;
                     mConfig.alwaysChannelId = vc.id;
@@ -158,7 +152,7 @@ module.exports = async (client) => {
             return session.hostId === message.author.id;
         };
 
-        // 2. %play
+        // %play
         if (cmd === 'play' || cmd === 'p') {
             const query = args.join(' ');
             if (!query) return message.reply('ℹ️ **Usage:** `%play <song name ya link>`');
@@ -174,9 +168,9 @@ module.exports = async (client) => {
             }
 
             const node = shoukaku.options.nodeResolver(shoukaku.nodes);
-            if (!node) return message.reply('❌ Lavalink Audio Node abhi connect nahi hua hai, ek second wait karo.');
+            if (!node) return message.reply('❌ Lavalink Audio Server abhi ready nahi hai, 5 seconds wait karein.');
 
-            const waitMsg = await message.reply('🔍 Lavalink engine par track fetch ho raha hai...');
+            const waitMsg = await message.reply('🔍 Track search ho raha hai...');
 
             try {
                 const isUrl = query.startsWith('http://') || query.startsWith('https://');
@@ -202,7 +196,7 @@ module.exports = async (client) => {
 
                     player.on('end', () => playTrack(message.guild.id));
                     player.on('exception', (err) => {
-                        console.error('Lavalink Playback Exception:', err);
+                        console.error('Lavalink Playback Error:', err);
                         playTrack(message.guild.id);
                     });
 
@@ -218,15 +212,12 @@ module.exports = async (client) => {
 
                 sData.textChannel = message.channel;
 
-                let addedTrack = null;
                 if (result.loadType === 'playlist') {
                     sData.queue.push(...result.data.tracks);
-                    addedTrack = result.data.tracks[0];
                     await waitMsg.edit(`✅ Added Playlist: **${result.data.info.name}** (\`${result.data.tracks.length} tracks\`)`);
                 } else {
                     const track = Array.isArray(result.data) ? result.data[0] : result.data;
                     sData.queue.push(track);
-                    addedTrack = track;
                     await waitMsg.edit(`✅ Added to queue: **${track.info.title}**\n🔒 **Host:** <@${message.author.id}>`);
                 }
 
@@ -241,23 +232,21 @@ module.exports = async (client) => {
                     await playTrack(message.guild.id);
                 }
             } catch (err) {
-                console.error('Lavalink play command error:', err);
+                console.error('Play error:', err);
                 return waitMsg.edit(`❌ Playback error: \`${err.message}\``);
             }
         }
 
-        // 3. %skip
-        if (cmd === 'skip' || cmd === 'next') {
+        // Controls
+        if (cmd === 'skip') {
             const sData = serverQueues.get(message.guild.id);
             if (!sData || !sData.current) return message.reply('❌ Koi song play nahi ho raha.');
-            if (!canControl()) return message.reply('❌ Sirf Session Host ya Owner skip kar sakte hain!');
-
+            if (!canControl()) return message.reply('❌ Control denied.');
             await sData.player.stopTrack();
-            return message.reply('⏭️ Track skipped!');
+            return message.reply('⏭️ Skipped!');
         }
 
-        // 4. %stop
-        if (cmd === 'stop' || cmd === 'leave') {
+        if (cmd === 'stop') {
             const sData = serverQueues.get(message.guild.id);
             if (!sData) return message.reply('❌ Bot VC me nahi hai.');
             if (!canControl()) return message.reply('❌ Control denied.');
@@ -272,13 +261,12 @@ module.exports = async (client) => {
                 serverQueues.delete(message.guild.id);
             }
             activeSessions.delete(message.guild.id);
-            return message.reply('⏹️ Playback stopped.');
+            return message.reply('⏹️ Stopped.');
         }
 
-        // 5. %pause / %resume
         if (cmd === 'pause' || cmd === 'resume') {
             const sData = serverQueues.get(message.guild.id);
-            if (!sData || !sData.current) return message.reply('❌ Koi track active nahi hai.');
+            if (!sData || !sData.current) return message.reply('❌ Koi song active nahi hai.');
             if (!canControl()) return message.reply('❌ Control denied.');
 
             const isPaused = sData.player.paused;
@@ -286,25 +274,21 @@ module.exports = async (client) => {
             return message.reply(isPaused ? '▶️ Resumed.' : '⏸️ Paused.');
         }
 
-        // 6. %loop
         if (cmd === 'loop') {
             const sData = serverQueues.get(message.guild.id);
-            if (!sData || !sData.current) return message.reply('❌ Koi track play nahi ho raha.');
+            if (!sData || !sData.current) return message.reply('❌ Koi song nahi chal raha.');
             if (!canControl()) return message.reply('❌ Control denied.');
-
             sData.loop = !sData.loop;
             return message.reply(`🔁 Loop: **${sData.loop ? 'ON' : 'OFF'}**`);
         }
     });
 
-    // Button Controller
+    // Buttons
     client.on('interactionCreate', async (interaction) => {
         if (!interaction.isButton() || !interaction.customId.startsWith('lav_')) return;
 
         const sData = serverQueues.get(interaction.guild.id);
-        if (!sData || !sData.current) {
-            return interaction.reply({ content: '❌ Playback inactive hai.', ephemeral: true });
-        }
+        if (!sData || !sData.current) return interaction.reply({ content: '❌ Inactive playback.', ephemeral: true });
 
         const isOwner = await checkIsOwner(interaction.guild, interaction.user.id);
         const session = activeSessions.get(interaction.guild.id);
@@ -314,7 +298,6 @@ module.exports = async (client) => {
         }
 
         const action = interaction.customId.replace('lav_', '');
-
         if (action === 'pause_resume') {
             const isPaused = sData.player.paused;
             await sData.player.setPaused(!isPaused);
@@ -333,8 +316,8 @@ module.exports = async (client) => {
         }
         if (action === 'loop') {
             sData.loop = !sData.loop;
-            return interaction.reply({ content: `🔁 Loop set to: **${sData.loop ? 'ON' : 'OFF'}**`, ephemeral: true });
+            return interaction.reply({ content: `🔁 Loop: **${sData.loop ? 'ON' : 'OFF'}**`, ephemeral: true });
         }
     });
 };
-                                                
+                        
