@@ -33,7 +33,6 @@ async function checkIsOwner(guild, userId) {
 }
 
 module.exports = async (client) => {
-    // Shoukaku Lavalink Client Setup
     const shoukaku = new Shoukaku(new Connectors.DiscordJS(client), Nodes, {
         moveOnDisconnect: true,
         resume: false,
@@ -135,12 +134,15 @@ module.exports = async (client) => {
                 }
             }
 
-            await client.shoukaku.joinVoiceChannel({
-                guildId: message.guild.id,
-                channelId: vc.id,
-                shardId: 0,
-                deaf: true
-            }).catch(() => {});
+            let existingPlayer = shoukaku.players.get(message.guild.id);
+            if (!existingPlayer) {
+                await client.shoukaku.joinVoiceChannel({
+                    guildId: message.guild.id,
+                    channelId: vc.id,
+                    shardId: 0,
+                    deaf: true
+                }).catch(() => {});
+            }
 
             return message.reply(`✅ Connected to **${vc.name}**!`);
         }
@@ -185,9 +187,10 @@ module.exports = async (client) => {
                     return waitMsg.edit('❌ Koi song match nahi hua.');
                 }
 
-                let sData = serverQueues.get(message.guild.id);
-                if (!sData) {
-                    const player = await client.shoukaku.joinVoiceChannel({
+                // Reuse existing player if present
+                let player = shoukaku.players.get(message.guild.id);
+                if (!player) {
+                    player = await client.shoukaku.joinVoiceChannel({
                         guildId: message.guild.id,
                         channelId: vc.id,
                         shardId: 0,
@@ -199,7 +202,10 @@ module.exports = async (client) => {
                         console.error('Lavalink Playback Error:', err);
                         playTrack(message.guild.id);
                     });
+                }
 
+                let sData = serverQueues.get(message.guild.id);
+                if (!sData) {
                     sData = {
                         player,
                         queue: [],
@@ -208,9 +214,10 @@ module.exports = async (client) => {
                         loop: false
                     };
                     serverQueues.set(message.guild.id, sData);
+                } else {
+                    sData.player = player;
+                    sData.textChannel = message.channel;
                 }
-
-                sData.textChannel = message.channel;
 
                 if (result.loadType === 'playlist') {
                     sData.queue.push(...result.data.tracks);
@@ -237,7 +244,7 @@ module.exports = async (client) => {
             }
         }
 
-        // Controls
+        // %skip
         if (cmd === 'skip') {
             const sData = serverQueues.get(message.guild.id);
             if (!sData || !sData.current) return message.reply('❌ Koi song play nahi ho raha.');
@@ -246,6 +253,7 @@ module.exports = async (client) => {
             return message.reply('⏭️ Skipped!');
         }
 
+        // %stop
         if (cmd === 'stop') {
             const sData = serverQueues.get(message.guild.id);
             if (!sData) return message.reply('❌ Bot VC me nahi hai.');
@@ -264,6 +272,7 @@ module.exports = async (client) => {
             return message.reply('⏹️ Stopped.');
         }
 
+        // %pause / %resume
         if (cmd === 'pause' || cmd === 'resume') {
             const sData = serverQueues.get(message.guild.id);
             if (!sData || !sData.current) return message.reply('❌ Koi song active nahi hai.');
@@ -274,6 +283,7 @@ module.exports = async (client) => {
             return message.reply(isPaused ? '▶️ Resumed.' : '⏸️ Paused.');
         }
 
+        // %loop
         if (cmd === 'loop') {
             const sData = serverQueues.get(message.guild.id);
             if (!sData || !sData.current) return message.reply('❌ Koi song nahi chal raha.');
@@ -320,4 +330,3 @@ module.exports = async (client) => {
         }
     });
 };
-                        
