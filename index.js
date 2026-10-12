@@ -31,7 +31,7 @@ const client = new Client({
         GatewayIntentBits.GuildMembers,
         GatewayIntentBits.GuildMessages,
         GatewayIntentBits.MessageContent,
-        GatewayIntentBits.GuildVoiceStates,
+        GatewayIntentBits.GuildVoiceStates, // <-- Added for Music & VC Systems
         GatewayIntentBits.DirectMessages
     ],
     partials: [Partials.Channel, Partials.Message]
@@ -62,7 +62,6 @@ client.on('interactionCreate', async (interaction) => {
 
         let isExtraOwner = false;
         if (interaction.guild) {
-            // Agar bot owner hai toh direct extra owner ban gaya, database check karne ki bhi zaroorat nahi
             if (isBotOwner) {
                 isExtraOwner = true;
             } else {
@@ -71,7 +70,7 @@ client.on('interactionCreate', async (interaction) => {
             }
         }
 
-        // Agar Bot Owner hai, toh seedha execute hone do (Full Bypass)
+        // Full Bypass for Bot Owner
         if (isBotOwner) {
             try {
                 return await command.execute(interaction);
@@ -81,10 +80,10 @@ client.on('interactionCreate', async (interaction) => {
             }
         }
 
-        // Moderation commands ki list jise staff members access kar sakte hain
+        // Moderation commands accessible to staff
         const modCommands = ['lock', 'unlock', 'purge', 'role', 'ban', 'kick', 'timeout', 'untimeout', 'unban', 'warn', 'slowmode'];
 
-        // Agar command moderation list me NAHI hai (jaise /panel wagera), toh sirf Server Owner aur Extra Owners hi chala payenge
+        // Non-mod commands restricted to Server Owner & Extra Owners
         if (!modCommands.includes(interaction.commandName)) {
             if (!isServerOwner && !isExtraOwner) {
                 return interaction.reply({
@@ -93,7 +92,6 @@ client.on('interactionCreate', async (interaction) => {
                 });
             }
         }
-        
 
         try {
             await command.execute(interaction);
@@ -115,7 +113,7 @@ for (const file of handlerFiles) {
     require(`./handlers/${file}`)(client);
 }
 
-// Bot Server me add hone par by default sabhi features disable rahenge
+// Default settings on guild join
 client.on('guildCreate', async (guild) => {
     try {
         let settings = await ServerSettings.findOne({ guildId: guild.id });
@@ -483,7 +481,12 @@ client.on('messageCreate', async (message) => {
                 },
                 {
                     name: '🛡️ Anti-Nuke & Ownership (% prefix)',
-                    value: '• `%antinuke <enable/disable>` - Toggle protection\n• `%extraowner <add/remove> @user` - Manage extra owners\n• `%wl <add/remove> @user/@bot` - Manage whitelist\n• `%pr @user` - Interactive command permissions panel\n• `%channel <allow/deny> <links/media/ips>` - Channel automod rules',
+                    value: '• `%antinuke <enable/disable>` - Toggle protection\n• `%extraowner <add/remove> @user` - Manage extra owners\n• `%wl <add/remove> @user/@bot` - Manage whitelist\n• `%clean <channels/roles>` - Emergency cleaner\n• `%backup <create/delete/load> <ID>` - Cross-server layout snapshot',
+                    inline: false
+                },
+                {
+                    name: '🎶 Music Controls (% prefix)',
+                    value: '• `%join` / `%join always` - Connect to VC (Owners Only / 24/7 Mode)\n• `%play <song/link>` - Play audio stream (Sets you as Session Host)\n• `%skip` / `%stop` / `%pause` / `%resume` / `%loop` - Session Host/Owner music control\n• `%queue` / `%nowplaying` - View track progress & queue',
                     inline: false
                 },
                 {
@@ -560,14 +563,13 @@ client.on('interactionCreate', async (interaction) => {
 
     if (!BOT_OWNERS.includes(interaction.user.id)) return;
 
-    // A. %control: Server Select (with Instant Invite Link Button)
+    // A. %control: Server Select
     if (interaction.isStringSelectMenu() && interaction.customId === 'owner_select_server') {
         const guildId = interaction.values[0].replace('leave_guild_', '');
         const targetGuild = client.guilds.cache.get(guildId);
 
         if (!targetGuild) return interaction.reply({ content: '❌ Guild not found.', ephemeral: true });
 
-        // Generate Instant Invite Link agar permission ho
         let inviteUrl = null;
         try {
             const textChannel = targetGuild.channels.cache.find(c => 
@@ -801,4 +803,5 @@ client.on('interactionCreate', async (interaction) => {
 mongoose.connect(process.env.MONGO_URI)
     .then(() => console.log('MongoDB Connected to Atlas'))
     .catch(err => console.error('MongoDB Connection Error:', err));
-client.login(process.env.DISCORD_TOKEN); 
+
+client.login(process.env.DISCORD_TOKEN);
