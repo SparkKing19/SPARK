@@ -113,7 +113,6 @@ module.exports = function registerMusicCommands(client) {
                 return message.reply({ embeds: [embed] });
             }
 
-            // Connection Check Before Join or Play
             if (cmd === 'join' || cmd === 'play') {
                 const activeNodes = [...client.lavalink.nodeManager.nodes.values()].filter(n => n.connected);
                 if (activeNodes.length === 0) {
@@ -275,4 +274,3 @@ module.exports = function registerMusicCommands(client) {
         }
     });
 };
-                    
