@@ -37,6 +37,11 @@ const client = new Client({
     partials: [Partials.Channel, Partials.Message]
 });
 
+// Lavalink Voice Packet Forwarder (ISKE BINA LAVALINK MUTE REHTA HAI)
+client.on('raw', (packet) => {
+    client.shoukaku?.options?.connector?.send?.(packet);
+});
+
 client.commands = new Map();
 
 // 1. Auto-load Slash Commands
