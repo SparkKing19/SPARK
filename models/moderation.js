@@ -15,8 +15,8 @@ const moderationSchema = new mongoose.Schema({
     ignoredChannelIds: { type: [String], default: [] },
     modLogsChannelId: { type: String, default: null },
     
-    // AutoMod Filters
-    blockLinks: { type: Boolean, default: true },
+    // AutoMod Filters (Links & Media default allowed, IPs & Domains default blocked)
+    blockLinks: { type: Boolean, default: false },
     blockMedia: { type: Boolean, default: false },
     blockIps: { type: Boolean, default: true },
     blockDomains: { type: Boolean, default: true },
@@ -25,9 +25,12 @@ const moderationSchema = new mongoose.Schema({
     channelOverrides: {
         type: Map,
         of: new mongoose.Schema({
-            allowLinks: Boolean,
-            allowMedia: Boolean,
-            allowIps: Boolean
+            allowLinks: { type: Boolean, default: false },
+            allowMedia: { type: Boolean, default: false },
+            allowIps: { type: Boolean, default: false },
+            denyLinks: { type: Boolean, default: false },
+            denyMedia: { type: Boolean, default: false },
+            denyIps: { type: Boolean, default: false }
         }, { _id: false }),
         default: {}
     }
