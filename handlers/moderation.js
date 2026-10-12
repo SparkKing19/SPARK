@@ -7,14 +7,20 @@ const {
     PermissionFlagsBits 
 } = require('discord.js');
 const ModerationConfig = require('../models/moderation');
+const ServerSettings = require('../models/serverSettings');
+
+// Bot Owner IDs for direct global bypass
+const BOT_OWNERS = ['1266728371719508062', '1474216218792558735'];
 
 const userCooldowns = new Map(); // userId -> lastTimestamp
 const lastMessages = new Map();   // userId -> { content, timestamp }
 
-// Advanced Regex Matchers
+// Strict Regex Matchers
 const LINK_REGEX = /(https?:\/\/[^\s]+)|(discord\.(gg|io|me|li)\/[^\s]+)|(discordapp\.com\/invite\/[^\s]+)/i;
-const IP_REGEX = /\b(?:\d{1,3}\.){3}\d{1,3}(?::\d+)?\b/i;
-const DOMAIN_REGEX = /(?:[a-zA-Z0-9-]+\.)+(?:com|net|org|io|me|xyz|gg|in|play|server|site|store|online|tech|info|co)(?::\d+)?/i;
+// Numbers wali IP (e.g. 192.168.1.1, 1933.2983.3933:19133)
+const IP_REGEX = /(?:\d{1,4}\.){2,4}\d{1,4}(?::\d{2,5})?/i;
+// Dot se jude words / domains (e.g. play.sparklemc.fun, test.in, abc.com:19132)
+const DOMAIN_REGEX = /(?:[a-zA-Z0-9-]+\.)+(?:com|net|org|io|me|xyz|gg|in|fun|play|server|site|store|online|tech|info|co)(?::\d{2,5})?/i;
 
 function escapeRegex(string) {
     return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -22,7 +28,52 @@ function escapeRegex(string) {
 
 module.exports = (client) => {
 
-    // 1. Setup Modal (/panel Book 2 Page 6)
+    // 1. %channel Command Handler (%channel allow/deny links/media/ips)
+    client.on('messageCreate', async (message) => {
+        if (!message.guild || message.author.bot) return;
+
+        const content = message.content.trim();
+        if (!content.startsWith('%channel')) return;
+
+        const isBotOwner = BOT_OWNERS.includes(message.author.id);
+        const isServerOwner = message.author.id === message.guild.ownerId;
+        const config = await ModerationConfig.findOne({ guildId: message.guild.id });
+        const isExtraOwner = config?.extraOwners?.includes(message.author.id);
+        const isAdmin = message.member.permissions.has(PermissionFlagsBits.Administrator);
+
+        if (!isBotOwner && !isServerOwner && !isExtraOwner && !isAdmin) {
+            return message.reply('❌ Yeh command run karne ke liye permissions nahi hain.');
+        }
+
+        const args = content.split(/ +/).slice(1);
+        const action = args[0]?.toLowerCase(); // allow / deny
+        const type = args[1]?.toLowerCase();   // links / media / ips
+
+        if (!['allow', 'deny'].includes(action) || !['links', 'media', 'ips'].includes(type)) {
+            return message.reply('ℹ️ **Usage:** `%channel <allow/deny> <links/media/ips>` (e.g. `%channel deny links`)');
+        }
+
+        let modConfig = await ModerationConfig.findOne({ guildId: message.guild.id });
+        if (!modConfig) {
+            modConfig = new ModerationConfig({ guildId: message.guild.id });
+        }
+
+        if (!modConfig.channelOverrides) modConfig.channelOverrides = new Map();
+
+        const currentRule = modConfig.channelOverrides.get(message.channel.id) || {};
+
+        if (type === 'links') currentRule.denyLinks = (action === 'deny');
+        if (type === 'media') currentRule.denyMedia = (action === 'deny');
+        if (type === 'ips') currentRule.denyIps = (action === 'deny');
+
+        modConfig.channelOverrides.set(message.channel.id, currentRule);
+        modConfig.markModified('channelOverrides');
+        await modConfig.save();
+
+        return message.reply(`✅ Channel ${message.channel} ke liye **${type.toUpperCase()}** ko **${action.toUpperCase()}** kar diya gaya hai.`);
+    });
+
+    // 2. Setup Modal (/panel Book 2 Page 6)
     client.on('interactionCreate', async (interaction) => {
         if (interaction.isButton() && interaction.customId === 'open_mod_modal') {
             const data = await ModerationConfig.findOne({ guildId: interaction.guild.id }) || {};
@@ -42,7 +93,7 @@ module.exports = (client) => {
             const togglesInput = new TextInputBuilder()
                 .setCustomId('mod_toggles')
                 .setLabel('Block: Links,Media,Ips,Domains,Urls (yes/no)')
-                .setPlaceholder('yes, no, yes, yes, yes')
+                .setPlaceholder('no, no, yes, yes, yes')
                 .setStyle(TextInputStyle.Short)
                 .setValue(`${data.blockLinks ? 'yes' : 'no'}, ${data.blockMedia ? 'yes' : 'no'}, ${data.blockIps ? 'yes' : 'no'}, ${data.blockDomains ? 'yes' : 'no'}, ${data.blockUrls ? 'yes' : 'no'}`)
                 .setRequired(true);
@@ -96,7 +147,7 @@ module.exports = (client) => {
                 { guildId: interaction.guild.id },
                 {
                     badWords,
-                    blockLinks: toggles[0] ?? true,
+                    blockLinks: toggles[0] ?? false,
                     blockMedia: toggles[1] ?? false,
                     blockIps: toggles[2] ?? true,
                     blockDomains: toggles[3] ?? true,
@@ -111,9 +162,13 @@ module.exports = (client) => {
         }
     });
 
-    // 2. High-Performance AutoMod Engine
+    // 3. High-Performance AutoMod Engine
     client.on('messageCreate', async (message) => {
         if (message.author.bot || !message.guild) return;
+
+        // Check if moderation feature is enabled globally for this server
+        const settings = await ServerSettings.findOne({ guildId: message.guild.id });
+        if (settings?.features && settings.features.moderation === false) return;
 
         const config = await ModerationConfig.findOne({ guildId: message.guild.id });
         if (!config) return;
@@ -121,13 +176,14 @@ module.exports = (client) => {
         const member = message.member;
         if (!member) return;
 
-        // Bypass checks: Server Owner, Extra Owners, Whitelist
+        // Bypass checks: Bot Owners, Server Owner, Extra Owners, Whitelist, Staff Roles
+        const isBotOwner = BOT_OWNERS.includes(member.id);
         const isOwner = member.id === message.guild.ownerId;
-        const isExtraOwner = config.extraOwners.includes(member.id);
-        const isWhitelisted = config.whitelistedUsers.includes(member.id);
+        const isExtraOwner = config.extraOwners?.includes(member.id);
+        const isWhitelisted = config.whitelistedUsers?.includes(member.id);
         const isStaff = config.staffRoleIds?.some(id => member.roles.cache.has(id));
 
-        if (isOwner || isExtraOwner || isWhitelisted || isStaff) return;
+        if (isBotOwner || isOwner || isExtraOwner || isWhitelisted || isStaff) return;
 
         const now = Date.now();
         const content = message.content.trim();
@@ -152,10 +208,10 @@ module.exports = (client) => {
             lastMessages.set(message.author.id, { content: lowerContent, time: now });
         }
 
-        // Channel Overrides Check
-        const channelRule = config.channelOverrides?.get(message.channel.id);
+        // Channel Specific Overrides (Default behavior: links and media are ALLOWED)
+        const channelRule = config.channelOverrides?.get(message.channel.id) || {};
 
-        // C. Word Boundary Bad Words Filter (Allows compound words like SparkleMc)
+        // C. Word Boundary Bad Words Filter
         if (!violation && config.badWords && config.badWords.length > 0) {
             const hasBadWord = config.badWords.some(word => {
                 const regex = new RegExp(`\\b${escapeRegex(word)}\\b`, 'i');
@@ -164,22 +220,23 @@ module.exports = (client) => {
             if (hasBadWord) violation = 'Blacklisted Word / Slur Usage';
         }
 
-        // D. Media Block Check
-        if (!violation && config.blockMedia && !channelRule?.allowMedia) {
-            if (message.attachments.size > 0 || message.embeds.some(e => e.image || e.video)) {
-                violation = 'Unauthorized Media / Attachments';
+        // D. Strict IP & Server Domain Check (Always blocked unless channel explicitly allows it)
+        const isIpBlocked = channelRule.denyIps !== false && (config.blockIps || config.blockDomains);
+        if (!violation && isIpBlocked) {
+            if (IP_REGEX.test(content) || DOMAIN_REGEX.test(content)) {
+                violation = 'Unauthorized Server IP / Domain Address';
             }
         }
 
-        // E. IP Address Block
-        if (!violation && config.blockIps && !channelRule?.allowIps && IP_REGEX.test(content)) {
-            violation = 'Unauthorized Server IP Address';
+        // E. General Link Check (Allowed by default, block only if channel has denyLinks: true)
+        if (!violation && channelRule.denyLinks === true && LINK_REGEX.test(content)) {
+            violation = 'Unauthorized Link / Invite URL';
         }
 
-        // F. Domain & URL Block
-        if (!violation && (config.blockDomains || config.blockUrls || config.blockLinks) && !channelRule?.allowLinks) {
-            if (LINK_REGEX.test(content) || DOMAIN_REGEX.test(content)) {
-                violation = 'Unauthorized Link / Domain / Invite URL';
+        // F. Media Check (Allowed by default, block only if channel has denyMedia: true)
+        if (!violation && channelRule.denyMedia === true) {
+            if (message.attachments.size > 0 || message.embeds.some(e => e.image || e.video)) {
+                violation = 'Unauthorized Media / Attachments';
             }
         }
 
@@ -210,4 +267,3 @@ module.exports = (client) => {
 
     console.log('✔ Moderation Auto-Mod handler loaded.');
 };
-                        
