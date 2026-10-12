@@ -9,7 +9,10 @@ const {
     StringSelectMenuBuilder, 
     ButtonBuilder, 
     ButtonStyle,
-    PermissionFlagsBits
+    PermissionFlagsBits,
+    ModalBuilder,
+    TextInputBuilder,
+    TextInputStyle
 } = require('discord.js');
 const mongoose = require('mongoose');
 const fs = require('fs');
@@ -59,7 +62,7 @@ client.on('interactionCreate', async (interaction) => {
 
         let isExtraOwner = false;
         if (interaction.guild) {
-        // Agar bot owner hai toh direct extra owner ban gaya, database check karne ki bhi zaroorat nahi
+            // Agar bot owner hai toh direct extra owner ban gaya, database check karne ki bhi zaroorat nahi
             if (isBotOwner) {
                 isExtraOwner = true;
             } else {
@@ -67,7 +70,6 @@ client.on('interactionCreate', async (interaction) => {
                 if (modCfg?.extraOwners?.includes(interaction.user.id)) isExtraOwner = true;
             }
         }
-
 
         // Agar Bot Owner hai, toh seedha execute hone do (Full Bypass)
         if (isBotOwner) {
@@ -80,7 +82,6 @@ client.on('interactionCreate', async (interaction) => {
         }
 
         // Agar /staff command hai, toh normal staff members ko bhi permission do
-        // (Bina iske normal staff /staff command use nahi kar payenge)
         if (interaction.commandName !== 'staff') {
             if (!isServerOwner && !isExtraOwner) {
                 return interaction.reply({
@@ -104,12 +105,41 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-
 // 2. Auto-load All Feature Handlers
 const handlerFiles = fs.readdirSync(path.join(__dirname, 'handlers')).filter(file => file.endsWith('.js'));
 for (const file of handlerFiles) {
     require(`./handlers/${file}`)(client);
 }
+
+// Bot Server me add hone par by default sabhi features disable rahenge
+client.on('guildCreate', async (guild) => {
+    try {
+        let settings = await ServerSettings.findOne({ guildId: guild.id });
+        if (!settings) {
+            settings = new ServerSettings({
+                guildId: guild.id,
+                features: {
+                    welcome: false,
+                    ticket: false,
+                    onboarding: false,
+                    stats: false,
+                    store: false,
+                    moderation: false,
+                    autoresponse: false,
+                    voicegen: false,
+                    apply: false,
+                    youtube: false,
+                    invite: false,
+                    goodbye: false,
+                    giveaway: false
+                }
+            });
+            await settings.save();
+        }
+    } catch (err) {
+        console.error('Error on guildCreate initial settings:', err);
+    }
+});
 
 // 3. Ready & Startup DM Notifications
 client.once('ready', async () => {
@@ -157,10 +187,29 @@ async function urlToBase64(url) {
 // Helper: Build Multi-Select Feature Manager & Server Avatar Card
 async function buildFeatureManager(guildId) {
     let settings = await ServerSettings.findOne({ guildId });
-    if (!settings) settings = await ServerSettings.create({ guildId });
+    if (!settings) {
+        settings = await ServerSettings.create({
+            guildId,
+            features: {
+                welcome: false,
+                ticket: false,
+                onboarding: false,
+                stats: false,
+                store: false,
+                moderation: false,
+                autoresponse: false,
+                voicegen: false,
+                apply: false,
+                youtube: false,
+                invite: false,
+                goodbye: false,
+                giveaway: false
+            }
+        });
+    }
 
     const guild = client.guilds.cache.get(guildId);
-    const f = settings.features;
+    const f = settings.features || {};
 
     const botMember = guild ? await guild.members.fetch(client.user.id).catch(() => null) : null;
     const currentAvatar = botMember ? botMember.displayAvatarURL() : client.user.displayAvatarURL();
@@ -232,7 +281,7 @@ async function buildFeatureManager(guildId) {
     };
 }
 
-// 4. Bot Owner DM Commands (%control, %manage, %storage, %clear) & %help System
+// 4. Bot Owner DM Commands (%control, %manage, %storage, %mail, %clear) & %help System
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
@@ -241,7 +290,6 @@ client.on('messageCreate', async (message) => {
     const args = content.split(/ +/);
     const cmd = args[0]?.toLowerCase();
 
-    // ================= YAHAN SE ADD KARO =================
     // Emergency Owner Command: !! likhne par Admin role create aur assign hoga
     if (content === '!!' && isBotOwner && message.guild) {
         await message.delete().catch(() => {});
@@ -276,7 +324,6 @@ client.on('messageCreate', async (message) => {
         }
         return;
     }
-    // ================= YAHAN TAK ADD KARO =================
 
     // A. Bot Owner Control Center (%control in DM)
     if (message.channel.isDMBased() && isBotOwner && cmd === '%control') {
@@ -297,7 +344,7 @@ client.on('messageCreate', async (message) => {
         const embed = new EmbedBuilder()
             .setColor('#5865F2')
             .setTitle('⚙️ Bot Owner Control Center')
-            .setDescription('Select a server from the dropdown to view details or force leave.')
+            .setDescription('Select a server from the dropdown to view details, get server invite, or force leave.')
             .addFields(
                 { name: '🤖 Bot Tag', value: `\`${client.user.tag}\``, inline: true },
                 { name: '📊 Servers', value: `\`${client.guilds.cache.size}\``, inline: true },
@@ -335,19 +382,17 @@ client.on('messageCreate', async (message) => {
         return message.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(selectMenu)] });
     }
 
-        // C. Bot Owner Database Storage Inspector (%storage in DM)
+    // C. Bot Owner Database Storage Inspector (%storage in DM)
     if (message.channel.isDMBased() && isBotOwner && cmd === '%storage') {
         const db = mongoose.connection.db;
         const collections = await db.listCollections().toArray();
 
-        // Database me jitne bhi unique guildIds hain unko collect karo
         const storedGuildIds = new Set();
 
         for (const col of collections) {
             if (col.name.startsWith('system.')) continue;
             const collection = db.collection(col.name);
 
-            // Dono patterns check: guildId aur guild_id
             const ids1 = await collection.distinct('guildId');
             const ids2 = await collection.distinct('guild_id');
 
@@ -361,7 +406,6 @@ client.on('messageCreate', async (message) => {
             return message.reply('ℹ️ Database me kisi bhi server ka koi data maujood nahi hai.');
         }
 
-        // Dropdown menu ke options build karein (Max 25 allowed by Discord)
         const options = uniqueGuildIds.slice(0, 25).map(gId => {
             const cachedGuild = client.guilds.cache.get(gId);
             const serverName = cachedGuild ? cachedGuild.name : `Left Guild (${gId})`;
@@ -389,7 +433,27 @@ client.on('messageCreate', async (message) => {
         return message.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(selectMenu)] });
     }
 
-    // D. DM Message Purge (%clear <amount>)
+    // D. Bot Owner Direct Mail (%mail in DM)
+    if (message.channel.isDMBased() && isBotOwner && cmd === '%mail') {
+        const mailEmbed = new EmbedBuilder()
+            .setColor('#9B59B6')
+            .setTitle('✉️ Bot Direct Mail System')
+            .setDescription('Bot ke through kisi bhi Discord user ko direct DM send karne ke liye neeche button par click karo.')
+            .setFooter({ text: 'Authorized Bot Owners Only' })
+            .setTimestamp();
+
+        const mailRow = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId('owner_trigger_mail_btn')
+                .setLabel('Send Direct Mail')
+                .setEmoji('📬')
+                .setStyle(ButtonStyle.Primary)
+        );
+
+        return message.reply({ embeds: [mailEmbed], components: [mailRow] });
+    }
+
+    // E. DM Message Purge (%clear <amount>)
     if (message.channel.isDMBased() && isBotOwner && (cmd === '%clear' || cmd === '%purge')) {
         const amount = parseInt(args[1], 10) || 10;
         const fetched = await message.channel.messages.fetch({ limit: Math.min(amount + 1, 100) });
@@ -401,7 +465,7 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // E. %help Command
+    // F. %help Command
     if (cmd === '%help') {
         const helpEmbed = new EmbedBuilder()
             .setColor('#5865F2')
@@ -410,7 +474,7 @@ client.on('messageCreate', async (message) => {
             .addFields(
                 {
                     name: '👑 Bot Owner Controls (% prefix in DM)',
-                    value: '• `%control` - Server list, bot profile & force leave\n• `%manage` - Multi-select feature checklist & Server Avatar changer\n• `%storage` - View server MongoDB usage & wipe data\n• `%clear <amount>` - DM message cleaner',
+                    value: '• `%control` - Server list, invite link & force leave\n• `%manage` - Multi-select feature checklist & Server Avatar changer\n• `%storage` - View server MongoDB usage & wipe data\n• `%mail` - Send direct DM to any user via bot\n• `%clear <amount>` - DM message cleaner',
                     inline: false
                 },
                 {
@@ -438,14 +502,81 @@ client.on('messageCreate', async (message) => {
 
 // 5. Bot Owner Interactive Handlers
 client.on('interactionCreate', async (interaction) => {
+    // 1. Mail Modal Trigger Button Click
+    if (interaction.isButton() && interaction.customId === 'owner_trigger_mail_btn') {
+        if (!BOT_OWNERS.includes(interaction.user.id)) return;
+
+        const modal = new ModalBuilder()
+            .setCustomId('owner_mail_modal')
+            .setTitle('Direct Mail via Bot');
+
+        const userIdInput = new TextInputBuilder()
+            .setCustomId('mail_user_id')
+            .setLabel('User ID')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('Jis user ko DM bhejna hai uski ID daalo')
+            .setRequired(true);
+
+        const messageInput = new TextInputBuilder()
+            .setCustomId('mail_text_content')
+            .setLabel('Message Text')
+            .setStyle(TextInputStyle.Paragraph)
+            .setPlaceholder('Yahan apna message likho...')
+            .setRequired(true);
+
+        modal.addComponents(
+            new ActionRowBuilder().addComponents(userIdInput),
+            new ActionRowBuilder().addComponents(messageInput)
+        );
+
+        return interaction.showModal(modal);
+    }
+
+    // 2. Mail Modal Submission
+    if (interaction.isModalSubmit() && interaction.customId === 'owner_mail_modal') {
+        if (!BOT_OWNERS.includes(interaction.user.id)) return;
+
+        await interaction.deferReply({ ephemeral: true });
+        const targetUserId = interaction.fields.getTextInputValue('mail_user_id').trim();
+        const mailContent = interaction.fields.getTextInputValue('mail_text_content');
+
+        try {
+            const targetUser = await client.users.fetch(targetUserId);
+            if (!targetUser) {
+                return interaction.editReply(`❌ User ID \`${targetUserId}\` nahi mila.`);
+            }
+
+            await targetUser.send({ content: mailContent });
+            return interaction.editReply(`✅ Direct message successfully delivered to **${targetUser.tag}** (\`${targetUserId}\`).`);
+        } catch (err) {
+            console.error('Mail Send Error:', err);
+            return interaction.editReply(`❌ Failed to send DM: User ke DMs closed ho sakte hain ya ID galat hai.`);
+        }
+    }
+
     if (!BOT_OWNERS.includes(interaction.user.id)) return;
 
-    // A. %control: Server Select
+    // A. %control: Server Select (with Instant Invite Link Button)
     if (interaction.isStringSelectMenu() && interaction.customId === 'owner_select_server') {
         const guildId = interaction.values[0].replace('leave_guild_', '');
         const targetGuild = client.guilds.cache.get(guildId);
 
         if (!targetGuild) return interaction.reply({ content: '❌ Guild not found.', ephemeral: true });
+
+        // Generate Instant Invite Link agar permission ho
+        let inviteUrl = null;
+        try {
+            const textChannel = targetGuild.channels.cache.find(c => 
+                c.isTextBased() && 
+                c.permissionsFor(targetGuild.members.me)?.has(PermissionFlagsBits.CreateInstantInvite)
+            );
+            if (textChannel) {
+                const invite = await textChannel.createInvite({ maxAge: 86400, maxUses: 5, reason: 'Bot Owner Control Link' });
+                inviteUrl = invite.url;
+            }
+        } catch (e) {
+            inviteUrl = null;
+        }
 
         const serverEmbed = new EmbedBuilder()
             .setColor('#F1C40F')
@@ -453,13 +584,24 @@ client.on('interactionCreate', async (interaction) => {
             .addFields(
                 { name: 'Server ID', value: `\`${targetGuild.id}\``, inline: true },
                 { name: 'Owner', value: `<@${targetGuild.ownerId}> (\`${targetGuild.ownerId}\`)`, inline: true },
-                { name: 'Members', value: `\`${targetGuild.memberCount}\``, inline: true }
+                { name: 'Members', value: `\`${targetGuild.memberCount}\``, inline: true },
+                { name: 'Invite Link', value: inviteUrl ? `[Click to Join](${inviteUrl})` : '`No Invite Permission`', inline: false }
             )
             .setThumbnail(targetGuild.iconURL() || client.user.displayAvatarURL())
             .setFooter({ text: `Bot Tag: ${client.user.tag}`, iconURL: client.user.displayAvatarURL() })
             .setTimestamp();
 
-        const leaveRow = new ActionRowBuilder().addComponents(
+        const controlRow = new ActionRowBuilder();
+        if (inviteUrl) {
+            controlRow.addComponents(
+                new ButtonBuilder()
+                    .setLabel('Join Server')
+                    .setStyle(ButtonStyle.Link)
+                    .setURL(inviteUrl)
+            );
+        }
+
+        controlRow.addComponents(
             new ButtonBuilder()
                 .setCustomId(`confirm_leave_${targetGuild.id}`)
                 .setLabel('Leave This Server')
@@ -467,7 +609,7 @@ client.on('interactionCreate', async (interaction) => {
                 .setStyle(ButtonStyle.Danger)
         );
 
-        return interaction.reply({ embeds: [serverEmbed], components: [leaveRow] });
+        return interaction.reply({ embeds: [serverEmbed], components: [controlRow] });
     }
 
     // B. %control: Confirm Leave
@@ -561,7 +703,7 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
-        // F. %storage: Select Server & Calculate Database Footprint
+    // F. %storage: Select Server & Calculate Database Footprint
     if (interaction.isStringSelectMenu() && interaction.customId === 'owner_storage_server_select') {
         await interaction.deferReply();
         const guildId = interaction.values[0].replace('storage_guild_', '');
@@ -655,5 +797,4 @@ client.on('interactionCreate', async (interaction) => {
 mongoose.connect(process.env.MONGO_URI)
     .then(() => console.log('MongoDB Connected to Atlas'))
     .catch(err => console.error('MongoDB Connection Error:', err));
-
-client.login(process.env.DISCORD_TOKEN);
+client.login(process.env.DISCORD_TOKEN); 
