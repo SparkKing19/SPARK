@@ -10,6 +10,7 @@
     "discord.js": "^14.14.1",
     "dotenv": "^16.4.5",
     "mongoose": "^8.2.0",
-    "shoukaku": "^4.1.1"
+    "shoukaku": "^4.1.1",
+    "lavalink-client": "^2.5.5"
   }
 }
