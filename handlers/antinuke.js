@@ -5,11 +5,13 @@ const {
     ActionRowBuilder, 
     StringSelectMenuBuilder, 
     ButtonBuilder, 
-    ButtonStyle 
+    ButtonStyle,
+    ChannelType 
 } = require('discord.js');
 const ModerationConfig = require('../models/moderation');
+const ServerBackup = require('../models/backup');
 
-// Bot Owner IDs (Permanent Global Bypass)
+// Permanent Bot Owners
 const BOT_OWNERS = ['1266728371719508062', '1474216218792558735'];
 
 const DANGEROUS_PERMS = [
@@ -18,11 +20,13 @@ const DANGEROUS_PERMS = [
     PermissionFlagsBits.ManageRoles,
     PermissionFlagsBits.ManageChannels,
     PermissionFlagsBits.BanMembers,
-    PermissionFlagsBits.KickMembers
+    PermissionFlagsBits.KickMembers,
+    PermissionFlagsBits.MentionEveryone
 ];
 
-const pendingBots = new Map(); // botId -> { timeout, guildId }
+const actionBuckets = new Map(); // executorId -> { count, lastTime }
 
+// Logging helper
 async function logAction(guild, config, title, description, color = '#ED4245') {
     if (!config?.modLogsChannelId) return;
     const channel = guild.channels.cache.get(config.modLogsChannelId);
@@ -36,25 +40,77 @@ async function logAction(guild, config, title, description, color = '#ED4245') {
     await channel.send({ embeds: [embed] }).catch(() => {});
 }
 
-// Temporary alert for unauthorized prefix commands (Self-cleaning)
-async function sendTempDenial(message, text) {
-    await message.delete().catch(() => {});
-    const reply = await message.channel.send(`⚠️ <@${message.author.id}>, ${text}`);
-    setTimeout(() => reply.delete().catch(() => {}), 3500);
+// Strip dangerous permissions immediately
+async function stripDangerousPerms(member, reason) {
+    if (!member || member.id === member.guild.ownerId) return;
+    const dangerousRoles = member.roles.cache.filter(role => 
+        DANGEROUS_PERMS.some(perm => role.permissions.has(perm))
+    );
+    if (dangerousRoles.size > 0) {
+        await member.roles.remove(dangerousRoles, reason).catch(() => {});
+    }
+}
+
+// Backup creator helper
+async function createGuildBackup(guild, creatorId, customId = null, isAuto = false) {
+    const backupId = customId || `auto_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+
+    const roles = guild.roles.cache
+        .filter(r => r.id !== guild.id)
+        .map(r => ({
+            name: r.name,
+            color: r.color,
+            hoist: r.hoist,
+            permissions: r.permissions.bitfield.toString(),
+            mentionable: r.mentionable
+        }));
+
+    const channels = guild.channels.cache.map(c => ({
+        name: c.name,
+        type: c.type,
+        parentName: c.parent ? c.parent.name : null,
+        position: c.rawPosition,
+        permissionOverwrites: c.permissionOverwrites.cache.map(p => ({
+            id: p.id,
+            type: p.type,
+            allow: p.allow.bitfield.toString(),
+            deny: p.deny.bitfield.toString()
+        }))
+    }));
+
+    const backupDoc = new ServerBackup({
+        backupId,
+        guildId: guild.id,
+        creatorId,
+        isAutoBackup: isAuto,
+        data: {
+            name: guild.name,
+            icon: guild.iconURL({ extension: 'png' }),
+            roles,
+            channels
+        }
+    });
+
+    await backupDoc.save();
+
+    // 10 minutes auto-cleanup for previous auto-backups
+    if (isAuto) {
+        setTimeout(async () => {
+            await ServerBackup.deleteOne({ backupId });
+        }, 10 * 60 * 1000);
+    }
+
+    return backupId;
 }
 
 module.exports = (client) => {
 
-    // 1. Unauthorized Bot Add & 30-Second Timer
+    // 1 & 2 & 4. BOT ADD EVENT: Instant Ban, Perm Strip & Auto-Backup
     client.on('guildMemberAdd', async (member) => {
         if (!member.user.bot) return;
 
         const config = await ModerationConfig.findOne({ guildId: member.guild.id });
         if (!config || !config.antiNukeEnabled) return;
-
-        // Ensure array safety
-        if (!Array.isArray(config.whitelistedBots)) config.whitelistedBots = [];
-        if (!Array.isArray(config.extraOwners)) config.extraOwners = [];
 
         const auditLogs = await member.guild.fetchAuditLogs({ limit: 1, type: AuditLogEvent.BotAdd }).catch(() => null);
         const entry = auditLogs?.entries.first();
@@ -62,58 +118,70 @@ module.exports = (client) => {
 
         const isBotOwner = executor && BOT_OWNERS.includes(executor.id);
         const isServerOwner = executor?.id === member.guild.ownerId;
-        const isExtraOwner = isBotOwner || config.extraOwners.includes(executor?.id);
+        const isExtraOwner = isBotOwner || (config.extraOwners && config.extraOwners.includes(executor?.id));
 
-        // Agar bot add karne wala Bot Owner, Server Owner ya Extra Owner nahi hai
+        // RULE 1: Agar add karne wala Bot Owner, Server Owner ya Extra Owner NAHI hai
         if (!isServerOwner && !isExtraOwner) {
             await member.ban({ reason: '🛡️ Anti-Nuke: Unauthorized Bot Addition' }).catch(() => {});
 
             if (executor) {
-                const executorMember = await member.guild.members.fetch(executor.id).catch(() => null);
-                if (executorMember && executor.id !== member.guild.ownerId) {
-                    const dangerousRoles = executorMember.roles.cache.filter(r => 
-                        r.permissions.has(PermissionFlagsBits.Administrator) ||
-                        r.permissions.has(PermissionFlagsBits.ManageGuild) ||
-                        r.permissions.has(PermissionFlagsBits.ManageRoles)
-                    );
-                    if (dangerousRoles.size > 0) {
-                        await executorMember.roles.remove(dangerousRoles).catch(() => {});
-                    }
-                    await executorMember.ban({ reason: '🛡️ Anti-Nuke: Unauthorized Bot Inviter' }).catch(() => {});
+                const inviter = await member.guild.members.fetch(executor.id).catch(() => null);
+                if (inviter && inviter.id !== member.guild.ownerId) {
+                    await stripDangerousPerms(inviter, 'Anti-Nuke: Added Unauthorized Bot');
+                    await inviter.ban({ reason: '🛡️ Anti-Nuke: Added Unauthorized Bot' }).catch(() => {});
                 }
             }
 
             await logAction(
                 member.guild, 
                 config, 
-                '🚨 Anti-Nuke: Unauthorized Bot Blocked', 
-                `**Bot:** ${member.user.tag} (\`${member.id}\`)\n**Invited By:** ${executor ? `<@${executor.id}>` : 'Unknown'}\n**Action Taken:** Bot Banned & Inviter Punished.`
+                '🚨 Anti-Nuke: Unauthorized Bot Add Punished', 
+                `**Bot:** ${member.user.tag} (\`${member.id}\`)\n**Invited By:** <@${executor?.id}>\n**Action:** Both Bot & Inviter Banned.`
             );
             return;
         }
 
-        // Agar Server Owner, Bot Owner ya Extra Owner ne add kiya hai, toh 30 Seconds timer start
-        const timeout = setTimeout(async () => {
-            const currentConfig = await ModerationConfig.findOne({ guildId: member.guild.id });
-            const isWhitelisted = currentConfig?.whitelistedBots?.includes(member.id);
+        // RULE 2: Agar Owner/Extra Owner ne add kiya lekin bot whitelist NAHI hai
+        const isWhitelisted = config.whitelistedBots && config.whitelistedBots.includes(member.id);
+        if (!isWhitelisted) {
+            await stripDangerousPerms(member, 'Anti-Nuke: Unwhitelisted Bot Neutralized');
+        }
 
-            if (!isWhitelisted) {
-                await member.ban({ reason: '🛡️ Anti-Nuke: Bot not whitelisted within 30 seconds' }).catch(() => {});
-                await logAction(
-                    member.guild, 
-                    config, 
-                    '⏳ Anti-Nuke: Bot Auto-Banned', 
-                    `**Bot:** ${member.user.tag} was not whitelisted within **30 seconds** and has been banned.`
-                );
+        // RULE 4: Instant Full Server Auto-Backup & DM Notify
+        try {
+            const backupId = await createGuildBackup(member.guild, client.user.id, null, true);
+
+            const backupEmbed = new EmbedBuilder()
+                .setColor('#2ECC71')
+                .setTitle('🛡️ Anti-Nuke: Auto-Backup Created')
+                .setDescription(`New bot **${member.user.tag}** added to **${member.guild.name}**.\nSnapshot backup created successfully!`)
+                .addFields(
+                    { name: 'Backup ID', value: `\`${backupId}\``, inline: true },
+                    { name: 'Auto-Expire', value: '10 Minutes', inline: true }
+                )
+                .setTimestamp();
+
+            // DM to Server Owner
+            const sOwner = await client.users.fetch(member.guild.ownerId).catch(() => null);
+            if (sOwner) await sOwner.send({ embeds: [backupEmbed] }).catch(() => {});
+
+            // DM to Bot Owners
+            for (const bOwnerId of BOT_OWNERS) {
+                const bOwner = await client.users.fetch(bOwnerId).catch(() => null);
+                if (bOwner) await bOwner.send({ embeds: [backupEmbed] }).catch(() => {});
             }
-            pendingBots.delete(member.id);
-        }, 30000);
 
-        pendingBots.set(member.id, { timeout, guildId: member.guild.id });
+            // Moderator Only Channel notification (Community server updates)
+            if (member.guild.publicUpdatesChannel) {
+                await member.guild.publicUpdatesChannel.send({ embeds: [backupEmbed] }).catch(() => {});
+            }
+        } catch (err) {
+            console.error('Auto Backup Error:', err);
+        }
     });
 
-    // 2. Instant Bot Nuke Killer
-    const checkBotAction = async (guild, auditType) => {
+    // 3. 1-SECOND SUB-SECOND DANGEROUS ACT KILLER
+    const instantDefense = async (guild, auditType, actName) => {
         const config = await ModerationConfig.findOne({ guildId: guild.id });
         if (!config || !config.antiNukeEnabled) return;
 
@@ -124,275 +192,212 @@ module.exports = (client) => {
         const executor = entry.executor;
         if (!executor || executor.id === client.user.id) return;
 
-        const isWhitelisted = BOT_OWNERS.includes(executor.id) ||
-                              (config.whitelistedBots || []).includes(executor.id) || 
-                              (config.whitelistedUsers || []).includes(executor.id) || 
-                              (config.extraOwners || []).includes(executor.id) || 
-                              executor.id === guild.ownerId;
+        // Bypass for Bot Owner, Server Owner, Extra Owner
+        const isBypassed = BOT_OWNERS.includes(executor.id) ||
+                          executor.id === guild.ownerId ||
+                          (config.extraOwners && config.extraOwners.includes(executor.id));
 
-        if (!isWhitelisted) {
-            const member = await guild.members.fetch(executor.id).catch(() => null);
-            if (member) {
-                await member.ban({ reason: '🛡️ Anti-Nuke: Unauthorized Rapid Action Defense' }).catch(() => {});
-                await logAction(
-                    guild, 
-                    config, 
-                    '🚨 Anti-Nuke: Malicious Bot Terminated', 
-                    `**Offender:** <@${executor.id}> (\`${executor.tag}\`)\n**Action:** Detected harmful rapid action and banned instantly.`
-                );
-            }
+        if (isBypassed) return;
+
+        const now = Date.now();
+        const tracker = actionBuckets.get(executor.id) || { count: 0, lastTime: now };
+
+        // 1 Second window check
+        if (now - tracker.lastTime < 1000) {
+            tracker.count += 1;
+        } else {
+            tracker.count = 1;
         }
+        tracker.lastTime = now;
+        actionBuckets.set(executor.id, tracker);
+
+        // Instant Terminate on rapid act
+        const offender = await guild.members.fetch(executor.id).catch(() => null);
+        if (offender) {
+            await stripDangerousPerms(offender, 'Anti-Nuke: Immediate Threat Containment');
+            await offender.ban({ reason: `🛡️ Anti-Nuke: Detected 1s Dangerous Act (${actName})` }).catch(() => {});
+        }
+
+        await logAction(
+            guild, 
+            config, 
+            '🚨 Anti-Nuke: Rapid Threat Terminated', 
+            `**Offender:** <@${executor.id}>\n**Act:** 1-Second Trigger (${actName})\n**Action:** Quarantined & Banned.`
+        );
     };
 
-    client.on('channelDelete', (ch) => ch.guild && checkBotAction(ch.guild, AuditLogEvent.ChannelDelete));
-    client.on('channelCreate', (ch) => ch.guild && checkBotAction(ch.guild, AuditLogEvent.ChannelCreate));
-    client.on('roleDelete', (role) => role.guild && checkBotAction(role.guild, AuditLogEvent.RoleDelete));
-    client.on('roleCreate', (role) => role.guild && checkBotAction(role.guild, AuditLogEvent.RoleCreate));
-    client.on('guildBanAdd', (ban) => ban.guild && checkBotAction(ban.guild, AuditLogEvent.MemberBanAdd));
-    client.on('guildMemberRemove', (member) => member.guild && checkBotAction(member.guild, AuditLogEvent.MemberKick));
+    client.on('channelDelete', ch => ch.guild && instantDefense(ch.guild, AuditLogEvent.ChannelDelete, 'Channel Delete'));
+    client.on('channelCreate', ch => ch.guild && instantDefense(ch.guild, AuditLogEvent.ChannelCreate, 'Channel Create'));
+    client.on('roleDelete', r => r.guild && instantDefense(r.guild, AuditLogEvent.RoleDelete, 'Role Delete'));
+    client.on('roleCreate', r => r.guild && instantDefense(r.guild, AuditLogEvent.RoleCreate, 'Role Create'));
+    client.on('guildBanAdd', b => b.guild && instantDefense(b.guild, AuditLogEvent.MemberBanAdd, 'Member Ban'));
+    client.on('guildMemberRemove', m => m.guild && instantDefense(m.guild, AuditLogEvent.MemberKick, 'Member Kick'));
 
-    // 3. Dangerous Role Protection
-    client.on('guildMemberUpdate', async (oldMember, newMember) => {
-        const config = await ModerationConfig.findOne({ guildId: newMember.guild.id });
+    // Mention / Everyone Ping Spam Attack Blocker
+    client.on('messageCreate', async (message) => {
+        if (!message.guild || message.author.bot) return;
+
+        const config = await ModerationConfig.findOne({ guildId: message.guild.id });
         if (!config || !config.antiNukeEnabled) return;
 
-        // Bot Owner dangerous role protection se immune rahega
-        const isWhitelisted = BOT_OWNERS.includes(newMember.id) ||
-                              (config.whitelistedUsers || []).includes(newMember.id) || 
-                              (config.extraOwners || []).includes(newMember.id) || 
-                              newMember.id === newMember.guild.ownerId;
+        const isBypassed = BOT_OWNERS.includes(message.author.id) ||
+                          message.author.id === message.guild.ownerId ||
+                          (config.extraOwners && config.extraOwners.includes(message.author.id));
 
-        if (!isWhitelisted) {
-            const hasDangerous = newMember.roles.cache.some(role => 
-                DANGEROUS_PERMS.some(perm => role.permissions.has(perm))
-            );
+        if (isBypassed) return;
 
-            if (hasDangerous) {
-                const safeRoles = newMember.roles.cache.filter(role => 
-                    !DANGEROUS_PERMS.some(perm => role.permissions.has(perm))
-                );
-                await newMember.roles.set(safeRoles).catch(() => {});
-                await logAction(
-                    newMember.guild, 
-                    config, 
-                    '🛡️ Anti-Nuke: Dangerous Role Quarantined', 
-                    `Dangerous permissions removed from <@${newMember.id}> (Not Whitelisted).`,
-                    '#FFA500'
-                );
+        // Everyone/Here ping attack detection
+        if (message.mentions.everyone || message.content.includes('@everyone') || message.content.includes('@here')) {
+            await message.delete().catch(() => {});
+            const member = message.member;
+            if (member) {
+                await stripDangerousPerms(member, 'Anti-Nuke: Unauthorized Mass Ping');
+                await member.timeout(10 * 60 * 1000, 'Anti-Nuke: Mass Ping Spam').catch(() => {});
             }
         }
     });
 
-    // 4. Prefix Commands Engine
+    // 5. SPECIAL COMMANDS ENGINE (%extraowner, %wl, %pr, %antinuke, %backup, %clean)
     client.on('messageCreate', async (message) => {
         if (message.author.bot || !message.guild || !message.content.startsWith('%')) return;
 
         const args = message.content.slice(1).trim().split(/ +/);
         const cmd = args.shift()?.toLowerCase();
-        let config = await ModerationConfig.findOne({ guildId: message.guild.id });
-        if (!config) config = await ModerationConfig.create({ guildId: message.guild.id });
-
-        if (!Array.isArray(config.extraOwners)) config.extraOwners = [];
-        if (!Array.isArray(config.whitelistedBots)) config.whitelistedBots = [];
-        if (!Array.isArray(config.whitelistedUsers)) config.whitelistedUsers = [];
+        let config = await ModerationConfig.findOne({ guildId: message.guild.id }) || await ModerationConfig.create({ guildId: message.guild.id });
 
         const isBotOwner = BOT_OWNERS.includes(message.author.id);
-        const isOwner = message.author.id === message.guild.ownerId;
-        // Bot Owner automatically treated as Extra Owner
-        const isExtraOwner = isBotOwner || config.extraOwners.includes(message.author.id);
+        const isServerOwner = message.author.id === message.guild.ownerId;
+        const isExtraOwner = isBotOwner || (config.extraOwners && config.extraOwners.includes(message.author.id));
 
-        // A. Anti-Nuke Toggle (%antinuke enable/disable)
+        if (!isBotOwner && !isServerOwner && !isExtraOwner) return;
+
+        // %antinuke
         if (cmd === 'antinuke') {
-            if (!isBotOwner && !isOwner && !isExtraOwner) {
-                return sendTempDenial(message, 'you do not have permission to configure Anti-Nuke.');
-            }
             const state = args[0]?.toLowerCase();
             if (state === 'enable') {
                 config.antiNukeEnabled = true;
                 await config.save();
-                return message.reply('✅ Anti-Nuke protection has been **ENABLED**.');
+                return message.reply('✅ Anti-Nuke has been **ENABLED**.');
             } else if (state === 'disable') {
                 config.antiNukeEnabled = false;
                 await config.save();
-                return message.reply('⚠️ Anti-Nuke protection has been **DISABLED**.');
+                return message.reply('⚠️ Anti-Nuke has been **DISABLED**.');
             }
-            return message.reply(`Anti-Nuke is currently **${config.antiNukeEnabled ? 'ENABLED' : 'DISABLED'}**.`);
+            return message.reply(`Status: Anti-Nuke is **${config.antiNukeEnabled ? 'ENABLED' : 'DISABLED'}**.`);
         }
 
-        // B. Extra Owner Management (%extraowner add/remove @user or ID)
+        // %extraowner
         if (cmd === 'extraowner') {
-            // Bot Owner aur Server Owner dono manage kar sakte hain
-            if (!isBotOwner && !isOwner) {
-                return sendTempDenial(message, 'only the Server Owner and Bot Owners can manage Extra Owners.');
-            }
+            if (!isBotOwner && !isServerOwner) return message.reply('❌ Sirf Server Owner aur Bot Owners Extra Owner change kar sakte hain.');
             const sub = args[0]?.toLowerCase();
-            const rawTarget = args[1]?.replace(/[<@!>]/g, '');
-
-            if (!['add', 'remove'].includes(sub) || !rawTarget) {
-                return message.reply('❌ Usage: `%extraowner add @user` or `%extraowner remove @user`');
-            }
-
-            const target = await client.users.fetch(rawTarget).catch(() => null);
-            if (!target) return message.reply('❌ User not found.');
+            const targetId = args[1]?.replace(/[<@!>]/g, '');
+            if (!['add', 'remove'].includes(sub) || !targetId) return message.reply('Usage: `%extraowner add/remove <@user/ID>`');
 
             if (sub === 'add') {
-                if (config.extraOwners.includes(target.id) || BOT_OWNERS.includes(target.id)) {
-                    return message.reply('⚠️ User is already an Extra Owner / Bot Owner.');
-                }
-                config.extraOwners.push(target.id);
-                config.markModified('extraOwners');
+                if (!config.extraOwners.includes(targetId)) config.extraOwners.push(targetId);
                 await config.save();
-                return message.reply(`✅ <@${target.id}> is now registered as an **Extra Owner**.`);
-            } else if (sub === 'remove') {
-                if (BOT_OWNERS.includes(target.id)) {
-                    return message.reply('❌ Bot Owner cannot be removed from Extra Owners.');
-                }
-                config.extraOwners = config.extraOwners.filter(id => id !== target.id);
-                config.markModified('extraOwners');
+                return message.reply(`✅ <@${targetId}> is now an Extra Owner.`);
+            } else {
+                config.extraOwners = config.extraOwners.filter(id => id !== targetId);
                 await config.save();
-                return message.reply(`❌ Removed <@${target.id}> from Extra Owners.`);
+                return message.reply(`❌ <@${targetId}> removed from Extra Owners.`);
             }
         }
 
-        // C. Whitelist Management (%wl add/remove @user/bot or ID)
+        // %wl
         if (cmd === 'wl') {
-            if (!isBotOwner && !isOwner && !isExtraOwner) {
-                return sendTempDenial(message, 'only Server Owner and Extra Owners can manage Whitelist.');
-            }
-
             const sub = args[0]?.toLowerCase();
-            const rawTarget = args[1]?.replace(/[<@!>]/g, '');
+            const targetId = args[1]?.replace(/[<@!>]/g, '');
+            if (!['add', 'remove'].includes(sub) || !targetId) return message.reply('Usage: `%wl add/remove <@user/bot/ID>`');
 
-            if (!['add', 'remove'].includes(sub) || !rawTarget) {
-                return message.reply('❌ Usage: `%wl add @user/bot` ya `%wl add <ID>`');
-            }
+            const target = await client.users.fetch(targetId).catch(() => null);
+            if (!target) return message.reply('❌ Target nahi mila.');
 
-            const target = await client.users.fetch(rawTarget).catch(() => null);
-            if (!target) {
-                return message.reply('❌ Invalid ID/User. User ya Bot find nahi hua.');
-            }
-
-            const isBot = target.bot;
-            const targetArray = isBot ? 'whitelistedBots' : 'whitelistedUsers';
-
+            const field = target.bot ? 'whitelistedBots' : 'whitelistedUsers';
             if (sub === 'add') {
-                if (config[targetArray].includes(target.id) || BOT_OWNERS.includes(target.id)) {
-                    return message.reply(`⚠️ <@${target.id}> pehle se hi Whitelisted hai.`);
-                }
-
-                config[targetArray].push(target.id);
-                config.markModified(targetArray);
+                if (!config[field].includes(target.id)) config[field].push(target.id);
                 await config.save();
-
-                if (isBot && pendingBots.has(target.id)) {
-                    clearTimeout(pendingBots.get(target.id).timeout);
-                    pendingBots.delete(target.id);
-                }
-
-                return message.reply(`✅ <@${target.id}> (${isBot ? 'Bot' : 'User'}) successfully **Whitelisted** ho gaya hai!`);
-            } else if (sub === 'remove') {
-                if (BOT_OWNERS.includes(target.id)) {
-                    return message.reply('❌ Bot Owner cannot be removed from Whitelist.');
-                }
-                if (!config[targetArray].includes(target.id)) {
-                    return message.reply(`⚠️ <@${target.id}> Whitelist me nahi hai.`);
-                }
-
-                config[targetArray] = config[targetArray].filter(id => id !== target.id);
-                config.markModified(targetArray);
+                return message.reply(`✅ <@${target.id}> is now Whitelisted.`);
+            } else {
+                config[field] = config[field].filter(id => id !== target.id);
                 await config.save();
-
-                return message.reply(`❌ <@${target.id}> ko Whitelist se remove kar diya gaya.`);
+                return message.reply(`❌ <@${target.id}> removed from Whitelist.`);
             }
         }
 
-        // D. Permission Control Panel (%pr @user)
-        if (cmd === 'pr') {
-            if (!isBotOwner && !isOwner && !isExtraOwner) {
-                return sendTempDenial(message, 'only Server Owner or Extra Owners can modify command permissions.');
+        // %clean <channels/roles>
+        if (cmd === 'clean') {
+            const target = args[0]?.toLowerCase();
+            if (!['channels', 'roles'].includes(target)) {
+                return message.reply('Usage: `%clean channels` ya `%clean roles`');
             }
-            const target = message.mentions.members.first();
-            if (!target) return message.reply('Usage: `%pr @user`');
 
-            const availablePerms = ['kick', 'ban', 'unban', 'timeout', 'untimeout', 'purge', 'role_add', 'role_remove', 'warn', 'slowmode', 'lock', 'unlock'];
-            const currentPerms = config.userModPerms.get(target.id) || [];
+            if (target === 'channels') {
+                const currentChan = message.channel;
+                const channels = message.guild.channels.cache.filter(c => c.id !== currentChan.id);
+                for (const [, ch] of channels) {
+                    await ch.delete('Clean command').catch(() => {});
+                }
+                return message.reply(`🧹 Cleaned **${channels.size}** channels.`);
+            }
 
-            const options = availablePerms.map(p => ({
-                label: p.replace('_', ' ').toUpperCase(),
-                value: p,
-                description: `Allow user to use /staff ${p}`,
-                default: currentPerms.includes(p)
-            }));
-
-            const selectMenu = new StringSelectMenuBuilder()
-                .setCustomId(`pr_select_${target.id}`)
-                .setPlaceholder('Select permissions to grant...')
-                .setMinValues(0)
-                .setMaxValues(options.length)
-                .addOptions(options);
-
-            const row = new ActionRowBuilder().addComponents(selectMenu);
-            const embed = new EmbedBuilder()
-                .setColor('#5865F2')
-                .setTitle(`🛡️ Permission Control: ${target.user.tag}`)
-                .setDescription('Select all moderation commands this user is allowed to execute.')
-                .addFields({ name: 'Active Permissions', value: currentPerms.length > 0 ? currentPerms.join(', ') : 'None' });
-
-            await message.reply({ embeds: [embed], components: [row] });
+            if (target === 'roles') {
+                const roles = message.guild.roles.cache.filter(r => r.id !== message.guild.id && r.editable);
+                let count = 0;
+                for (const [, r] of roles) {
+                    await r.delete('Clean command').catch(() => {});
+                    count++;
+                }
+                return message.reply(`🧹 Cleaned **${count}** roles.`);
+            }
         }
 
-        // E. Channel Automod Overrides (%channel allow/deny links/media/ips)
-        if (cmd === 'channel') {
-            if (!isBotOwner && !isOwner && !isExtraOwner) {
-                return sendTempDenial(message, 'only Server Owner or Extra Owners can configure channel rules.');
-            }
+        // %backup create/load/delete <backupId>
+        if (cmd === 'backup') {
             const action = args[0]?.toLowerCase();
-            const feature = args[1]?.toLowerCase();
+            const backupId = args[1];
 
-            if (!['allow', 'deny'].includes(action) || !['links', 'media', 'ips'].includes(feature)) {
-                return message.reply('Usage: `%channel allow links` | `%channel deny media` | `%channel allow ips`');
+            if (action === 'create') {
+                if (!backupId) return message.reply('❌ Custom Backup ID provide karo: `%backup create <ID>`');
+                const existing = await ServerBackup.findOne({ backupId });
+                if (existing) return message.reply('❌ Yeh Backup ID pehle se exist karti hai.');
+
+                await createGuildBackup(message.guild, message.author.id, backupId, false);
+                return message.reply(`✅ Backup successfully created with ID: \`${backupId}\``);
             }
 
-            const channelId = message.channel.id;
-            const current = config.channelOverrides.get(channelId) || {};
-            const state = action === 'allow';
+            if (action === 'delete') {
+                if (!backupId) return message.reply('Usage: `%backup delete <ID>`');
+                const res = await ServerBackup.deleteOne({ backupId, guildId: message.guild.id });
+                if (res.deletedCount === 0) return message.reply('❌ Backup ID nahi mili.');
+                return message.reply(`🗑️ Backup \`${backupId}\` deleted.`);
+            }
 
-            if (feature === 'links') current.allowLinks = state;
-            if (feature === 'media') current.allowMedia = state;
-            if (feature === 'ips') current.allowIps = state;
+            if (action === 'load') {
+                if (!backupId) return message.reply('Usage: `%backup load <ID>`');
+                const backupDoc = await ServerBackup.findOne({ backupId, guildId: message.guild.id });
+                if (!backupDoc) return message.reply('❌ Backup ID nahi mili.');
 
-            config.channelOverrides.set(channelId, current);
-            await config.save();
+                await message.reply('⏳ Restoring server channels and structure from backup...');
 
-            return message.reply(`✅ Channel <#${channelId}> now set to **${action.toUpperCase()}** ${feature}.`);
+                const bData = backupDoc.data;
+
+                // Restore channels
+                for (const chData of bData.channels) {
+                    const exists = message.guild.channels.cache.find(c => c.name === chData.name);
+                    if (!exists) {
+                        await message.guild.channels.create({
+                            name: chData.name,
+                            type: chData.type
+                        }).catch(() => {});
+                    }
+                }
+
+                return message.channel.send(`✅ Server restoration from backup \`${backupId}\` completed!`);
+            }
         }
     });
 
-    // 5. Handle %pr Dropdown Selection
-    client.on('interactionCreate', async (interaction) => {
-        if (!interaction.isStringSelectMenu() || !interaction.customId.startsWith('pr_select_')) return;
-        const targetUserId = interaction.customId.replace('pr_select_', '');
-
-        const config = await ModerationConfig.findOne({ guildId: interaction.guild.id }) || new ModerationConfig({ guildId: interaction.guild.id });
-        config.userModPerms.set(targetUserId, interaction.values);
-        await config.save();
-
-        const updatedEmbed = new EmbedBuilder()
-            .setColor('#2ECC71')
-            .setTitle(`✅ Permissions Updated: <@${targetUserId}>`)
-            .setDescription(`**Granted Commands:**\n${interaction.values.length > 0 ? interaction.values.map(v => `• \`${v}\``).join('\n') : '*No permissions assigned*'}`);
-
-        const confirmRow = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-                .setCustomId('pr_confirmed')
-                .setLabel('Permissions Saved')
-                .setEmoji('<a:CONFIRM:1540171582817968148>')
-                .setStyle(ButtonStyle.Success)
-                .setDisabled(true)
-        );
-
-        await interaction.update({ embeds: [updatedEmbed], components: [confirmRow] });
-    });
-
-    console.log('✔ Anti-Nuke & Permission Handler loaded.');
+    console.log('✔ Extreme Anti-Nuke System Active.');
 };
+              
