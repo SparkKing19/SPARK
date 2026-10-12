@@ -1,10 +1,19 @@
 {
   "name": "discord-bot",
   "version": "1.0.0",
+  "description": "Discord Bot with Hardened Anti-Nuke and Music System",
   "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
   "dependencies": {
+    "@discord-player/extractor": "^4.4.7",
+    "@discordjs/voice": "^0.17.0",
+    "discord-player": "^6.6.10",
     "discord.js": "^14.14.1",
     "dotenv": "^16.4.5",
-    "mongoose": "^8.2.0"
+    "ffmpeg-static": "^5.2.0",
+    "mongoose": "^8.2.0",
+    "play-dl": "^1.9.7"
   }
 }
