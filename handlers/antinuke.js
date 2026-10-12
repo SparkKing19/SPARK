@@ -51,7 +51,7 @@ async function stripDangerousPerms(member, reason) {
     }
 }
 
-// Backup creator helper (Fixed TypeError: safely handle threads & permissionOverwrites)
+// Backup creator helper (Safe threads, categories, overwrites)
 async function createGuildBackup(guild, creatorId, customId = null, isAuto = false) {
     const backupId = customId || `auto_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
@@ -65,7 +65,6 @@ async function createGuildBackup(guild, creatorId, customId = null, isAuto = fal
             mentionable: r.mentionable
         }));
 
-    // Filter out threads because they don't have permissionOverwrites
     const channels = guild.channels.cache
         .filter(c => !c.isThread?.())
         .map(c => {
@@ -105,7 +104,7 @@ async function createGuildBackup(guild, creatorId, customId = null, isAuto = fal
 
     await backupDoc.save();
 
-    // 10 minutes auto-cleanup for previous auto-backups
+    // 10 minutes auto-cleanup for auto backups
     if (isAuto) {
         setTimeout(async () => {
             await ServerBackup.deleteOne({ backupId }).catch(() => {});
@@ -116,7 +115,6 @@ async function createGuildBackup(guild, creatorId, customId = null, isAuto = fal
 }
 
 module.exports = (client) => {
-    // Prevent MaxListenersExceededWarning
     client.setMaxListeners(50);
 
     // 1 & 2 & 4. BOT ADD EVENT: Instant Ban, Perm Strip & Auto-Backup
@@ -134,7 +132,7 @@ module.exports = (client) => {
         const isServerOwner = executor?.id === member.guild.ownerId;
         const isExtraOwner = isBotOwner || (config.extraOwners && config.extraOwners.includes(executor?.id));
 
-        // RULE 1: Agar add karne wala Bot Owner, Server Owner ya Extra Owner NAHI hai
+        // RULE 1: Unverified adder ban
         if (!isServerOwner && !isExtraOwner) {
             await member.ban({ reason: '🛡️ Anti-Nuke: Unauthorized Bot Addition' }).catch(() => {});
 
@@ -155,7 +153,7 @@ module.exports = (client) => {
             return;
         }
 
-        // RULE 2: Agar Owner/Extra Owner ne add kiya lekin bot whitelist NAHI hai
+        // RULE 2: Unwhitelisted bot neutralized
         const isWhitelisted = config.whitelistedBots && config.whitelistedBots.includes(member.id);
         if (!isWhitelisted) {
             await stripDangerousPerms(member, 'Anti-Nuke: Unwhitelisted Bot Neutralized');
@@ -175,17 +173,14 @@ module.exports = (client) => {
                 )
                 .setTimestamp();
 
-            // DM to Server Owner
             const sOwner = await client.users.fetch(member.guild.ownerId).catch(() => null);
             if (sOwner) await sOwner.send({ embeds: [backupEmbed] }).catch(() => {});
 
-            // DM to Bot Owners
             for (const bOwnerId of BOT_OWNERS) {
                 const bOwner = await client.users.fetch(bOwnerId).catch(() => null);
                 if (bOwner) await bOwner.send({ embeds: [backupEmbed] }).catch(() => {});
             }
 
-            // Moderator Only Channel notification
             if (member.guild.publicUpdatesChannel) {
                 await member.guild.publicUpdatesChannel.send({ embeds: [backupEmbed] }).catch(() => {});
             }
@@ -206,7 +201,6 @@ module.exports = (client) => {
         const executor = entry.executor;
         if (!executor || executor.id === client.user.id) return;
 
-        // Bypass for Bot Owner, Server Owner, Extra Owner
         const isBypassed = BOT_OWNERS.includes(executor.id) ||
                           executor.id === guild.ownerId ||
                           (config.extraOwners && config.extraOwners.includes(executor.id));
@@ -216,7 +210,6 @@ module.exports = (client) => {
         const now = Date.now();
         const tracker = actionBuckets.get(executor.id) || { count: 0, lastTime: now };
 
-        // 1 Second window check
         if (now - tracker.lastTime < 1000) {
             tracker.count += 1;
         } else {
@@ -225,7 +218,6 @@ module.exports = (client) => {
         tracker.lastTime = now;
         actionBuckets.set(executor.id, tracker);
 
-        // Instant Terminate on rapid act
         const offender = await guild.members.fetch(executor.id).catch(() => null);
         if (offender) {
             await stripDangerousPerms(offender, 'Anti-Nuke: Immediate Threat Containment');
@@ -247,7 +239,7 @@ module.exports = (client) => {
     client.on('guildBanAdd', b => b.guild && instantDefense(b.guild, AuditLogEvent.MemberBanAdd, 'Member Ban'));
     client.on('guildMemberRemove', m => m.guild && instantDefense(m.guild, AuditLogEvent.MemberKick, 'Member Kick'));
 
-    // Mention / Everyone Ping Spam Attack Blocker
+    // Everyone Ping Spam Attack Blocker
     client.on('messageCreate', async (message) => {
         if (!message.guild || message.author.bot) return;
 
@@ -370,47 +362,114 @@ module.exports = (client) => {
             const action = args[0]?.toLowerCase();
             const backupId = args[1];
 
+            // A. CREATE BACKUP
             if (action === 'create') {
-                if (!backupId) return message.reply('❌ Custom Backup ID provide karo: `%backup create <ID>`');
+                if (!backupId) return message.reply('❌ Custom Backup ID provide karo: `%backup create <backupId>`');
+                
                 const existing = await ServerBackup.findOne({ backupId });
-                if (existing) return message.reply('❌ Yeh Backup ID pehle se exist karti hai.');
+                if (existing) return message.reply('❌ Yeh Backup ID pehle se exist karti hai. Koi doosri ID choose karo.');
+
+                // LIMIT CHECKS
+                if (isBotOwner) {
+                    // Bot Owner max 3 permanent backups
+                    const ownerBackups = await ServerBackup.find({ creatorId: message.author.id, isAutoBackup: false });
+                    if (ownerBackups.length >= 3) {
+                        const idsList = ownerBackups.map(b => `• \`${b.backupId}\``).join('\n');
+                        return message.reply(`❌ **Bot Owner Backup Limit Exceeded (Max 3)!**\nNaya backup create karne se pehle inme se koi ek delete karo:\n${idsList}\n\n*Command:* \`%backup delete <backupId>\``);
+                    }
+                } else {
+                    // Server Owner / Extra Owner max 1 permanent backup per server
+                    const serverBackups = await ServerBackup.find({ guildId: message.guild.id, isAutoBackup: false });
+                    if (serverBackups.length >= 1) {
+                        const existingId = serverBackups[0].backupId;
+                        return message.reply(`❌ **Server Backup Limit Exceeded (Max 1)!**\nIs server ke paas pehle se ek permanent backup mojood hai: \`${existingId}\`\nNaya create karne ke liye pehle isko delete karo: \`%backup delete ${existingId}\``);
+                    }
+                }
 
                 await createGuildBackup(message.guild, message.author.id, backupId, false);
                 return message.reply(`✅ Backup successfully created with ID: \`${backupId}\``);
             }
 
+            // B. DELETE BACKUP
             if (action === 'delete') {
-                if (!backupId) return message.reply('Usage: `%backup delete <ID>`');
-                const res = await ServerBackup.deleteOne({ backupId, guildId: message.guild.id });
-                if (res.deletedCount === 0) return message.reply('❌ Backup ID nahi mili.');
-                return message.reply(`🗑️ Backup \`${backupId}\` deleted.`);
+                if (!backupId) return message.reply('Usage: `%backup delete <backupId>`');
+
+                let query = { backupId, isAutoBackup: false };
+                // Agar bot owner nahi hai toh sirf usi server ka delete kar sakta hai
+                if (!isBotOwner) {
+                    query.guildId = message.guild.id;
+                }
+
+                const res = await ServerBackup.deleteOne(query);
+                if (res.deletedCount === 0) return message.reply('❌ Backup ID nahi mili ya aapke paas ise delete karne ki permission nahi hai.');
+                return message.reply(`🗑️ Backup \`${backupId}\` successfully delete ho gaya.`);
             }
 
+            // C. LOAD BACKUP (Cross-Server Enabled)
             if (action === 'load') {
-                if (!backupId) return message.reply('Usage: `%backup load <ID>`');
-                const backupDoc = await ServerBackup.findOne({ backupId, guildId: message.guild.id });
+                if (!backupId) return message.reply('Usage: `%backup load <backupId>`');
+
+                // Cross-server support: Kisi bhi server me load ho sakta hai
+                const backupDoc = await ServerBackup.findOne({ backupId });
                 if (!backupDoc) return message.reply('❌ Backup ID nahi mili.');
 
-                await message.reply('⏳ Restoring server channels and structure from backup...');
+                await message.reply('⏳ **Restoring server template...** Channels aur Roles build ho rahe hain...');
 
                 const bData = backupDoc.data;
 
-                // Restore channels
-                for (const chData of bData.channels) {
-                    const exists = message.guild.channels.cache.find(c => c.name === chData.name);
-                    if (!exists) {
-                        await message.guild.channels.create({
-                            name: chData.name,
-                            type: chData.type
-                        }).catch(() => {});
+                // 1. Roles Restore
+                if (bData.roles && Array.isArray(bData.roles)) {
+                    for (const rData of bData.roles) {
+                        const exists = message.guild.roles.cache.find(r => r.name === rData.name);
+                        if (!exists) {
+                            await message.guild.roles.create({
+                                name: rData.name,
+                                color: rData.color,
+                                hoist: rData.hoist,
+                                mentionable: rData.mentionable,
+                                reason: `Backup load: ${backupId}`
+                            }).catch(() => {});
+                        }
                     }
                 }
 
-                return message.channel.send(`✅ Server restoration from backup \`${backupId}\` completed!`);
+                // 2. Categories & Channels Restore
+                if (bData.channels && Array.isArray(bData.channels)) {
+                    const categories = bData.channels.filter(c => c.type === 4);
+                    const nonCategories = bData.channels.filter(c => c.type !== 4);
+
+                    const categoryMap = new Map();
+
+                    for (const cat of categories) {
+                        let targetCat = message.guild.channels.cache.find(c => c.name === cat.name && c.type === 4);
+                        if (!targetCat) {
+                            targetCat = await message.guild.channels.create({
+                                name: cat.name,
+                                type: 4,
+                                reason: `Backup load: ${backupId}`
+                            }).catch(() => null);
+                        }
+                        if (targetCat) categoryMap.set(cat.name, targetCat.id);
+                    }
+
+                    for (const chData of nonCategories) {
+                        const exists = message.guild.channels.cache.find(c => c.name === chData.name);
+                        if (!exists) {
+                            const parentId = chData.parentName ? categoryMap.get(chData.parentName) : null;
+                            await message.guild.channels.create({
+                                name: chData.name,
+                                type: chData.type,
+                                parent: parentId || undefined,
+                                reason: `Backup load: ${backupId}`
+                            }).catch(() => {});
+                        }
+                    }
+                }
+
+                return message.channel.send(`✅ Server template successfully restored from Backup ID: \`${backupId}\`!`);
             }
         }
     });
 
     console.log('✔ Extreme Anti-Nuke System Active.');
 };
-                
