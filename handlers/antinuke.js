@@ -51,7 +51,7 @@ async function stripDangerousPerms(member, reason) {
     }
 }
 
-// Backup creator helper
+// Backup creator helper (Fixed TypeError: safely handle threads & permissionOverwrites)
 async function createGuildBackup(guild, creatorId, customId = null, isAuto = false) {
     const backupId = customId || `auto_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
 
@@ -61,22 +61,34 @@ async function createGuildBackup(guild, creatorId, customId = null, isAuto = fal
             name: r.name,
             color: r.color,
             hoist: r.hoist,
-            permissions: r.permissions.bitfield.toString(),
+            permissions: r.permissions ? r.permissions.bitfield.toString() : '0',
             mentionable: r.mentionable
         }));
 
-    const channels = guild.channels.cache.map(c => ({
-        name: c.name,
-        type: c.type,
-        parentName: c.parent ? c.parent.name : null,
-        position: c.rawPosition,
-        permissionOverwrites: c.permissionOverwrites.cache.map(p => ({
-            id: p.id,
-            type: p.type,
-            allow: p.allow.bitfield.toString(),
-            deny: p.deny.bitfield.toString()
-        }))
-    }));
+    // Filter out threads because they don't have permissionOverwrites
+    const channels = guild.channels.cache
+        .filter(c => !c.isThread?.())
+        .map(c => {
+            const overwrites = [];
+            if (c.permissionOverwrites?.cache) {
+                c.permissionOverwrites.cache.forEach(p => {
+                    overwrites.push({
+                        id: p.id,
+                        type: p.type,
+                        allow: p.allow ? p.allow.bitfield.toString() : '0',
+                        deny: p.deny ? p.deny.bitfield.toString() : '0'
+                    });
+                });
+            }
+
+            return {
+                name: c.name,
+                type: c.type,
+                parentName: c.parent ? c.parent.name : null,
+                position: c.rawPosition ?? 0,
+                permissionOverwrites: overwrites
+            };
+        });
 
     const backupDoc = new ServerBackup({
         backupId,
@@ -85,7 +97,7 @@ async function createGuildBackup(guild, creatorId, customId = null, isAuto = fal
         isAutoBackup: isAuto,
         data: {
             name: guild.name,
-            icon: guild.iconURL({ extension: 'png' }),
+            icon: guild.iconURL({ extension: 'png' }) || null,
             roles,
             channels
         }
@@ -96,7 +108,7 @@ async function createGuildBackup(guild, creatorId, customId = null, isAuto = fal
     // 10 minutes auto-cleanup for previous auto-backups
     if (isAuto) {
         setTimeout(async () => {
-            await ServerBackup.deleteOne({ backupId });
+            await ServerBackup.deleteOne({ backupId }).catch(() => {});
         }, 10 * 60 * 1000);
     }
 
@@ -104,6 +116,8 @@ async function createGuildBackup(guild, creatorId, customId = null, isAuto = fal
 }
 
 module.exports = (client) => {
+    // Prevent MaxListenersExceededWarning
+    client.setMaxListeners(50);
 
     // 1 & 2 & 4. BOT ADD EVENT: Instant Ban, Perm Strip & Auto-Backup
     client.on('guildMemberAdd', async (member) => {
@@ -171,7 +185,7 @@ module.exports = (client) => {
                 if (bOwner) await bOwner.send({ embeds: [backupEmbed] }).catch(() => {});
             }
 
-            // Moderator Only Channel notification (Community server updates)
+            // Moderator Only Channel notification
             if (member.guild.publicUpdatesChannel) {
                 await member.guild.publicUpdatesChannel.send({ embeds: [backupEmbed] }).catch(() => {});
             }
@@ -246,7 +260,6 @@ module.exports = (client) => {
 
         if (isBypassed) return;
 
-        // Everyone/Here ping attack detection
         if (message.mentions.everyone || message.content.includes('@everyone') || message.content.includes('@here')) {
             await message.delete().catch(() => {});
             const member = message.member;
@@ -400,4 +413,4 @@ module.exports = (client) => {
 
     console.log('✔ Extreme Anti-Nuke System Active.');
 };
-              
+                
