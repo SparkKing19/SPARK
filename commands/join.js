@@ -12,11 +12,7 @@ module.exports = {
         ),
 
     async execute(interaction) {
-        try {
-            await interaction.deferReply();
-        } catch {
-            return;
-        }
+        await interaction.deferReply();
 
         const voiceChannel = interaction.member.voice.channel;
         if (!voiceChannel) {
@@ -25,16 +21,6 @@ module.exports = {
 
         const mode247 = interaction.options.getBoolean('mode_247');
         const poru = interaction.client.poru;
-
-        if (!poru) {
-            return interaction.editReply('❌ Music system abhi initialize ho raha hai, thodi der baad try karein.');
-        }
-
-        // Direct check: Any connected node in poru.nodes Map
-        const isOnline = Array.from(poru.nodes.values()).some(n => n.isConnected);
-        if (!isOnline) {
-            return interaction.editReply('⚠️ Audio server reconnect ho raha hai, 5 second baad dobara try karein.');
-        }
 
         let player = poru.players.get(interaction.guildId);
         if (!player) {
