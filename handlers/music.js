@@ -3,20 +3,20 @@ const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('
 const Music247 = require('../models/music247');
 
 module.exports = async (client) => {
-    // Ultra-stable Verified Lavalink v4 Nodes
+    // Verified, high-availability public Lavalink v4 nodes
     const nodes = [
         {
-            name: 'Ajie-Main-V4',
+            name: 'Ajie-V4-Main',
             host: 'lava-v4.ajieblogs.eu.org',
             port: 443,
             password: 'https://dsc.gg/ajidevserver',
             secure: true
         },
         {
-            name: 'Inari-Backup-V4',
-            host: 'lavalink.inari.site',
+            name: 'Freelavalink-V4',
+            host: 'node.freelavalink.ga',
             port: 443,
-            password: 'https://discord.gg/purohost',
+            password: 'freelavalink.ga',
             secure: true
         }
     ];
@@ -24,39 +24,44 @@ module.exports = async (client) => {
     const poru = new Poru(client, nodes, {
         library: 'discord.js',
         defaultPlatform: 'ytsearch',
-        reconnectTries: Infinity, // Auto crash avoid
-        reconnectTimeout: 10000
+        reconnectTries: Infinity,
+        reconnectTimeout: 8000
     });
 
     client.poru = poru;
 
-    // Node Event Listeners (Safe Error Catcher)
+    // Node Event Listeners
     poru.on('nodeConnect', async (node) => {
         console.log(`✔ Lavalink Node Connected: ${node.name}`);
 
-        // Node ready hone ke baad hi 24/7 auto-reconnect trigger hoga (prevents 'No nodes available' crash)
-        try {
-            const records = await Music247.find({ enabled: true }).catch(() => []);
-            for (const rec of records) {
-                const guild = client.guilds.cache.get(rec.guildId);
-                if (!guild) continue;
+        // Safe 24/7 Reconnect after 3 seconds grace period
+        setTimeout(async () => {
+            const activeNode = poru.leastUsedNodes[0];
+            if (!activeNode || !activeNode.isConnected) return;
 
-                const voiceChannel = guild.channels.cache.get(rec.voiceChannelId);
-                if (!voiceChannel) continue;
+            try {
+                const records = await Music247.find({ enabled: true }).catch(() => []);
+                for (const rec of records) {
+                    const guild = client.guilds.cache.get(rec.guildId);
+                    if (!guild) continue;
 
-                let player = poru.players.get(rec.guildId);
-                if (!player) {
-                    player = poru.createConnection({
-                        guildId: rec.guildId,
-                        voiceChannel: rec.voiceChannelId,
-                        textChannel: rec.textChannelId,
-                        deaf: true
-                    });
+                    const voiceChannel = guild.channels.cache.get(rec.voiceChannelId);
+                    if (!voiceChannel) continue;
+
+                    let player = poru.players.get(rec.guildId);
+                    if (!player) {
+                        poru.createConnection({
+                            guildId: rec.guildId,
+                            voiceChannel: rec.voiceChannelId,
+                            textChannel: rec.textChannelId,
+                            deaf: true
+                        });
+                    }
                 }
+            } catch (err) {
+                console.error('24/7 Auto-Join Handled:', err.message);
             }
-        } catch (err) {
-            console.error('24/7 Reconnect Error:', err.message);
-        }
+        }, 3000);
     });
 
     poru.on('nodeError', (node, error) => {
@@ -128,12 +133,12 @@ module.exports = async (client) => {
         }
     });
 
-    // Client Ready -> Initialize Poru
+    // Client Ready
     client.once('ready', () => {
         poru.init(client);
     });
 
-    // Controller Buttons Interaction Handler
+    // Controller Buttons
     client.on('interactionCreate', async (interaction) => {
         if (!interaction.isButton() || !interaction.customId.startsWith('music_')) return;
 
