@@ -12,7 +12,11 @@ module.exports = {
         ),
 
     async execute(interaction) {
-        await interaction.deferReply();
+        try {
+            await interaction.deferReply();
+        } catch {
+            return;
+        }
 
         const voiceChannel = interaction.member.voice.channel;
         if (!voiceChannel) {
@@ -22,10 +26,9 @@ module.exports = {
         const mode247 = interaction.options.getBoolean('mode_247');
         const poru = interaction.client.poru;
 
-        // Check if any Lavalink node is online
         const isAnyNodeOnline = poru && poru.leastUsedNodes.some(n => n.isConnected);
         if (!isAnyNodeOnline) {
-            return interaction.editReply('⚠️ Audio server (Lavalink) abhi connect ho raha hai, please 5-10 second baad dobara try karein.');
+            return interaction.editReply('⚠️ Audio server reconnect ho raha hai, 5-10 second baad dobara try karein.');
         }
 
         let player = poru.players.get(interaction.guildId);
