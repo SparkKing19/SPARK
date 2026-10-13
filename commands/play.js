@@ -4,7 +4,7 @@ const { QueryType } = require('discord-player');
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('play')
-        .setDescription('Gaana play karo ya queue me add karo (YouTube, Spotify, SoundCloud)')
+        .setDescription('Gaana play karo (SoundCloud, Spotify, YouTube URL)')
         .addStringOption(opt => 
             opt.setName('query')
                 .setDescription('Gaane ka naam ya URL daalo')
@@ -23,14 +23,25 @@ module.exports = {
         const query = interaction.options.getString('query');
 
         try {
-            // Auto search resolver (YouTube Search fallback)
-            const result = await player.search(query, {
+            // URL check: Agar direct link hai toh AUTO search, warna Cloud block se bachne ke liye SoundCloud search
+            const isUrl = query.startsWith('http://') || query.startsWith('https://');
+            const searchEngine = isUrl ? QueryType.AUTO : QueryType.SOUNDCLOUD_SEARCH;
+
+            let result = await player.search(query, {
                 requestedBy: interaction.user,
-                searchEngine: QueryType.AUTO
+                searchEngine: searchEngine
             });
 
+            // Fallback agar SoundCloud par na mile
             if (!result || !result.tracks.length) {
-                return interaction.editReply(`❌ Koi gaana nahi mila: **${query}**`);
+                result = await player.search(query, {
+                    requestedBy: interaction.user,
+                    searchEngine: QueryType.SPOTIFY_SEARCH
+                });
+            }
+
+            if (!result || !result.tracks.length) {
+                return interaction.editReply(`❌ Gaana nahi mila: **${query}**\n*(Agar title se nahi mila toh direct link try karein)*`);
             }
 
             const { track } = await player.play(channel, result, {
