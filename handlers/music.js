@@ -3,35 +3,73 @@ const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('
 const Music247 = require('../models/music247');
 
 module.exports = async (client) => {
-    // Exact wahi node jis par gaana play hua tha
+    // Multi-node redundant pool (Developer style fallback manager)
     const nodes = [
         {
-            name: 'Lavalink-V4-Main',
+            name: 'Node-Ajie-V4',
             host: 'lava-v4.ajieblogs.eu.org',
             port: 443,
             password: 'https://dsc.gg/ajidevserver',
+            secure: true
+        },
+        {
+            name: 'Node-Freemium-V4',
+            host: 'lavalink.freemiumhost.com',
+            port: 443,
+            password: 'freemium.discord',
+            secure: true
+        },
+        {
+            name: 'Node-Serenetia-V4',
+            host: 'lavalink-v4.serenetia.com',
+            port: 443,
+            password: 'youshallnotpass',
             secure: true
         }
     ];
 
     const poru = new Poru(client, nodes, {
         library: 'discord.js',
-        defaultPlatform: 'ytsearch'
+        defaultPlatform: 'ytsearch',
+        reconnectTries: Infinity,
+        reconnectTimeout: 4000
     });
 
     client.poru = poru;
 
-    poru.on('nodeConnect', (node) => {
-        console.log(`✔ Lavalink Node Connected: ${node.name}`);
+    // Node Lifecycle Listeners
+    poru.on('nodeConnect', async (node) => {
+        console.log(`✔ Lavalink Node Active: ${node.name}`);
+
+        // Safe 24/7 reconnect
+        setTimeout(async () => {
+            try {
+                const records = await Music247.find({ enabled: true }).catch(() => []);
+                for (const rec of records) {
+                    const guild = client.guilds.cache.get(rec.guildId);
+                    if (!guild) continue;
+
+                    const voiceChannel = guild.channels.cache.get(rec.voiceChannelId);
+                    if (!voiceChannel) continue;
+
+                    let player = poru.players.get(rec.guildId);
+                    if (!player && poru.leastUsedNodes.some(n => n.isConnected)) {
+                        poru.createConnection({
+                            guildId: rec.guildId,
+                            voiceChannel: rec.voiceChannelId,
+                            textChannel: rec.textChannelId,
+                            deaf: true
+                        });
+                    }
+                }
+            } catch (err) {}
+        }, 3000);
     });
 
-    poru.on('nodeError', (node, error) => {
-        // Silent error taaki crash na kare
-    });
-
+    poru.on('nodeError', (node, error) => {});
     poru.on('nodeDisconnect', (node) => {});
 
-    // Track Start Event (Rythm Controller)
+    // Track Start Event (Rythm Controller Embed)
     poru.on('trackStart', (player, track) => {
         const channel = client.channels.cache.get(player.textChannel);
         if (!channel) return;
@@ -79,7 +117,7 @@ module.exports = async (client) => {
         channel.send({ embeds: [embed], components: [row] }).catch(() => {});
     });
 
-    // Queue End
+    // Queue End Event
     poru.on('queueEnd', async (player) => {
         const is247 = await Music247.findOne({ guildId: player.guildId, enabled: true }).catch(() => null);
         const channel = client.channels.cache.get(player.textChannel);
@@ -150,3 +188,4 @@ module.exports = async (client) => {
 
     console.log('✔ Rythm Lavalink Music Engine & 24/7 Active.');
 };
+            
