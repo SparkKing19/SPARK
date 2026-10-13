@@ -12,14 +12,12 @@ module.exports = async (client) => {
         }
     });
 
-    // 1. YouTube Innertube Extractor load (Bypasses Datacenter IP blocking)
-    await player.extractors.register(YoutubeiExtractor, {});
-
-    // 2. Default extractors load (Spotify, SoundCloud, etc.)
+    // Extractors Register
     await player.extractors.loadDefault();
+    await player.extractors.register(YoutubeiExtractor, {}).catch(() => {});
     client.player = player;
 
-    // Track Start Event -> Rythm-style Controller
+    // Track Start Event -> Controller Embed
     player.events.on('playerStart', (queue, track) => {
         const embed = new EmbedBuilder()
             .setColor('#5865F2')
@@ -31,7 +29,7 @@ module.exports = async (client) => {
                 { name: 'Channel', value: `<#${queue.channel.id}>`, inline: true }
             )
             .setThumbnail(track.thumbnail || client.user.displayAvatarURL())
-            .setFooter({ text: `Volume: ${queue.node.volume}% | Loop: ${queue.repeatMode ? 'ON' : 'OFF'}` })
+            .setFooter({ text: `Volume: ${queue.node.volume}% | Source: ${track.queryType || 'Audio Stream'}` })
             .setTimestamp();
 
         const row = new ActionRowBuilder().addComponents(
@@ -60,15 +58,12 @@ module.exports = async (client) => {
         queue.metadata?.channel?.send({ embeds: [embed], components: [row] }).catch(() => {});
     });
 
-    // Empty Channel check (24/7 protected)
     player.events.on('emptyChannel', async (queue) => {
         const is247 = await Music247.findOne({ guildId: queue.guild.id, enabled: true }).catch(() => null);
         if (is247) return;
-
         queue.metadata?.channel?.send('👋 Voice channel khaali ho gaya, leaving to save resources.').catch(() => {});
     });
 
-    // Empty Queue check (24/7 protected)
     player.events.on('emptyQueue', async (queue) => {
         const is247 = await Music247.findOne({ guildId: queue.guild.id, enabled: true }).catch(() => null);
         if (!is247) {
@@ -122,8 +117,7 @@ module.exports = async (client) => {
         }
 
         if (interaction.customId === 'music_pause_resume') {
-            const isPaused = queue.node.isPaused();
-            if (isPaused) {
+            if (queue.node.isPaused()) {
                 queue.node.resume();
                 return interaction.reply({ content: '▶️ Music resume ho gaya.', ephemeral: true });
             } else {
