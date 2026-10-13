@@ -1,17 +1,26 @@
 const { SlashCommandBuilder } = require('discord.js');
+const Music247 = require('../models/music247');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('stop')
-        .setDescription('Music band karein aur bot ko VC se disconnect karein'),
+        .setDescription('Music band karein aur bot ko disconnect karein'),
 
     async execute(interaction) {
-        const queue = interaction.client.player?.nodes.get(interaction.guildId);
-        if (!queue) {
-            return interaction.reply({ content: '❌ Bot kisi voice channel me active nahi hai.', ephemeral: true });
+        const player = interaction.client.poru?.players.get(interaction.guildId);
+        if (!player) {
+            return interaction.reply({ content: '❌ Bot active nahi hai.', ephemeral: true });
         }
 
-        queue.delete();
-        return interaction.reply('⏹️ Music stopped and disconnected from voice channel.');
+        const is247 = await Music247.findOne({ guildId: interaction.guildId, enabled: true }).catch(() => null);
+        player.queue.clear();
+        player.stop();
+
+        if (!is247) {
+            player.destroy();
+            return interaction.reply('⏹️ Music stopped and disconnected.');
+        }
+
+        return interaction.reply('⏹️ Music stopped (24/7 mode active).');
     }
 };
