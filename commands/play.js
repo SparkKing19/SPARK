@@ -20,8 +20,12 @@ module.exports = {
         const query = interaction.options.getString('query');
         const poru = interaction.client.poru;
 
+        const isAnyNodeOnline = poru && poru.leastUsedNodes.some(n => n.isConnected);
+        if (!isAnyNodeOnline) {
+            return interaction.editReply('⚠️ Audio server reconnect ho raha hai, kripya kuch seconds wait karke command run karein.');
+        }
+
         try {
-            // Player create ya get karo
             let player = poru.players.get(interaction.guildId);
             if (!player) {
                 player = poru.createConnection({
@@ -35,7 +39,7 @@ module.exports = {
             const resolve = await poru.resolve({ query: query, source: 'ytsearch', requester: interaction.user });
             const { loadType, tracks, playlistInfo } = resolve;
 
-            if (loadType === 'LOAD_FAILED' || loadType === 'NO_MATCHES' || !tracks.length) {
+            if (loadType === 'LOAD_FAILED' || loadType === 'NO_MATCHES' || !tracks || !tracks.length) {
                 return interaction.editReply(`❌ Koi gaana nahi mila: **${query}**`);
             }
 
