@@ -1,28 +1,6 @@
 const { SlashCommandBuilder, PermissionFlagsBits } = require('discord.js');
 const Music247 = require('../models/music247');
 
-// Helper function to safely get or create player with wait
-async function getOrCreatePlayer(poru, guildId, voiceChannelId, textChannelId) {
-    let player = poru.players.get(guildId);
-    if (player) return player;
-
-    for (let i = 0; i < 5; i++) {
-        const hasNode = poru.leastUsedNodes.some(n => n.isConnected);
-        if (hasNode) {
-            try {
-                return poru.createConnection({
-                    guildId,
-                    voiceChannel: voiceChannelId,
-                    textChannel: textChannelId,
-                    deaf: true
-                });
-            } catch (e) {}
-        }
-        await new Promise(res => setTimeout(res, 800));
-    }
-    return null;
-}
-
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('join')
@@ -34,11 +12,7 @@ module.exports = {
         ),
 
     async execute(interaction) {
-        try {
-            await interaction.deferReply();
-        } catch {
-            return;
-        }
+        await interaction.deferReply();
 
         const voiceChannel = interaction.member.voice.channel;
         if (!voiceChannel) {
@@ -48,13 +22,18 @@ module.exports = {
         const mode247 = interaction.options.getBoolean('mode_247');
         const poru = interaction.client.poru;
 
-        if (!poru) {
-            return interaction.editReply('❌ Music engine connect ho raha hai, please dobara try karein.');
-        }
-
-        const player = await getOrCreatePlayer(poru, interaction.guildId, voiceChannel.id, interaction.channelId);
+        let player = poru.players.get(interaction.guildId);
         if (!player) {
-            return interaction.editReply('⚠️ Audio server reconnect ho raha hai, kripya 5 second baad dobara try karein.');
+            try {
+                player = poru.createConnection({
+                    guildId: interaction.guildId,
+                    voiceChannel: voiceChannel.id,
+                    textChannel: interaction.channelId,
+                    deaf: true
+                });
+            } catch (err) {
+                return interaction.editReply(`❌ Voice connect error: \`${err.message}\``);
+            }
         }
 
         if (mode247 !== null) {
