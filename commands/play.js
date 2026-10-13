@@ -16,23 +16,9 @@ module.exports = {
             return interaction.reply({ content: '❌ Pehle kisi Voice Channel me connect ho jao!', ephemeral: true });
         }
 
-        try {
-            await interaction.deferReply();
-        } catch {
-            return;
-        }
-
+        await interaction.deferReply();
         const query = interaction.options.getString('query');
         const poru = interaction.client.poru;
-
-        if (!poru) {
-            return interaction.editReply('❌ Music system abhi initialize ho raha hai.');
-        }
-
-        const isOnline = Array.from(poru.nodes.values()).some(n => n.isConnected);
-        if (!isOnline) {
-            return interaction.editReply('⚠️ Audio server reconnect ho raha hai, 5 second baad dobara try karein.');
-        }
 
         try {
             let player = poru.players.get(interaction.guildId);
