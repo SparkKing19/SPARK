@@ -1,5 +1,6 @@
 const { Player } = require('discord-player');
 const { DefaultExtractors } = require('@discord-player/extractor');
+const { YoutubeiExtractor } = require('discord-player-youtubei');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
 const Music247 = require('../models/music247');
 
@@ -11,7 +12,10 @@ module.exports = async (client) => {
         }
     });
 
-    // v6 compatible extractor loader
+    // 1. YouTube Innertube Extractor load (Bypasses Datacenter IP blocking)
+    await player.extractors.register(YoutubeiExtractor, {});
+
+    // 2. Default extractors load (Spotify, SoundCloud, etc.)
     await player.extractors.loadDefault();
     client.player = player;
 
