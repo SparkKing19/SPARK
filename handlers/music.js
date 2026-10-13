@@ -1,9 +1,9 @@
 const { Player } = require('discord-player');
 const { DefaultExtractors } = require('@discord-player/extractor');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const Music247 = require('../models/music247');
 
 module.exports = async (client) => {
-    // Player instance initialize
     const player = new Player(client, {
         ytdlOptions: {
             quality: 'highestaudio',
@@ -11,11 +11,10 @@ module.exports = async (client) => {
         }
     });
 
-    // Default extractors load (YouTube, Spotify, SoundCloud, etc.)
     await player.extractors.loadMulti(DefaultExtractors);
     client.player = player;
 
-    // Track Start Event -> Interactive Rythm-style Controller
+    // Track Start Event -> Rythm-style Controller
     player.events.on('playerStart', (queue, track) => {
         const embed = new EmbedBuilder()
             .setColor('#5865F2')
@@ -27,7 +26,7 @@ module.exports = async (client) => {
                 { name: 'Channel', value: `<#${queue.channel.id}>`, inline: true }
             )
             .setThumbnail(track.thumbnail || client.user.displayAvatarURL())
-            .setFooter({ text: `Volume: ${queue.node.volume}\% \vert{} Loop:${queue.repeatMode ? 'ON' : 'OFF'}` })
+            .setFooter({ text: `Volume: ${queue.node.volume}% | Loop: ${queue.repeatMode ? 'ON' : 'OFF'}` })
             .setTimestamp();
 
         const row = new ActionRowBuilder().addComponents(
@@ -53,22 +52,58 @@ module.exports = async (client) => {
                 .setStyle(ButtonStyle.Danger)
         );
 
-        queue.metadata.channel.send({ embeds: [embed], components: [row] }).catch(() => {});
+        queue.metadata?.channel?.send({ embeds: [embed], components: [row] }).catch(() => {});
     });
 
-    player.events.on('emptyChannel', (queue) => {
-        queue.metadata.channel.send('👋 Voice channel khaali ho gaya, leaving to save resources.').catch(() => {});
+    // Empty Channel check (24/7 protected)
+    player.events.on('emptyChannel', async (queue) => {
+        const is247 = await Music247.findOne({ guildId: queue.guild.id, enabled: true });
+        if (is247) return; // 24/7 me channel nahi chhodega
+
+        queue.metadata?.channel?.send('👋 Voice channel khaali ho gaya, leaving to save resources.').catch(() => {});
     });
 
-    player.events.on('emptyQueue', (queue) => {
-        queue.metadata.channel.send('✅ Queue khatam ho gayi!').catch(() => {});
+    // Empty Queue check (24/7 protected)
+    player.events.on('emptyQueue', async (queue) => {
+        const is247 = await Music247.findOne({ guildId: queue.guild.id, enabled: true });
+        if (!is247) {
+            queue.metadata?.channel?.send('✅ Queue khatam ho gayi!').catch(() => {});
+        }
     });
 
     player.events.on('error', (queue, error) => {
         console.error(`Music Player Error: ${error.message}`);
     });
 
-    // Controller Buttons Interaction Handler
+    // Auto Reconnect to 24/7 channels on Bot Ready
+    client.once('ready', async () => {
+        const records = await Music247.find({ enabled: true }).catch(() => []);
+        for (const rec of records) {
+            const guild = client.guilds.cache.get(rec.guildId);
+            if (!guild) continue;
+
+            const voiceChannel = guild.channels.cache.get(rec.voiceChannelId);
+            if (!voiceChannel) continue;
+
+            let queue = player.nodes.get(guild.id);
+            if (!queue) {
+                queue = player.nodes.create(guild, {
+                    metadata: { channel: guild.channels.cache.get(rec.textChannelId) },
+                    volume: 80,
+                    leaveOnEmpty: false,
+                    leaveOnEnd: false
+                });
+            }
+
+            try {
+                if (!queue.connection) await queue.connect(voiceChannel);
+            } catch (e) {
+                console.error(`Failed to reconnect 24/7 in ${guild.name}:`, e.message);
+            }
+        }
+    });
+
+    // Controller Buttons
     client.on('interactionCreate', async (interaction) => {
         if (!interaction.isButton() || !interaction.customId.startsWith('music_')) return;
 
@@ -85,29 +120,36 @@ module.exports = async (client) => {
             const isPaused = queue.node.isPaused();
             if (isPaused) {
                 queue.node.resume();
-                return interaction.reply({ content: '▶️ Music resume kar diya gaya.', ephemeral: true });
+                return interaction.reply({ content: '▶️ Music resume ho gaya.', ephemeral: true });
             } else {
                 queue.node.pause();
-                return interaction.reply({ content: '⏸️ Music pause kar diya gaya.', ephemeral: true });
+                return interaction.reply({ content: '⏸️ Music pause ho gaya.', ephemeral: true });
             }
         }
 
         if (interaction.customId === 'music_skip') {
             queue.node.skip();
-            return interaction.reply({ content: '⏭️ Current track skip kar diya gaya.', ephemeral: true });
+            return interaction.reply({ content: '⏭️ Current track skip ho gaya.', ephemeral: true });
         }
 
         if (interaction.customId === 'music_loop') {
             const nextMode = queue.repeatMode === 0 ? 1 : 0;
             queue.setRepeatMode(nextMode);
-            return interaction.reply({ content: `🔁 Track loop ab **${nextMode === 1 ? 'Enabled' : 'Disabled'}** hai.`, ephemeral: true });
+            return interaction.reply({ content: `🔁 Loop mode ab **${nextMode === 1 ? 'Enabled' : 'Disabled'}** hai.`, ephemeral: true });
         }
 
         if (interaction.customId === 'music_stop') {
-            queue.delete();
-            return interaction.reply({ content: '⏹️ Music band karke queue clear kar di gayi.', ephemeral: true });
+            const is247 = await Music247.findOne({ guildId: interaction.guildId, enabled: true });
+            queue.tracks.clear();
+            queue.node.stop();
+
+            if (!is247) {
+                queue.delete();
+                return interaction.reply({ content: '⏹️ Music stopped and disconnected.', ephemeral: true });
+            }
+            return interaction.reply({ content: '⏹️ Music stopped and queue cleared (24/7 mode active).', ephemeral: true });
         }
     });
 
-    console.log('✔ Rythm Music Engine Loaded Successfully.');
+    console.log('✔ Rythm Music Engine & 24/7 System Active.');
 };
