@@ -3,20 +3,20 @@ const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('
 const Music247 = require('../models/music247');
 
 module.exports = async (client) => {
-    // Verified, high-availability public Lavalink v4 nodes
+    // Current Verified High-Uptime Lavalink v4 Nodes
     const nodes = [
         {
-            name: 'Ajie-V4-Main',
+            name: 'Lava-V4-Main',
             host: 'lava-v4.ajieblogs.eu.org',
             port: 443,
             password: 'https://dsc.gg/ajidevserver',
             secure: true
         },
         {
-            name: 'Freelavalink-V4',
-            host: 'node.freelavalink.ga',
+            name: 'Lavalink-V4-Node',
+            host: 'lavalink-v4.serenetia.com',
             port: 443,
-            password: 'freelavalink.ga',
+            password: 'youshallnotpass',
             secure: true
         }
     ];
@@ -25,19 +25,19 @@ module.exports = async (client) => {
         library: 'discord.js',
         defaultPlatform: 'ytsearch',
         reconnectTries: Infinity,
-        reconnectTimeout: 8000
+        reconnectTimeout: 5000
     });
 
     client.poru = poru;
 
-    // Node Event Listeners
+    // Node Listeners
     poru.on('nodeConnect', async (node) => {
-        console.log(`✔ Lavalink Node Connected: ${node.name}`);
+        console.log(`✔ Lavalink Node Online: ${node.name}`);
 
-        // Safe 24/7 Reconnect after 3 seconds grace period
+        // 24/7 channels safe reconnect
         setTimeout(async () => {
-            const activeNode = poru.leastUsedNodes[0];
-            if (!activeNode || !activeNode.isConnected) return;
+            const hasNode = poru.leastUsedNodes.some(n => n.isConnected);
+            if (!hasNode) return;
 
             try {
                 const records = await Music247.find({ enabled: true }).catch(() => []);
@@ -59,17 +59,20 @@ module.exports = async (client) => {
                     }
                 }
             } catch (err) {
-                console.error('24/7 Auto-Join Handled:', err.message);
+                console.error('24/7 Handled:', err.message);
             }
-        }, 3000);
+        }, 4000);
     });
 
     poru.on('nodeError', (node, error) => {
-        console.error(`⚠️ Node Error [${node.name}]:${error.message}`);
+        // Silently handle websocket reset logs without throwing uncaught
+        if (!error.message.includes('ECONNRESET')) {
+            console.error(`⚠️ Node [${node.name}]:${error.message}`);
+        }
     });
 
     poru.on('nodeDisconnect', (node) => {
-        console.log(`⚠️ Lavalink Node Disconnected: ${node.name}`);
+        console.log(`⚠️ Node Disconnected: ${node.name} (auto-reconnecting...)`);
     });
 
     // Track Start Event (Rythm Controller Embed)
@@ -133,7 +136,6 @@ module.exports = async (client) => {
         }
     });
 
-    // Client Ready
     client.once('ready', () => {
         poru.init(client);
     });
