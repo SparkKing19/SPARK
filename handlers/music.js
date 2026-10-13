@@ -9,14 +9,24 @@ const { Poru } = require('poru');
 const Music247 = require('../models/music247');
 const GuildConfig = require('../models/guildConfig');
 
-const autoplayState = new Map();
 const previousTracks = new Map();
 
-// Helper: Controller Panel Components
+// Safe Stop/Skip Helper (Poru compatibility fix)
+function safeStopTrack(player) {
+    if (!player) return;
+    if (typeof player.skip === 'function') {
+        player.skip();
+    } else if (typeof player.stop === 'function') {
+        player.stop();
+    } else {
+        player.destroy();
+    }
+}
+
+// Controller Panel Components
 function getPanelComponents(player = null) {
     const isPaused = player ? player.isPaused : false;
     const isLoop = player ? player.loop !== 'NONE' : false;
-    const isAutoplay = player ? (autoplayState.get(player.guildId) || false) : false;
 
     const row1 = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
@@ -60,7 +70,7 @@ function getPanelComponents(player = null) {
         new ButtonBuilder()
             .setCustomId('btn_autoplay')
             .setEmoji('♾️')
-            .setStyle(isAutoplay ? ButtonStyle.Primary : ButtonStyle.Secondary)
+            .setStyle(ButtonStyle.Primary) // Always active
             .setDisabled(!player || !player.currentTrack),
         new ButtonBuilder()
             .setCustomId('btn_shuffle')
@@ -91,7 +101,7 @@ function getPanelComponents(player = null) {
     return [row1, row2, row3];
 }
 
-// Helper: Build Live Embed
+// Live Embed
 function getPanelEmbed(client, player = null, track = null) {
     if (!player || !track) {
         return new EmbedBuilder()
@@ -107,15 +117,15 @@ function getPanelEmbed(client, player = null, track = null) {
 
     return new EmbedBuilder()
         .setColor('#5865F2')
-        .setDescription(`## <a:play_rec:1559415361290641429> Now Playing...\n\n[**${track.info.title}**](${track.info.uri})\n\n> **Artist:** \`${track.info.author}\` • **Source:** \`${source}\`\n> **Duration:** \`${duration}\` • **Volume:** \`${player.volume}%\`\n> **Channel:** <#${player.voiceChannel}>`)
+        .setDescription(`## <a:play_rec:1559415361290641429> Now Playing...\n\n[**${track.info.title}**](${track.info.uri})\n\n> **Artist:** \`${track.info.author}\` • **Source:** \`${source}\`\n> **Duration:** \`${duration}\` • **Volume:** \`${player.volume}%\`\n> **Autoplay:** \`Active (Endless)\` • **Channel:** <#${player.voiceChannel}>`)
         .setImage(track.info.image || client.user.displayAvatarURL({ size: 1024 }))
         .setFooter({ 
-            text: `Requested by ${track.info.requester?.username || 'User'}`, 
+            text: `Requested by ${track.info.requester?.username || 'Autoplay Engine'}`, 
             iconURL: track.info.requester?.displayAvatarURL() || undefined 
         });
 }
 
-// Helper: Update Guild Live Panel Message
+// Update Panel Message
 async function updateGuildPanel(client, guildId, player = null, track = null) {
     try {
         const conf = await GuildConfig.findOne({ guildId });
@@ -134,7 +144,6 @@ async function updateGuildPanel(client, guildId, player = null, track = null) {
 }
 
 module.exports = async (client) => {
-    // Railway Private Lavalink Node
     const nodes = [
         {
             name: 'SparkCore-Private-Lavalink',
@@ -179,7 +188,6 @@ module.exports = async (client) => {
         console.error(`Lavalink Server Error: ${err.message}`);
     });
 
-    // Track Start
     poru.on('trackStart', async (player, track) => {
         if (player.currentTrack) {
             previousTracks.set(player.guildId, player.currentTrack);
@@ -187,24 +195,37 @@ module.exports = async (client) => {
         await updateGuildPanel(client, player.guildId, player, track);
     });
 
-    // Queue End / Autoplay
+    // Endless Autoplay Logic
     poru.on('queueEnd', async (player) => {
-        const isAutoplay = autoplayState.get(player.guildId);
         const lastTrack = previousTracks.get(player.guildId) || player.currentTrack;
 
-        if (isAutoplay && lastTrack) {
+        if (lastTrack && !player.isDestroyed) {
             try {
-                const searchTitle = `${lastTrack.info.author} audio`;
-                let res = await poru.resolve({ query: searchTitle, source: 'scsearch', requester: client.user });
+                const searchKeywords = [
+                    `${lastTrack.info.author} songs`,
+                    `${lastTrack.info.title} mix`,
+                    `${lastTrack.info.author} audio`
+                ];
+                const query = searchKeywords[Math.floor(Math.random() * searchKeywords.length)];
+
+                let res = await poru.resolve({ query, source: 'scsearch', requester: client.user });
                 if (!res || !res.tracks || !res.tracks.length) {
-                    res = await poru.resolve({ query: searchTitle, source: 'spsearch', requester: client.user });
+                    res = await poru.resolve({ query, source: 'spsearch', requester: client.user });
                 }
+                if (!res || !res.tracks || !res.tracks.length) {
+                    res = await poru.resolve({ query, source: 'ytsearch', requester: client.user });
+                }
+
                 if (res && res.tracks && res.tracks.length) {
-                    const nextTrack = res.tracks[Math.floor(Math.random() * Math.min(res.tracks.length, 5))];
+                    const filtered = res.tracks.filter(t => t.info.title !== lastTrack.info.title);
+                    const nextTrack = filtered.length ? filtered[Math.floor(Math.random() * Math.min(filtered.length, 5))] : res.tracks[0];
+                    
                     player.queue.add(nextTrack);
                     return player.play();
                 }
-            } catch (err) {}
+            } catch (err) {
+                console.error('Autoplay resolution error:', err);
+            }
         }
 
         await updateGuildPanel(client, player.guildId, null, null);
@@ -219,9 +240,7 @@ module.exports = async (client) => {
         poru.init(client);
     });
 
-    // ==========================================
-    // 1. PREFIX COMMANDS HANDLER (%play, %setup)
-    // ==========================================
+    // Prefix Commands Handler
     client.on('messageCreate', async (message) => {
         if (message.author.bot || !message.guild) return;
 
@@ -242,7 +261,7 @@ module.exports = async (client) => {
             const isExtraOwner = conf && conf.extraOwners?.includes(message.author.id);
 
             if (!isOwner && !isAdmin && !isExtraOwner) {
-                return message.reply('❌ Only the Server Owner, Admins, or Extra Owners can setup the music panel.');
+                return message.reply('❌ Only Server Owner, Admins, or Extra Owners can setup the music panel.');
             }
 
             try {
@@ -257,9 +276,8 @@ module.exports = async (client) => {
                     { upsert: true }
                 );
 
-                return message.reply(`✅ Music controller panel successfully configured in <#${message.channel.id}>!`);
+                return message.reply(`✅ Music controller panel configured in <#${message.channel.id}>!`);
             } catch (err) {
-                console.error('Setup error:', err);
                 return message.reply(`❌ Setup error: \`${err.message}\``);
             }
         }
@@ -286,7 +304,7 @@ module.exports = async (client) => {
                 });
             }
 
-            const statusMsg = await message.reply('🔍 Searching audio stream...');
+            const statusMsg = await message.reply('🔍 Resolving audio track...');
 
             try {
                 const isUrl = query.startsWith('http://') || query.startsWith('https://');
@@ -324,19 +342,18 @@ module.exports = async (client) => {
                     return statusMsg.edit(`✅ Added to queue: **${track.info.title}**`);
                 }
             } catch (err) {
-                console.error('Play command error:', err);
                 return statusMsg.edit(`❌ Playback error: \`${err.message}\``);
             }
         }
 
-        // %skip / %s
+        // %skip / %s (Fixed method)
         if (commandName === 'skip' || commandName === 's') {
             const player = poru.players.get(message.guild.id);
             if (!player || !player.currentTrack) return message.reply('❌ No track is currently playing.');
             if (!message.member.voice.channel || message.member.voice.channel.id !== player.voiceChannel) {
                 return message.reply('❌ You must be in the same voice channel as the bot.');
             }
-            player.stop();
+            safeStopTrack(player);
             return message.reply('⏭️ Skipped current track.');
         }
 
@@ -345,13 +362,18 @@ module.exports = async (client) => {
             const player = poru.players.get(message.guild.id);
             if (!player) return message.reply('❌ Bot is not active.');
 
+            previousTracks.delete(message.guild.id);
             player.queue.clear();
-            player.stop();
+            
             const is247 = await Music247.findOne({ guildId: message.guild.id, enabled: true }).catch(() => null);
-            if (!is247) player.destroy();
+            if (!is247) {
+                player.destroy();
+            } else {
+                safeStopTrack(player);
+            }
 
             await updateGuildPanel(client, message.guild.id, null, null);
-            return message.reply('⏹️ Stopped playback and cleared queue.');
+            return message.reply('⏹️ Playback stopped and autoplay paused.');
         }
 
         // %247
@@ -359,7 +381,7 @@ module.exports = async (client) => {
             const isOwner = message.guild.ownerId === message.author.id;
             const isAdmin = message.member.permissions.has('Administrator');
             if (!isOwner && !isAdmin) {
-                return message.reply('❌ Only Server Owners or Admins can configure 24/7 mode.');
+                return message.reply('❌ Only Server Owner or Admins can configure 24/7 mode.');
             }
 
             const voiceChannel = message.member.voice.channel;
@@ -378,27 +400,9 @@ module.exports = async (client) => {
                 return message.reply(`🔒 **24/7 Mode Enabled!** Bot will remain online in <#${voiceChannel.id}>.`);
             }
         }
-
-        // %addowner
-        if (commandName === 'addowner') {
-            if (message.guild.ownerId !== message.author.id) {
-                return message.reply('❌ Only the Server Owner can designate Extra Owners.');
-            }
-            const target = message.mentions.users.first();
-            if (!target) return message.reply('❌ Mention a user: `%addowner @user`');
-
-            await GuildConfig.findOneAndUpdate(
-                { guildId: message.guild.id },
-                { $addToSet: { extraOwners: target.id } },
-                { upsert: true }
-            );
-            return message.reply(`✅ Added **${target.username}** as an Extra Owner.`);
-        }
     });
 
-    // ==========================================
-    // 2. PANEL BUTTONS & FILTER DROPDOWN HANDLER
-    // ==========================================
+    // Panel Buttons & Dropdown Handlers
     client.on('interactionCreate', async (interaction) => {
         if (!interaction.isButton() && !interaction.isStringSelectMenu()) return;
         if (!interaction.customId.startsWith('btn_') && interaction.customId !== 'menu_filters') return;
@@ -438,7 +442,6 @@ module.exports = async (client) => {
             return;
         }
 
-        // Buttons
         const action = interaction.customId;
 
         if (action === 'btn_pause_resume') {
@@ -454,26 +457,30 @@ module.exports = async (client) => {
         if (action === 'btn_previous') {
             const prev = previousTracks.get(interaction.guildId);
             if (!prev) {
-                return interaction.reply({ content: '❌ No previous track found in history.', flags: 64 });
+                return interaction.reply({ content: '❌ No previous track found.', flags: 64 });
             }
             player.queue.unshift(prev);
-            player.stop();
-            return interaction.reply({ content: `⏮️ Playing previous track: **${prev.info.title}**`, flags: 64 });
+            safeStopTrack(player);
+            return interaction.reply({ content: `⏮️ Playing previous: **${prev.info.title}**`, flags: 64 });
         }
 
         if (action === 'btn_skip') {
             const title = player.currentTrack.info.title;
-            player.stop();
+            safeStopTrack(player);
             return interaction.reply({ content: `⏭️ Skipped **${title}**.`, flags: 64 });
         }
 
         if (action === 'btn_stop') {
-            const is247 = await Music247.findOne({ guildId: interaction.guildId, enabled: true }).catch(() => null);
+            previousTracks.delete(interaction.guildId);
             player.queue.clear();
-            player.stop();
-            if (!is247) player.destroy();
+            const is247 = await Music247.findOne({ guildId: interaction.guildId, enabled: true }).catch(() => null);
+            if (!is247) {
+                player.destroy();
+            } else {
+                safeStopTrack(player);
+            }
             await updateGuildPanel(client, player.guildId, null, null);
-            return interaction.reply({ content: '⏹️ Stopped playback and cleared queue.', flags: 64 });
+            return interaction.reply({ content: '⏹️ Stopped playback.', flags: 64 });
         }
 
         if (action === 'btn_loop') {
@@ -482,33 +489,30 @@ module.exports = async (client) => {
             else player.setLoop('NONE');
 
             await updateGuildPanel(client, player.guildId, player, player.currentTrack);
-            return interaction.reply({ content: `🔁 Loop mode updated: **${player.loop}**`, flags: 64 });
+            return interaction.reply({ content: `🔁 Loop mode: **${player.loop}**`, flags: 64 });
         }
 
         if (action === 'btn_volup') {
             const newVol = Math.min(player.volume + 10, 150);
             player.setVolume(newVol);
             await updateGuildPanel(client, player.guildId, player, player.currentTrack);
-            return interaction.reply({ content: `🔊 Volume increased to **${newVol}%**.`, flags: 64 });
+            return interaction.reply({ content: `🔊 Volume: **${newVol}%**`, flags: 64 });
         }
 
         if (action === 'btn_voldown') {
             const newVol = Math.max(player.volume - 10, 10);
             player.setVolume(newVol);
             await updateGuildPanel(client, player.guildId, player, player.currentTrack);
-            return interaction.reply({ content: `🔉 Volume decreased to **${newVol}%**.`, flags: 64 });
+            return interaction.reply({ content: `🔉 Volume: **${newVol}%**`, flags: 64 });
         }
 
         if (action === 'btn_autoplay') {
-            const current = autoplayState.get(interaction.guildId) || false;
-            autoplayState.set(interaction.guildId, !current);
-            await updateGuildPanel(client, player.guildId, player, player.currentTrack);
-            return interaction.reply({ content: `♾️ Autoplay is now **${!current ? 'Enabled' : 'Disabled'}**.`, flags: 64 });
+            return interaction.reply({ content: '♾️ Autoplay is permanently active for non-stop music.', flags: 64 });
         }
 
         if (action === 'btn_shuffle') {
             player.queue.shuffle();
-            return interaction.reply({ content: '🔀 Queue has been randomized.', flags: 64 });
+            return interaction.reply({ content: '🔀 Queue shuffled.', flags: 64 });
         }
 
         if (action === 'btn_save') {
@@ -525,12 +529,12 @@ module.exports = async (client) => {
                     .setThumbnail(track.info.image || null);
 
                 await interaction.user.send({ embeds: [saveEmbed] });
-                return interaction.reply({ content: '📩 Sent song details to your Direct Messages!', flags: 64 });
+                return interaction.reply({ content: '📩 Sent song details to your DM.', flags: 64 });
             } catch (err) {
-                return interaction.reply({ content: '❌ Could not send DM. Please check your privacy settings.', flags: 64 });
+                return interaction.reply({ content: '❌ DM is closed.', flags: 64 });
             }
         }
     });
 
-    console.log('✔ Rythm Music Engine & Prefix System Active.');
+    console.log('✔ Rythm Music Engine & Endless Autoplay Active.');
 };
