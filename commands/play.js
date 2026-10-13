@@ -23,7 +23,6 @@ module.exports = {
         const query = interaction.options.getString('query');
 
         try {
-            // URL check: Agar direct link hai toh AUTO search, warna Cloud block se bachne ke liye SoundCloud search
             const isUrl = query.startsWith('http://') || query.startsWith('https://');
             const searchEngine = isUrl ? QueryType.AUTO : QueryType.SOUNDCLOUD_SEARCH;
 
@@ -32,7 +31,6 @@ module.exports = {
                 searchEngine: searchEngine
             });
 
-            // Fallback agar SoundCloud par na mile
             if (!result || !result.tracks.length) {
                 result = await player.search(query, {
                     requestedBy: interaction.user,
@@ -41,7 +39,7 @@ module.exports = {
             }
 
             if (!result || !result.tracks.length) {
-                return interaction.editReply(`❌ Gaana nahi mila: **${query}**\n*(Agar title se nahi mila toh direct link try karein)*`);
+                return interaction.editReply(`❌ Gaana nahi mila: **${query}**`);
             }
 
             const { track } = await player.play(channel, result, {
@@ -51,7 +49,9 @@ module.exports = {
                         client: interaction.guild.members.me,
                         requestedBy: interaction.user
                     },
-                    volume: 80,
+                    selfDeaf: true,
+                    volume: 85,
+                    bufferingTimeout: 3000,
                     leaveOnEmpty: true,
                     leaveOnEmptyCooldown: 60000,
                     leaveOnEnd: true,
