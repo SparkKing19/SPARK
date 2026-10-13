@@ -12,27 +12,38 @@ module.exports = {
         ),
 
     async execute(interaction) {
+        // Immediate defer taaki "The application did not respond" kabhi na aaye
+        await interaction.deferReply();
+
         const voiceChannel = interaction.member.voice.channel;
         if (!voiceChannel) {
-            return interaction.reply({ content: '❌ Pehle kisi Voice Channel me join karein!', ephemeral: true });
+            return interaction.editReply('❌ Pehle kisi Voice Channel me join karein!');
         }
 
         const mode247 = interaction.options.getBoolean('mode_247');
         const poru = interaction.client.poru;
 
+        if (!poru) {
+            return interaction.editReply('❌ Music engine connect ho raha hai, 2 second baad try karein.');
+        }
+
         let player = poru.players.get(interaction.guildId);
         if (!player) {
-            player = poru.createConnection({
-                guildId: interaction.guildId,
-                voiceChannel: voiceChannel.id,
-                textChannel: interaction.channelId,
-                deaf: true
-            });
+            try {
+                player = poru.createConnection({
+                    guildId: interaction.guildId,
+                    voiceChannel: voiceChannel.id,
+                    textChannel: interaction.channelId,
+                    deaf: true
+                });
+            } catch (err) {
+                return interaction.editReply(`❌ Voice connect error: \`${err.message}\``);
+            }
         }
 
         if (mode247 !== null) {
             if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
-                return interaction.reply({ content: '❌ 24/7 mode ke liye `Manage Server` permission chahiye.', ephemeral: true });
+                return interaction.editReply('❌ 24/7 mode ke liye `Manage Server` permission chahiye.');
             }
 
             if (mode247 === true) {
@@ -41,16 +52,16 @@ module.exports = {
                     { voiceChannelId: voiceChannel.id, textChannelId: interaction.channelId, enabled: true },
                     { upsert: true }
                 );
-                return interaction.reply(`🔒 **24/7 Mode Enabled!** Bot ab <#${voiceChannel.id}> me permanently rahega.`);
+                return interaction.editReply(`🔒 **24/7 Mode Enabled!** Bot ab <#${voiceChannel.id}> me permanently rahega.`);
             } else {
                 await Music247.findOneAndUpdate(
                     { guildId: interaction.guildId },
                     { enabled: false }
                 );
-                return interaction.reply('🔓 **24/7 Mode Disabled!**');
+                return interaction.editReply('🔓 **24/7 Mode Disabled!**');
             }
         }
 
-        return interaction.reply(`🔊 Connected to <#${voiceChannel.id}>.`);
+        return interaction.editReply(`🔊 Connected to <#${voiceChannel.id}>.`);
     }
 };
