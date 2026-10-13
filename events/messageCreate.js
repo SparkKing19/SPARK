@@ -1,61 +1,52 @@
 const GuildConfig = require('../models/guildConfig');
 const Music247 = require('../models/music247');
 
-// Permission checker helper
-async function isAuthorizedUser(message, client) {
-    // 1. Bot application owner
-    if (client.application?.owner) {
-        if (client.application.owner.id === message.author.id) return true;
-        if (client.application.owner.members?.has(message.author.id)) return true;
-    }
-    // 2. Server Owner
-    if (message.guild.ownerId === message.author.id) return true;
-
-    // 3. Extra Owner configured in DB
-    const conf = await GuildConfig.findOne({ guildId: message.guild.id });
-    if (conf && conf.extraOwners.includes(message.author.id)) return true;
-
-    // 4. Administrator permission fallback
-    if (message.member.permissions.has('Administrator')) return true;
-
-    return false;
-}
-
 module.exports = async (client, message) => {
+    // Ignore bots and DM
     if (message.author.bot || !message.guild) return;
 
     const PREFIX = '%';
     if (!message.content.startsWith(PREFIX)) return;
 
+    console.log(`[PREFIX DETECTED] Message: "${message.content}" from ${message.author.tag}`);
+
     const args = message.content.slice(PREFIX.length).trim().split(/ +/);
     const commandName = args.shift().toLowerCase();
     const poru = client.poru;
 
-    // 1. %music panel / %setup (Owner Only)
-    if (commandName === 'music' || commandName === 'setup') {
+    // 1. %setup / %music panel
+    if (commandName === 'setup' || commandName === 'music') {
         const sub = args[0]?.toLowerCase();
         if (commandName === 'music' && sub !== 'panel') return;
 
-        const authorized = await isAuthorizedUser(message, client);
-        if (!authorized) {
-            return message.reply('❌ You do not have permission to setup the music panel.');
+        // Check: Server Owner or Admin
+        const isOwner = message.guild.ownerId === message.author.id;
+        const isAdmin = message.member.permissions.has('Administrator');
+        
+        if (!isOwner && !isAdmin) {
+            return message.reply('❌ Only the Server Owner or Admins can setup the music panel.');
         }
 
-        const embed = client.getPanelEmbed(client, null, null);
-        const components = client.getPanelComponents(null);
+        try {
+            const embed = client.getPanelEmbed(client, null, null);
+            const components = client.getPanelComponents(null);
 
-        const panelMsg = await message.channel.send({ embeds: [embed], components });
+            const panelMsg = await message.channel.send({ embeds: [embed], components });
 
-        await GuildConfig.findOneAndUpdate(
-            { guildId: message.guild.id },
-            { panelChannelId: message.channel.id, panelMessageId: panelMsg.id },
-            { upsert: true }
-        );
+            await GuildConfig.findOneAndUpdate(
+                { guildId: message.guild.id },
+                { panelChannelId: message.channel.id, panelMessageId: panelMsg.id },
+                { upsert: true }
+            );
 
-        return message.reply(`✅ Music controller panel successfully configured in <#${message.channel.id}>!`);
+            return message.reply(`✅ Music controller panel successfully created in <#${message.channel.id}>!`);
+        } catch (err) {
+            console.error('[PANEL SETUP ERROR]:', err);
+            return message.reply(`❌ Setup error: \`${err.message}\``);
+        }
     }
 
-    // 2. %play (Public Command)
+    // 2. %play (Public)
     if (commandName === 'play' || commandName === 'p') {
         const voiceChannel = message.member.voice.channel;
         if (!voiceChannel) {
@@ -64,7 +55,7 @@ module.exports = async (client, message) => {
 
         const query = args.join(' ');
         if (!query) {
-            return message.reply('❌ Please provide a song name or valid URL: `%play <query/url>`');
+            return message.reply('❌ Please provide a song name or link: `%play <query/url>`');
         }
 
         let player = poru.players.get(message.guild.id);
@@ -86,7 +77,6 @@ module.exports = async (client, message) => {
             if (isUrl) {
                 res = await poru.resolve({ query, requester: message.author });
             } else {
-                // Dual Search Resolution: SoundCloud & Spotify fallback
                 res = await poru.resolve({ query, source: 'scsearch', requester: message.author });
                 if (!res || !res.tracks || !res.tracks.length) {
                     res = await poru.resolve({ query, source: 'spsearch', requester: message.author });
@@ -121,68 +111,23 @@ module.exports = async (client, message) => {
         }
     }
 
-    // 3. %skip (Public)
+    // 3. %skip
     if (commandName === 'skip' || commandName === 's') {
         const player = poru.players.get(message.guild.id);
         if (!player || !player.currentTrack) return message.reply('❌ No track is currently playing.');
-        if (!message.member.voice.channel || message.member.voice.channel.id !== player.voiceChannel) {
-            return message.reply('❌ You must be in the same voice channel as the bot.');
-        }
-
         player.stop();
         return message.reply('⏭️ Skipped current track.');
     }
 
-    // 4. %stop (Owner / Moderator Protected)
+    // 4. %stop
     if (commandName === 'stop') {
-        const authorized = await isAuthorizedUser(message, client);
-        if (!authorized) return message.reply('❌ Only Server Owners/Extra Owners can execute `%stop`. Use the panel buttons instead.');
-
         const player = poru.players.get(message.guild.id);
         if (!player) return message.reply('❌ Bot is not active.');
-
         player.queue.clear();
         player.stop();
         const is247 = await Music247.findOne({ guildId: message.guild.id, enabled: true }).catch(() => null);
         if (!is247) player.destroy();
-
         await client.updateGuildPanel(client, message.guild.id, null, null);
-        return message.reply('⏹️ Stopped playback and cleared queue.');
-    }
-
-    // 5. %247 (Owner Only)
-    if (commandName === '247') {
-        const authorized = await isAuthorizedUser(message, client);
-        if (!authorized) return message.reply('❌ You do not have permission to change 24/7 settings.');
-
-        const voiceChannel = message.member.voice.channel;
-        if (!voiceChannel) return message.reply('❌ Join a voice channel first to enable 24/7 mode.');
-
-        const existing = await Music247.findOne({ guildId: message.guild.id, enabled: true });
-        if (existing) {
-            await Music247.findOneAndUpdate({ guildId: message.guild.id }, { enabled: false });
-            return message.reply('🔓 **24/7 Mode Disabled!**');
-        } else {
-            await Music247.findOneAndUpdate(
-                { guildId: message.guild.id },
-                { voiceChannelId: voiceChannel.id, textChannelId: message.channel.id, enabled: true },
-                { upsert: true }
-            );
-            return message.reply(`🔒 **24/7 Mode Enabled!** Bot will remain online in <#${voiceChannel.id}>.`);
-        }
-    }
-
-    // 6. %addowner / %delowner (Server Owner only)
-    if (commandName === 'addowner') {
-        if (message.guild.ownerId !== message.author.id) return message.reply('❌ Only the Server Owner can designate Extra Owners.');
-        const target = message.mentions.users.first();
-        if (!target) return message.reply('❌ Mention a user: `%addowner @user`');
-
-        await GuildConfig.findOneAndUpdate(
-            { guildId: message.guild.id },
-            { $addToSet: { extraOwners: target.id } },
-            { upsert: true }
-        );
-        return message.reply(`✅ Added **${target.username}** as an Extra Owner.`);
+        return message.reply('⏹️ Playback stopped.');
     }
 };
