@@ -115,7 +115,7 @@ function getPanelEmbed(client, player = null, track = null) {
         });
 }
 
-// Live Panel Auto-Updater
+// Helper: Update Guild Live Panel Message
 async function updateGuildPanel(client, guildId, player = null, track = null) {
     try {
         const conf = await GuildConfig.findOne({ guildId });
@@ -134,6 +134,7 @@ async function updateGuildPanel(client, guildId, player = null, track = null) {
 }
 
 module.exports = async (client) => {
+    // Railway Private Lavalink Node
     const nodes = [
         {
             name: 'SparkCore-Private-Lavalink',
@@ -150,11 +151,6 @@ module.exports = async (client) => {
     });
 
     client.poru = poru;
-    client.autoplayState = autoplayState;
-    client.previousTracks = previousTracks;
-    client.updateGuildPanel = updateGuildPanel;
-    client.getPanelComponents = getPanelComponents;
-    client.getPanelEmbed = getPanelEmbed;
 
     poru.on('nodeConnect', async (node) => {
         console.log(`✔ Private Lavalink Server Online: ${node.name}`);
@@ -183,6 +179,7 @@ module.exports = async (client) => {
         console.error(`Lavalink Server Error: ${err.message}`);
     });
 
+    // Track Start
     poru.on('trackStart', async (player, track) => {
         if (player.currentTrack) {
             previousTracks.set(player.guildId, player.currentTrack);
@@ -190,6 +187,7 @@ module.exports = async (client) => {
         await updateGuildPanel(client, player.guildId, player, track);
     });
 
+    // Queue End / Autoplay
     poru.on('queueEnd', async (player) => {
         const isAutoplay = autoplayState.get(player.guildId);
         const lastTrack = previousTracks.get(player.guildId) || player.currentTrack;
@@ -221,7 +219,186 @@ module.exports = async (client) => {
         poru.init(client);
     });
 
-    // Interactive Controller Handlers
+    // ==========================================
+    // 1. PREFIX COMMANDS HANDLER (%play, %setup)
+    // ==========================================
+    client.on('messageCreate', async (message) => {
+        if (message.author.bot || !message.guild) return;
+
+        const PREFIX = '%';
+        if (!message.content.startsWith(PREFIX)) return;
+
+        const args = message.content.slice(PREFIX.length).trim().split(/ +/);
+        const commandName = args.shift().toLowerCase();
+
+        // %setup / %music panel
+        if (commandName === 'setup' || commandName === 'music') {
+            const sub = args[0]?.toLowerCase();
+            if (commandName === 'music' && sub !== 'panel') return;
+
+            const isOwner = message.guild.ownerId === message.author.id;
+            const isAdmin = message.member.permissions.has('Administrator');
+            const conf = await GuildConfig.findOne({ guildId: message.guild.id }).catch(() => null);
+            const isExtraOwner = conf && conf.extraOwners?.includes(message.author.id);
+
+            if (!isOwner && !isAdmin && !isExtraOwner) {
+                return message.reply('❌ Only the Server Owner, Admins, or Extra Owners can setup the music panel.');
+            }
+
+            try {
+                const embed = getPanelEmbed(client, null, null);
+                const components = getPanelComponents(null);
+
+                const panelMsg = await message.channel.send({ embeds: [embed], components });
+
+                await GuildConfig.findOneAndUpdate(
+                    { guildId: message.guild.id },
+                    { panelChannelId: message.channel.id, panelMessageId: panelMsg.id },
+                    { upsert: true }
+                );
+
+                return message.reply(`✅ Music controller panel successfully configured in <#${message.channel.id}>!`);
+            } catch (err) {
+                console.error('Setup error:', err);
+                return message.reply(`❌ Setup error: \`${err.message}\``);
+            }
+        }
+
+        // %play / %p
+        if (commandName === 'play' || commandName === 'p') {
+            const voiceChannel = message.member.voice.channel;
+            if (!voiceChannel) {
+                return message.reply('❌ You must be connected to a Voice Channel to play music.');
+            }
+
+            const query = args.join(' ');
+            if (!query) {
+                return message.reply('❌ Please provide a song name or valid URL: `%play <query/url>`');
+            }
+
+            let player = poru.players.get(message.guild.id);
+            if (!player) {
+                player = poru.createConnection({
+                    guildId: message.guild.id,
+                    voiceChannel: voiceChannel.id,
+                    textChannel: message.channel.id,
+                    deaf: true
+                });
+            }
+
+            const statusMsg = await message.reply('🔍 Searching audio stream...');
+
+            try {
+                const isUrl = query.startsWith('http://') || query.startsWith('https://');
+                let res = null;
+
+                if (isUrl) {
+                    res = await poru.resolve({ query, requester: message.author });
+                } else {
+                    res = await poru.resolve({ query, source: 'scsearch', requester: message.author });
+                    if (!res || !res.tracks || !res.tracks.length) {
+                        res = await poru.resolve({ query, source: 'spsearch', requester: message.author });
+                    }
+                    if (!res || !res.tracks || !res.tracks.length) {
+                        res = await poru.resolve({ query, source: 'ytsearch', requester: message.author });
+                    }
+                }
+
+                if (!res || res.loadType === 'LOAD_FAILED' || res.loadType === 'NO_MATCHES' || !res.tracks.length) {
+                    return statusMsg.edit(`❌ No audio tracks found for: **${query}**`);
+                }
+
+                if (res.loadType === 'PLAYLIST_LOADED') {
+                    for (const t of res.tracks) player.queue.add(t);
+                    if (!player.isPlaying && !player.isPaused) player.play();
+                    return statusMsg.edit(`🎶 Added playlist **${res.playlistInfo.name}** (\`${res.tracks.length}\` tracks) to queue.`);
+                }
+
+                const track = res.tracks[0];
+                player.queue.add(track);
+
+                if (!player.isPlaying && !player.isPaused) {
+                    player.play();
+                    return statusMsg.edit(`🎶 Now playing: **${track.info.title}**`);
+                } else {
+                    return statusMsg.edit(`✅ Added to queue: **${track.info.title}**`);
+                }
+            } catch (err) {
+                console.error('Play command error:', err);
+                return statusMsg.edit(`❌ Playback error: \`${err.message}\``);
+            }
+        }
+
+        // %skip / %s
+        if (commandName === 'skip' || commandName === 's') {
+            const player = poru.players.get(message.guild.id);
+            if (!player || !player.currentTrack) return message.reply('❌ No track is currently playing.');
+            if (!message.member.voice.channel || message.member.voice.channel.id !== player.voiceChannel) {
+                return message.reply('❌ You must be in the same voice channel as the bot.');
+            }
+            player.stop();
+            return message.reply('⏭️ Skipped current track.');
+        }
+
+        // %stop
+        if (commandName === 'stop') {
+            const player = poru.players.get(message.guild.id);
+            if (!player) return message.reply('❌ Bot is not active.');
+
+            player.queue.clear();
+            player.stop();
+            const is247 = await Music247.findOne({ guildId: message.guild.id, enabled: true }).catch(() => null);
+            if (!is247) player.destroy();
+
+            await updateGuildPanel(client, message.guild.id, null, null);
+            return message.reply('⏹️ Stopped playback and cleared queue.');
+        }
+
+        // %247
+        if (commandName === '247') {
+            const isOwner = message.guild.ownerId === message.author.id;
+            const isAdmin = message.member.permissions.has('Administrator');
+            if (!isOwner && !isAdmin) {
+                return message.reply('❌ Only Server Owners or Admins can configure 24/7 mode.');
+            }
+
+            const voiceChannel = message.member.voice.channel;
+            if (!voiceChannel) return message.reply('❌ Join a voice channel first to enable 24/7 mode.');
+
+            const existing = await Music247.findOne({ guildId: message.guild.id, enabled: true });
+            if (existing) {
+                await Music247.findOneAndUpdate({ guildId: message.guild.id }, { enabled: false });
+                return message.reply('🔓 **24/7 Mode Disabled!**');
+            } else {
+                await Music247.findOneAndUpdate(
+                    { guildId: message.guild.id },
+                    { voiceChannelId: voiceChannel.id, textChannelId: message.channel.id, enabled: true },
+                    { upsert: true }
+                );
+                return message.reply(`🔒 **24/7 Mode Enabled!** Bot will remain online in <#${voiceChannel.id}>.`);
+            }
+        }
+
+        // %addowner
+        if (commandName === 'addowner') {
+            if (message.guild.ownerId !== message.author.id) {
+                return message.reply('❌ Only the Server Owner can designate Extra Owners.');
+            }
+            const target = message.mentions.users.first();
+            if (!target) return message.reply('❌ Mention a user: `%addowner @user`');
+
+            await GuildConfig.findOneAndUpdate(
+                { guildId: message.guild.id },
+                { $addToSet: { extraOwners: target.id } },
+                { upsert: true }
+            );
+            return message.reply(`✅ Added **${target.username}** as an Extra Owner.`);
+        }
+    });
+
+    // ==========================================
+    // 2. PANEL BUTTONS & FILTER DROPDOWN HANDLER
+    // ==========================================
     client.on('interactionCreate', async (interaction) => {
         if (!interaction.isButton() && !interaction.isStringSelectMenu()) return;
         if (!interaction.customId.startsWith('btn_') && interaction.customId !== 'menu_filters') return;
@@ -231,15 +408,14 @@ module.exports = async (client) => {
             return interaction.reply({ content: '❌ There is no active track playing right now.', flags: 64 });
         }
 
-        // Voice connection presence verification
         if (!interaction.member.voice.channel || interaction.member.voice.channel.id !== player.voiceChannel) {
             return interaction.reply({ 
-                content: `❌ You must be connected to <#${player.voiceChannel}> to control the music panel.`, 
+                content: `❌ You must be connected to <#${player.voiceChannel}> to use the controller.`, 
                 flags: 64 
             });
         }
 
-        // Dropdown Filters
+        // Filters
         if (interaction.isStringSelectMenu() && interaction.customId === 'menu_filters') {
             const val = interaction.values[0];
             await interaction.deferUpdate();
@@ -262,7 +438,7 @@ module.exports = async (client) => {
             return;
         }
 
-        // Buttons Handler
+        // Buttons
         const action = interaction.customId;
 
         if (action === 'btn_pause_resume') {
@@ -356,5 +532,5 @@ module.exports = async (client) => {
         }
     });
 
-    console.log('✔ Custom Rythm Panel Music Engine Active.');
+    console.log('✔ Rythm Music Engine & Prefix System Active.');
 };
