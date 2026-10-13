@@ -1,9 +1,10 @@
 const { SlashCommandBuilder } = require('discord.js');
+const { QueryType } = require('discord-player');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('play')
-        .setDescription('Gaana play karo ya queue me add karo (YouTube, Spotify, etc.)')
+        .setDescription('Gaana play karo ya queue me add karo (YouTube, Spotify, SoundCloud)')
         .addStringOption(opt => 
             opt.setName('query')
                 .setDescription('Gaane ka naam ya URL daalo')
@@ -22,8 +23,10 @@ module.exports = {
         const query = interaction.options.getString('query');
 
         try {
+            // Auto search resolver (YouTube Search fallback)
             const result = await player.search(query, {
-                requestedBy: interaction.user
+                requestedBy: interaction.user,
+                searchEngine: QueryType.AUTO
             });
 
             if (!result || !result.tracks.length) {
