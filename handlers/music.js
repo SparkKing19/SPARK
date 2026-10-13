@@ -7,79 +7,130 @@ const {
 } = require('discord.js');
 const { Poru } = require('poru');
 const Music247 = require('../models/music247');
+const GuildConfig = require('../models/guildConfig');
 
-// Autoplay & Previous tracking store
 const autoplayState = new Map();
 const previousTracks = new Map();
 
-function buildControllerComponents(player) {
-    const isAutoplay = autoplayState.get(player.guildId) || false;
-    const isPaused = player.isPaused;
-    const isLoop = player.loop !== 'NONE';
+// Helper: Controller Panel Components
+function getPanelComponents(player = null) {
+    const isPaused = player ? player.isPaused : false;
+    const isLoop = player ? player.loop !== 'NONE' : false;
+    const isAutoplay = player ? (autoplayState.get(player.guildId) || false) : false;
 
-    // Row 1: Controls (⏸ / ▶, ⏮, ⏹, ⏭, 🔁)
     const row1 = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
             .setCustomId('btn_pause_resume')
             .setEmoji(isPaused ? '▶️' : '⏸️')
-            .setStyle(isPaused ? ButtonStyle.Success : ButtonStyle.Secondary),
+            .setStyle(isPaused ? ButtonStyle.Success : ButtonStyle.Secondary)
+            .setDisabled(!player || !player.currentTrack),
         new ButtonBuilder()
             .setCustomId('btn_previous')
             .setEmoji('⏮️')
-            .setStyle(ButtonStyle.Secondary),
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(!player || !player.currentTrack),
         new ButtonBuilder()
             .setCustomId('btn_stop')
             .setEmoji('⏹️')
-            .setStyle(ButtonStyle.Danger),
+            .setStyle(ButtonStyle.Danger)
+            .setDisabled(!player || !player.currentTrack),
         new ButtonBuilder()
             .setCustomId('btn_skip')
             .setEmoji('⏭️')
-            .setStyle(ButtonStyle.Secondary),
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(!player || !player.currentTrack),
         new ButtonBuilder()
             .setCustomId('btn_loop')
             .setEmoji('🔁')
             .setStyle(isLoop ? ButtonStyle.Primary : ButtonStyle.Secondary)
+            .setDisabled(!player || !player.currentTrack)
     );
 
-    // Row 2: Utilities (🔉, 🔊, ♾️ Autoplay, 🔀 Shuffle, 💾 Save)
     const row2 = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
             .setCustomId('btn_voldown')
             .setEmoji('🔉')
-            .setStyle(ButtonStyle.Secondary),
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(!player || !player.currentTrack),
         new ButtonBuilder()
             .setCustomId('btn_volup')
             .setEmoji('🔊')
-            .setStyle(ButtonStyle.Secondary),
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(!player || !player.currentTrack),
         new ButtonBuilder()
             .setCustomId('btn_autoplay')
             .setEmoji('♾️')
-            .setStyle(isAutoplay ? ButtonStyle.Primary : ButtonStyle.Secondary),
+            .setStyle(isAutoplay ? ButtonStyle.Primary : ButtonStyle.Secondary)
+            .setDisabled(!player || !player.currentTrack),
         new ButtonBuilder()
             .setCustomId('btn_shuffle')
             .setEmoji('🔀')
-            .setStyle(ButtonStyle.Secondary),
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(!player || !player.currentTrack || player.queue.length < 2),
         new ButtonBuilder()
             .setCustomId('btn_save')
             .setEmoji('💾')
             .setStyle(ButtonStyle.Secondary)
+            .setDisabled(!player || !player.currentTrack)
     );
 
-    // Row 3: Audio Filter Menu
     const row3 = new ActionRowBuilder().addComponents(
         new StringSelectMenuBuilder()
             .setCustomId('menu_filters')
             .setPlaceholder('Select an audio filter...')
+            .setDisabled(!player || !player.currentTrack)
             .addOptions([
-                { label: 'Bassboost', description: 'Deep bass boost audio enhancement', value: 'filter_bass', emoji: '🔊' },
+                { label: 'Bassboost', description: 'Deep bass enhancement', value: 'filter_bass', emoji: '🔊' },
                 { label: 'Nightcore', description: 'Faster tempo and higher pitch', value: 'filter_nightcore', emoji: '⚡' },
                 { label: '8D Audio', description: 'Rotating spatial surround sound', value: 'filter_8d', emoji: '🎧' },
-                { label: 'Vaporwave', description: 'Slowed down lo-fi atmospheric aesthetic', value: 'filter_vaporwave', emoji: '🌊' },
+                { label: 'Vaporwave', description: 'Slowed down aesthetic audio', value: 'filter_vaporwave', emoji: '🌊' },
                 { label: 'Reset Filters', description: 'Remove active audio filters', value: 'filter_clear', emoji: '❌' }
             ])
     );
 
     return [row1, row2, row3];
+}
+
+// Helper: Build Live Embed
+function getPanelEmbed(client, player = null, track = null) {
+    if (!player || !track) {
+        return new EmbedBuilder()
+            .setColor('#2B2D31')
+            .setTitle('🎶 Music Control Panel')
+            .setDescription('No track currently playing.\nJoin a voice channel and type `%play <title or link>` to start playback.')
+            .setImage('https://dummyimage.com/1280x350/1e1f22/7289da&text=Ready+For+Music')
+            .setFooter({ text: 'SparkCore Music System • Standing By' });
+    }
+
+    const duration = track.info.isStream ? 'LIVE' : new Date(track.info.length).toISOString().substr(14, 5);
+    const source = (track.info.sourceName || 'Audio Stream').toUpperCase();
+
+    return new EmbedBuilder()
+        .setColor('#5865F2')
+        .setDescription(`## <a:play_rec:1559415361290641429> Now Playing...\n\n[**${track.info.title}**](${track.info.uri})\n\n> **Artist:** \`${track.info.author}\` • **Source:** \`${source}\`\n> **Duration:** \`${duration}\` • **Volume:** \`${player.volume}%\`\n> **Channel:** <#${player.voiceChannel}>`)
+        .setImage(track.info.image || client.user.displayAvatarURL({ size: 1024 }))
+        .setFooter({ 
+            text: `Requested by ${track.info.requester?.username || 'User'}`, 
+            iconURL: track.info.requester?.displayAvatarURL() || undefined 
+        });
+}
+
+// Live Panel Auto-Updater
+async function updateGuildPanel(client, guildId, player = null, track = null) {
+    try {
+        const conf = await GuildConfig.findOne({ guildId });
+        if (!conf || !conf.panelChannelId || !conf.panelMessageId) return;
+
+        const channel = client.channels.cache.get(conf.panelChannelId);
+        if (!channel) return;
+
+        const msg = await channel.messages.fetch(conf.panelMessageId).catch(() => null);
+        if (!msg) return;
+
+        const embed = getPanelEmbed(client, player, track);
+        const components = getPanelComponents(player);
+        await msg.edit({ embeds: [embed], components });
+    } catch (err) {}
 }
 
 module.exports = async (client) => {
@@ -101,6 +152,9 @@ module.exports = async (client) => {
     client.poru = poru;
     client.autoplayState = autoplayState;
     client.previousTracks = previousTracks;
+    client.updateGuildPanel = updateGuildPanel;
+    client.getPanelComponents = getPanelComponents;
+    client.getPanelEmbed = getPanelEmbed;
 
     poru.on('nodeConnect', async (node) => {
         console.log(`✔ Private Lavalink Server Online: ${node.name}`);
@@ -129,40 +183,24 @@ module.exports = async (client) => {
         console.error(`Lavalink Server Error: ${err.message}`);
     });
 
-    // Track Start Event (Exact Card Embed)
-    poru.on('trackStart', (player, track) => {
-        const channel = client.channels.cache.get(player.textChannel);
-        if (!channel) return;
-
+    poru.on('trackStart', async (player, track) => {
         if (player.currentTrack) {
             previousTracks.set(player.guildId, player.currentTrack);
         }
-
-        const source = track.info.sourceName ? track.info.sourceName.toUpperCase() : 'YOUTUBE';
-        const duration = track.info.isStream ? 'LIVE' : new Date(track.info.length).toISOString().substr(14, 5);
-        const reqUser = track.info.requester ? track.info.requester.username : 'User';
-        const reqAvatar = track.info.requester ? track.info.requester.displayAvatarURL() : undefined;
-
-        const embed = new EmbedBuilder()
-            .setColor('#2B2D31')
-            .setDescription(`## <a:play_rec:1559415361290641429> Now Playing...\n\n[**${track.info.title}**](${track.info.uri})\n\n> **Artist:** \`${track.info.author}\` • **Source:** \`${source}\`\n> **Duration:** \`${duration}\` • **Volume:** \`${player.volume}%\``)
-            .setImage(track.info.image || client.user.displayAvatarURL({ size: 1024 }))
-            .setFooter({ text: `Requested by ${reqUser}`, iconURL: reqAvatar });
-
-        channel.send({ embeds: [embed], components: buildControllerComponents(player) })
-            .then(msg => { player.controllerMsg = msg; })
-            .catch(() => {});
+        await updateGuildPanel(client, player.guildId, player, track);
     });
 
-    // Queue End Event -> Autoplay Engine
     poru.on('queueEnd', async (player) => {
         const isAutoplay = autoplayState.get(player.guildId);
         const lastTrack = previousTracks.get(player.guildId) || player.currentTrack;
 
         if (isAutoplay && lastTrack) {
             try {
-                const searchTitle = `${lastTrack.info.author} songs`;
-                const res = await poru.resolve({ query: searchTitle, source: 'scsearch', requester: client.user });
+                const searchTitle = `${lastTrack.info.author} audio`;
+                let res = await poru.resolve({ query: searchTitle, source: 'scsearch', requester: client.user });
+                if (!res || !res.tracks || !res.tracks.length) {
+                    res = await poru.resolve({ query: searchTitle, source: 'spsearch', requester: client.user });
+                }
                 if (res && res.tracks && res.tracks.length) {
                     const nextTrack = res.tracks[Math.floor(Math.random() * Math.min(res.tracks.length, 5))];
                     player.queue.add(nextTrack);
@@ -171,14 +209,11 @@ module.exports = async (client) => {
             } catch (err) {}
         }
 
-        const is247 = await Music247.findOne({ guildId: player.guildId, enabled: true }).catch(() => null);
-        const channel = client.channels.cache.get(player.textChannel);
+        await updateGuildPanel(client, player.guildId, null, null);
 
+        const is247 = await Music247.findOne({ guildId: player.guildId, enabled: true }).catch(() => null);
         if (!is247) {
-            if (channel) channel.send('✅ Queue ended. Disconnecting to save resources.').catch(() => {});
             player.destroy();
-        } else {
-            if (channel) channel.send('✅ Queue empty. (24/7 Mode Active)').catch(() => {});
         }
     });
 
@@ -186,21 +221,25 @@ module.exports = async (client) => {
         poru.init(client);
     });
 
-    // Buttons & Dropdown Handlers
+    // Interactive Controller Handlers
     client.on('interactionCreate', async (interaction) => {
         if (!interaction.isButton() && !interaction.isStringSelectMenu()) return;
         if (!interaction.customId.startsWith('btn_') && interaction.customId !== 'menu_filters') return;
 
         const player = poru.players.get(interaction.guildId);
         if (!player || !player.currentTrack) {
-            return interaction.reply({ content: '❌ Koi gaana play nahi ho raha hai.', ephemeral: true });
+            return interaction.reply({ content: '❌ There is no active track playing right now.', flags: 64 });
         }
 
+        // Voice connection presence verification
         if (!interaction.member.voice.channel || interaction.member.voice.channel.id !== player.voiceChannel) {
-            return interaction.reply({ content: '❌ Controller use karne ke liye bot ke Voice Channel me hona zaroori hai!', ephemeral: true });
+            return interaction.reply({ 
+                content: `❌ You must be connected to <#${player.voiceChannel}> to control the music panel.`, 
+                flags: 64 
+            });
         }
 
-        // Audio Filter Selection
+        // Dropdown Filters
         if (interaction.isStringSelectMenu() && interaction.customId === 'menu_filters') {
             const val = interaction.values[0];
             await interaction.deferUpdate();
@@ -223,28 +262,33 @@ module.exports = async (client) => {
             return;
         }
 
+        // Buttons Handler
         const action = interaction.customId;
 
         if (action === 'btn_pause_resume') {
             if (player.isPaused) player.pause(false);
             else player.pause(true);
-            return interaction.update({ components: buildControllerComponents(player) });
+            await updateGuildPanel(client, player.guildId, player, player.currentTrack);
+            return interaction.reply({ 
+                content: player.isPaused ? '⏸️ Playback paused.' : '▶️ Playback resumed.', 
+                flags: 64 
+            });
         }
 
         if (action === 'btn_previous') {
             const prev = previousTracks.get(interaction.guildId);
             if (!prev) {
-                return interaction.reply({ content: '❌ Pichla koi track record me nahi hai.', ephemeral: true });
+                return interaction.reply({ content: '❌ No previous track found in history.', flags: 64 });
             }
             player.queue.unshift(prev);
             player.stop();
-            return interaction.reply({ content: `⏮️ Playing previous track: **${prev.info.title}**`, ephemeral: true });
+            return interaction.reply({ content: `⏮️ Playing previous track: **${prev.info.title}**`, flags: 64 });
         }
 
         if (action === 'btn_skip') {
             const title = player.currentTrack.info.title;
             player.stop();
-            return interaction.reply({ content: `⏭️ Skipped: **${title}**`, ephemeral: true });
+            return interaction.reply({ content: `⏭️ Skipped **${title}**.`, flags: 64 });
         }
 
         if (action === 'btn_stop') {
@@ -252,40 +296,43 @@ module.exports = async (client) => {
             player.queue.clear();
             player.stop();
             if (!is247) player.destroy();
-            return interaction.reply({ content: '⏹️ Playback stopped.', ephemeral: true });
+            await updateGuildPanel(client, player.guildId, null, null);
+            return interaction.reply({ content: '⏹️ Stopped playback and cleared queue.', flags: 64 });
         }
 
         if (action === 'btn_loop') {
             if (player.loop === 'NONE') player.setLoop('TRACK');
             else if (player.loop === 'TRACK') player.setLoop('QUEUE');
             else player.setLoop('NONE');
-            return interaction.update({ components: buildControllerComponents(player) });
+
+            await updateGuildPanel(client, player.guildId, player, player.currentTrack);
+            return interaction.reply({ content: `🔁 Loop mode updated: **${player.loop}**`, flags: 64 });
         }
 
         if (action === 'btn_volup') {
             const newVol = Math.min(player.volume + 10, 150);
             player.setVolume(newVol);
-            return interaction.reply({ content: `🔊 Volume: **${newVol}%**`, ephemeral: true });
+            await updateGuildPanel(client, player.guildId, player, player.currentTrack);
+            return interaction.reply({ content: `🔊 Volume increased to **${newVol}%**.`, flags: 64 });
         }
 
         if (action === 'btn_voldown') {
             const newVol = Math.max(player.volume - 10, 10);
             player.setVolume(newVol);
-            return interaction.reply({ content: `🔉 Volume: **${newVol}%**`, ephemeral: true });
+            await updateGuildPanel(client, player.guildId, player, player.currentTrack);
+            return interaction.reply({ content: `🔉 Volume decreased to **${newVol}%**.`, flags: 64 });
         }
 
         if (action === 'btn_autoplay') {
             const current = autoplayState.get(interaction.guildId) || false;
             autoplayState.set(interaction.guildId, !current);
-            return interaction.update({ components: buildControllerComponents(player) });
+            await updateGuildPanel(client, player.guildId, player, player.currentTrack);
+            return interaction.reply({ content: `♾️ Autoplay is now **${!current ? 'Enabled' : 'Disabled'}**.`, flags: 64 });
         }
 
         if (action === 'btn_shuffle') {
-            if (player.queue.length < 2) {
-                return interaction.reply({ content: '❌ Queue me shuffle karne ke liye kam se kam 2 gaane hone chahiye.', ephemeral: true });
-            }
             player.queue.shuffle();
-            return interaction.reply({ content: '🔀 Queue successfully shuffled!', ephemeral: true });
+            return interaction.reply({ content: '🔀 Queue has been randomized.', flags: 64 });
         }
 
         if (action === 'btn_save') {
@@ -302,13 +349,12 @@ module.exports = async (client) => {
                     .setThumbnail(track.info.image || null);
 
                 await interaction.user.send({ embeds: [saveEmbed] });
-                return interaction.reply({ content: '📩 Gaana aapki DM me save kar diya gaya hai!', ephemeral: true });
+                return interaction.reply({ content: '📩 Sent song details to your Direct Messages!', flags: 64 });
             } catch (err) {
-                return interaction.reply({ content: '❌ Aapki DM band hai, isliye save nahi ho saka.', ephemeral: true });
+                return interaction.reply({ content: '❌ Could not send DM. Please check your privacy settings.', flags: 64 });
             }
         }
     });
 
-    console.log('✔ Custom Rythm UI Controller Engine Active.');
+    console.log('✔ Custom Rythm Panel Music Engine Active.');
 };
-                 
