@@ -1,5 +1,27 @@
 const { SlashCommandBuilder } = require('discord.js');
 
+// Helper function to safely get or create player with wait
+async function getOrCreatePlayer(poru, guildId, voiceChannelId, textChannelId) {
+    let player = poru.players.get(guildId);
+    if (player) return player;
+
+    for (let i = 0; i < 5; i++) {
+        const hasNode = poru.leastUsedNodes.some(n => n.isConnected);
+        if (hasNode) {
+            try {
+                return poru.createConnection({
+                    guildId,
+                    voiceChannel: voiceChannelId,
+                    textChannel: textChannelId,
+                    deaf: true
+                });
+            } catch (e) {}
+        }
+        await new Promise(res => setTimeout(res, 800));
+    }
+    return null;
+}
+
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('play')
@@ -16,21 +38,25 @@ module.exports = {
             return interaction.reply({ content: '❌ Pehle kisi Voice Channel me connect ho jao!', ephemeral: true });
         }
 
-        await interaction.deferReply();
+        try {
+            await interaction.deferReply();
+        } catch {
+            return;
+        }
+
         const query = interaction.options.getString('query');
         const poru = interaction.client.poru;
 
-        try {
-            let player = poru.players.get(interaction.guildId);
-            if (!player) {
-                player = poru.createConnection({
-                    guildId: interaction.guildId,
-                    voiceChannel: memberVoice.id,
-                    textChannel: interaction.channelId,
-                    deaf: true
-                });
-            }
+        if (!poru) {
+            return interaction.editReply('❌ Music engine load ho raha hai, kuch der me try karein.');
+        }
 
+        const player = await getOrCreatePlayer(poru, interaction.guildId, memberVoice.id, interaction.channelId);
+        if (!player) {
+            return interaction.editReply('⚠️ Audio server reconnect ho raha hai, kripya 5 second baad command dubara run karein.');
+        }
+
+        try {
             const resolve = await poru.resolve({ query: query, source: 'ytsearch', requester: interaction.user });
             const { loadType, tracks, playlistInfo } = resolve;
 
@@ -56,7 +82,7 @@ module.exports = {
                 return interaction.editReply(`✅ Added to Queue: **${track.info.title}**`);
             }
         } catch (err) {
-            console.error('Play error:', err);
+            console.error('Play command error:', err);
             return interaction.editReply(`❌ Error: \`${err.message}\``);
         }
     }
