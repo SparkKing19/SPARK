@@ -26,9 +26,14 @@ module.exports = {
         const mode247 = interaction.options.getBoolean('mode_247');
         const poru = interaction.client.poru;
 
-        const isAnyNodeOnline = poru && poru.leastUsedNodes.some(n => n.isConnected);
-        if (!isAnyNodeOnline) {
-            return interaction.editReply('⚠️ Audio server reconnect ho raha hai, 5-10 second baad dobara try karein.');
+        if (!poru) {
+            return interaction.editReply('❌ Music system abhi initialize ho raha hai, thodi der baad try karein.');
+        }
+
+        // Direct check: Any connected node in poru.nodes Map
+        const isOnline = Array.from(poru.nodes.values()).some(n => n.isConnected);
+        if (!isOnline) {
+            return interaction.editReply('⚠️ Audio server reconnect ho raha hai, 5 second baad dobara try karein.');
         }
 
         let player = poru.players.get(interaction.guildId);
