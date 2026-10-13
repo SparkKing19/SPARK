@@ -3,10 +3,10 @@ const { SlashCommandBuilder } = require('discord.js');
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('play')
-        .setDescription('Gaana play karo (YouTube, Spotify, SoundCloud, Search)')
+        .setDescription('Play song, playlist or URL (YouTube, Spotify, SoundCloud)')
         .addStringOption(opt => 
             opt.setName('query')
-                .setDescription('Gaane ka naam ya link daalo')
+                .setDescription('Enter song name, YouTube URL, or Playlist URL')
                 .setRequired(true)
         ),
 
@@ -32,21 +32,15 @@ module.exports = {
             }
 
             const isUrl = query.startsWith('http://') || query.startsWith('https://');
-
-            // Agar URL hai toh direct resolve, agar text search hai toh scsearch/spsearch priority
             let resolve = null;
+
             if (isUrl) {
                 resolve = await poru.resolve({ query: query, requester: interaction.user });
             } else {
-                // Try SoundCloud search first (Built-in Lavalink v4)
                 resolve = await poru.resolve({ query: query, source: 'scsearch', requester: interaction.user });
-
-                // Fallback to Spotify search if not found
                 if (!resolve || !resolve.tracks || !resolve.tracks.length) {
                     resolve = await poru.resolve({ query: query, source: 'spsearch', requester: interaction.user });
                 }
-
-                // Fallback to ytsearch
                 if (!resolve || !resolve.tracks || !resolve.tracks.length) {
                     resolve = await poru.resolve({ query: query, source: 'ytsearch', requester: interaction.user });
                 }
@@ -55,7 +49,7 @@ module.exports = {
             const { loadType, tracks, playlistInfo } = resolve || {};
 
             if (!resolve || loadType === 'LOAD_FAILED' || loadType === 'NO_MATCHES' || !tracks || !tracks.length) {
-                return interaction.editReply(`❌ Koi gaana nahi mila: **${query}**\n*(Tip: Agar title se na mile toh YouTube/Spotify ka direct link paste karein)*`);
+                return interaction.editReply(`❌ Koi gaana nahi mila: **${query}**`);
             }
 
             if (loadType === 'PLAYLIST_LOADED') {
@@ -63,7 +57,7 @@ module.exports = {
                     player.queue.add(track);
                 }
                 if (!player.isPlaying && !player.isPaused) player.play();
-                return interaction.editReply(`🎶 Playlist queued: **${playlistInfo.name}** (\`${tracks.length}\` songs)`);
+                return interaction.editReply(`🎶 Playlist Queued: **${playlistInfo.name}** (\`${tracks.length}\` songs)`);
             }
 
             const track = tracks[0];
@@ -76,7 +70,7 @@ module.exports = {
                 return interaction.editReply(`✅ Added to Queue: **${track.info.title}**`);
             }
         } catch (err) {
-            console.error('Play command error:', err);
+            console.error('Play error:', err);
             return interaction.editReply(`❌ Play error: \`${err.message}\``);
         }
     }
