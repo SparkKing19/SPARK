@@ -1,39 +1,62 @@
-const { Player } = require('discord-player');
-const { DefaultExtractors } = require('@discord-player/extractor');
-const { YoutubeiExtractor } = require('discord-player-youtubei');
+const { Poru } = require('poru');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const ffmpeg = require('ffmpeg-static');
 const Music247 = require('../models/music247');
 
 module.exports = async (client) => {
-    // Explicit FFmpeg binary mapping
-    const player = new Player(client, {
-        skipFFmpeg: false,
-        ffmpeg: ffmpeg,
-        ytdlOptions: {
-            quality: 'highestaudio',
-            highWaterMark: 1 << 25
+    // High-performance Public Lavalink v4 Nodes
+    const nodes = [
+        {
+            name: 'Lavalink-V4-Main',
+            host: 'lava-v4.ajieblogs.eu.org',
+            port: 443,
+            password: 'https://dsc.gg/ajidevserver',
+            secure: true
+        },
+        {
+            name: 'Lavalink-V4-Backup',
+            host: 'lavalink-v4.serenetia.com',
+            port: 443,
+            password: 'youshallnotpass',
+            secure: true
         }
+    ];
+
+    const poru = new Poru(client, nodes, {
+        library: 'discord.js',
+        defaultPlatform: 'ytsearch'
     });
 
-    // Extractors Register
-    await player.extractors.loadDefault();
-    await player.extractors.register(YoutubeiExtractor, {}).catch(() => {});
-    client.player = player;
+    client.poru = poru;
 
-    // Track Start Event -> Rythm-style Controller
-    player.events.on('playerStart', (queue, track) => {
+    // Node Connect & Error Listeners
+    poru.on('nodeConnect', (node) => {
+        console.log(`✔ Lavalink Node Connected: ${node.name}`);
+    });
+
+    poru.on('nodeError', (node, error) => {
+        console.error(`⚠️ Lavalink Node Error (${node.name}):`, error.message);
+    });
+
+    // Track Start Event (Rythm Controller Embed)
+    poru.on('trackStart', (player, track) => {
+        const channel = client.channels.cache.get(player.textChannel);
+        if (!channel) return;
+
+        const duration = track.info.isStream 
+            ? 'LIVE' 
+            : new Date(track.info.length).toISOString().substr(14, 5);
+
         const embed = new EmbedBuilder()
             .setColor('#5865F2')
             .setTitle('🎶 Now Playing')
-            .setDescription(`[**${track.title}**](${track.url})`)
+            .setDescription(`[**${track.info.title}**](${track.info.uri})`)
             .addFields(
-                { name: 'Duration', value: `\`${track.duration}\``, inline: true },
-                { name: 'Requested By', value: `${track.requestedBy}`, inline: true },
-                { name: 'Channel', value: `<#${queue.channel.id}>`, inline: true }
+                { name: 'Duration', value: `\`${duration}\``, inline: true },
+                { name: 'Author', value: `${track.info.author}`, inline: true },
+                { name: 'Channel', value: `<#${player.voiceChannel}>`, inline: true }
             )
-            .setThumbnail(track.thumbnail || client.user.displayAvatarURL())
-            .setFooter({ text: `Volume: ${queue.node.volume}% | Audio Engine: Active` })
+            .setThumbnail(track.info.image || client.user.displayAvatarURL())
+            .setFooter({ text: `Volume: ${player.volume}% | Engine: Lavalink v4` })
             .setTimestamp();
 
         const row = new ActionRowBuilder().addComponents(
@@ -59,32 +82,26 @@ module.exports = async (client) => {
                 .setStyle(ButtonStyle.Danger)
         );
 
-        queue.metadata?.channel?.send({ embeds: [embed], components: [row] }).catch(() => {});
+        channel.send({ embeds: [embed], components: [row] }).catch(() => {});
     });
 
-    player.events.on('playerError', (queue, error) => {
-        console.error('Audio Stream Playback Error:', error);
-    });
+    // Queue End Event
+    poru.on('queueEnd', async (player) => {
+        const is247 = await Music247.findOne({ guildId: player.guildId, enabled: true }).catch(() => null);
+        const channel = client.channels.cache.get(player.textChannel);
 
-    player.events.on('error', (queue, error) => {
-        console.error('Player Node Error:', error);
-    });
-
-    player.events.on('emptyChannel', async (queue) => {
-        const is247 = await Music247.findOne({ guildId: queue.guild.id, enabled: true }).catch(() => null);
-        if (is247) return;
-        queue.metadata?.channel?.send('👋 Voice channel khaali ho gaya, leaving to save resources.').catch(() => {});
-    });
-
-    player.events.on('emptyQueue', async (queue) => {
-        const is247 = await Music247.findOne({ guildId: queue.guild.id, enabled: true }).catch(() => null);
         if (!is247) {
-            queue.metadata?.channel?.send('✅ Queue khatam ho gayi!').catch(() => {});
+            if (channel) channel.send('✅ Queue khatam ho gayi, leaving channel.').catch(() => {});
+            player.destroy();
+        } else {
+            if (channel) channel.send('✅ Queue khatam ho gayi! (24/7 mode active)').catch(() => {});
         }
     });
 
-    // Auto Reconnect to 24/7 channels
+    // Ready hook for Lavalink initialization & 24/7 auto-join
     client.once('ready', async () => {
+        poru.init(client);
+
         const records = await Music247.find({ enabled: true }).catch(() => []);
         for (const rec of records) {
             const guild = client.guilds.cache.get(rec.guildId);
@@ -93,20 +110,14 @@ module.exports = async (client) => {
             const voiceChannel = guild.channels.cache.get(rec.voiceChannelId);
             if (!voiceChannel) continue;
 
-            let queue = player.nodes.get(guild.id);
-            if (!queue) {
-                queue = player.nodes.create(guild, {
-                    metadata: { channel: guild.channels.cache.get(rec.textChannelId) },
-                    volume: 80,
-                    leaveOnEmpty: false,
-                    leaveOnEnd: false
+            let player = poru.players.get(rec.guildId);
+            if (!player) {
+                player = poru.createConnection({
+                    guildId: rec.guildId,
+                    voiceChannel: rec.voiceChannelId,
+                    textChannel: rec.textChannelId,
+                    deaf: true
                 });
-            }
-
-            try {
-                if (!queue.connection) await queue.connect(voiceChannel);
-            } catch (e) {
-                console.error(`Failed to reconnect 24/7 in ${guild.name}:`, e.message);
             }
         }
     });
@@ -115,48 +126,53 @@ module.exports = async (client) => {
     client.on('interactionCreate', async (interaction) => {
         if (!interaction.isButton() || !interaction.customId.startsWith('music_')) return;
 
-        const queue = player.nodes.get(interaction.guildId);
-        if (!queue || !queue.isPlaying()) {
+        const player = poru.players.get(interaction.guildId);
+        if (!player || !player.currentTrack) {
             return interaction.reply({ content: '❌ Abhi koi gaana play nahi ho raha hai.', ephemeral: true });
         }
 
-        if (!interaction.member.voice.channel || interaction.member.voice.channel.id !== queue.channel.id) {
+        if (!interaction.member.voice.channel || interaction.member.voice.channel.id !== player.voiceChannel) {
             return interaction.reply({ content: '❌ Controller use karne ke liye usi voice channel me hona zaroori hai!', ephemeral: true });
         }
 
         if (interaction.customId === 'music_pause_resume') {
-            if (queue.node.isPaused()) {
-                queue.node.resume();
+            if (player.isPaused) {
+                player.pause(false);
                 return interaction.reply({ content: '▶️ Music resume ho gaya.', ephemeral: true });
             } else {
-                queue.node.pause();
+                player.pause(true);
                 return interaction.reply({ content: '⏸️ Music pause ho gaya.', ephemeral: true });
             }
         }
 
         if (interaction.customId === 'music_skip') {
-            queue.node.skip();
-            return interaction.reply({ content: '⏭️ Current track skip ho gaya.', ephemeral: true });
+            player.stop();
+            return interaction.reply({ content: '⏭️ Current track skip kar diya gaya.', ephemeral: true });
         }
 
         if (interaction.customId === 'music_loop') {
-            const nextMode = queue.repeatMode === 0 ? 1 : 0;
-            queue.setRepeatMode(nextMode);
-            return interaction.reply({ content: `🔁 Loop mode ab **${nextMode === 1 ? 'Enabled' : 'Disabled'}** hai.`, ephemeral: true });
+            const currentLoop = player.loop;
+            if (currentLoop === 'NONE') {
+                player.setLoop('TRACK');
+                return interaction.reply({ content: '🔁 Track Loop **Enabled**.', ephemeral: true });
+            } else {
+                player.setLoop('NONE');
+                return interaction.reply({ content: '🔁 Loop **Disabled**.', ephemeral: true });
+            }
         }
 
         if (interaction.customId === 'music_stop') {
             const is247 = await Music247.findOne({ guildId: interaction.guildId, enabled: true }).catch(() => null);
-            queue.tracks.clear();
-            queue.node.stop();
+            player.queue.clear();
+            player.stop();
 
             if (!is247) {
-                queue.delete();
-                return interaction.reply({ content: '⏹️ Music stopped and disconnected.', ephemeral: true });
+                player.destroy();
+                return interaction.reply({ content: '⏹️ Music band karke bot disconnect ho gaya.', ephemeral: true });
             }
             return interaction.reply({ content: '⏹️ Music stopped and queue cleared (24/7 mode active).', ephemeral: true });
         }
     });
 
-    console.log('✔ Rythm Music Engine & 24/7 System Active.');
+    console.log('✔ Rythm Lavalink Music Engine & 24/7 Active.');
 };
