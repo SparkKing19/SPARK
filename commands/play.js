@@ -1,10 +1,9 @@
 const { SlashCommandBuilder } = require('discord.js');
-const { QueryType } = require('discord-player');
 
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('play')
-        .setDescription('Gaana play karo (SoundCloud, Spotify, YouTube URL)')
+        .setDescription('Gaana play karo (YouTube, Spotify, SoundCloud, Link)')
         .addStringOption(opt => 
             opt.setName('query')
                 .setDescription('Gaane ka naam ya URL daalo')
@@ -12,57 +11,54 @@ module.exports = {
         ),
 
     async execute(interaction) {
-        const player = interaction.client.player;
-        const channel = interaction.member.voice.channel;
-
-        if (!channel) {
+        const memberVoice = interaction.member.voice.channel;
+        if (!memberVoice) {
             return interaction.reply({ content: '❌ Pehle kisi Voice Channel me connect ho jao!', ephemeral: true });
         }
 
         await interaction.deferReply();
         const query = interaction.options.getString('query');
+        const poru = interaction.client.poru;
 
         try {
-            const isUrl = query.startsWith('http://') || query.startsWith('https://');
-            const searchEngine = isUrl ? QueryType.AUTO : QueryType.SOUNDCLOUD_SEARCH;
-
-            let result = await player.search(query, {
-                requestedBy: interaction.user,
-                searchEngine: searchEngine
-            });
-
-            if (!result || !result.tracks.length) {
-                result = await player.search(query, {
-                    requestedBy: interaction.user,
-                    searchEngine: QueryType.SPOTIFY_SEARCH
+            // Player create ya get karo
+            let player = poru.players.get(interaction.guildId);
+            if (!player) {
+                player = poru.createConnection({
+                    guildId: interaction.guildId,
+                    voiceChannel: memberVoice.id,
+                    textChannel: interaction.channelId,
+                    deaf: true
                 });
             }
 
-            if (!result || !result.tracks.length) {
-                return interaction.editReply(`❌ Gaana nahi mila: **${query}**`);
+            const resolve = await poru.resolve({ query: query, source: 'ytsearch', requester: interaction.user });
+            const { loadType, tracks, playlistInfo } = resolve;
+
+            if (loadType === 'LOAD_FAILED' || loadType === 'NO_MATCHES' || !tracks.length) {
+                return interaction.editReply(`❌ Koi gaana nahi mila: **${query}**`);
             }
 
-            const { track } = await player.play(channel, result, {
-                nodeOptions: {
-                    metadata: {
-                        channel: interaction.channel,
-                        client: interaction.guild.members.me,
-                        requestedBy: interaction.user
-                    },
-                    selfDeaf: true,
-                    volume: 85,
-                    bufferingTimeout: 3000,
-                    leaveOnEmpty: true,
-                    leaveOnEmptyCooldown: 60000,
-                    leaveOnEnd: true,
-                    leaveOnEndCooldown: 60000
+            if (loadType === 'PLAYLIST_LOADED') {
+                for (const track of tracks) {
+                    player.queue.add(track);
                 }
-            });
+                if (!player.isPlaying && !player.isPaused) player.play();
+                return interaction.editReply(`🎶 Playlist queued: **${playlistInfo.name}** (\`${tracks.length}\` songs)`);
+            }
 
-            return interaction.editReply(`✅ Added to Queue: **${track.title}** (\`${track.duration}\`)`);
+            const track = tracks[0];
+            player.queue.add(track);
+
+            if (!player.isPlaying && !player.isPaused) {
+                player.play();
+                return interaction.editReply(`🎶 Playing: **${track.info.title}**`);
+            } else {
+                return interaction.editReply(`✅ Added to Queue: **${track.info.title}**`);
+            }
         } catch (err) {
-            console.error('Play command error:', err);
-            return interaction.editReply(`❌ Play karne me error aayi: \`${err.message}\``);
+            console.error('Play error:', err);
+            return interaction.editReply(`❌ Error: \`${err.message}\``);
         }
     }
 };
