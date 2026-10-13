@@ -13,7 +13,7 @@ const CustomPlaylist = require('../models/customPlaylist');
 const autoplayMap = new Map();
 const previousTracks = new Map();
 
-// Voice Channel Subtitle Status Updater (Set & Clear)
+// Voice Channel Subtitle Status (Set & Clear)
 async function updateVoiceStatus(client, channelId, statusText = '') {
     if (!channelId) return;
     try {
@@ -28,18 +28,9 @@ async function updateVoiceStatus(client, channelId, statusText = '') {
     } catch (_) {}
 }
 
-// Extract YouTube ID from link
-function extractYouTubeID(url) {
-    const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/);
-    return match ? match[1] : null;
-}
-
-// Thumbnail Resolver
+// High-Res Artwork Resolver
 function getTrackThumbnail(track) {
     if (track.info.image && track.info.image.startsWith('http')) return track.info.image;
-    if (track.info.identifier) {
-        return `https://i.ytimg.com/vi/${track.info.identifier}/hqdefault.jpg`;
-    }
     return 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?q=80&w=1000&auto=format&fit=crop';
 }
 
@@ -131,13 +122,13 @@ function getPanelComponents(player = null) {
     return [row1, row2, row3];
 }
 
-// Embed Builder (Top Title + Bottom Image Banner)
+// Embed Builder (Top Title + Bottom High-Res Banner)
 function getPanelEmbed(client, player = null, track = null) {
     if (!player || !track) {
         return new EmbedBuilder()
             .setColor('#2B2D31')
             .setTitle('🎶 SparkCore Music Control Panel')
-            .setDescription('**No song is currently playing.**\nJoin a voice channel and type `%play <song name or link>` to begin.')
+            .setDescription('**No song is currently playing.**\nJoin a voice channel and type `%play <song name or Spotify/SoundCloud link>` to begin.')
             .setImage('https://dummyimage.com/1280x360/1e1f22/7289da&text=SparkCore+Audio+Engine+Ready')
             .setFooter({ text: 'SparkCore Music System • Standby' });
     }
@@ -145,10 +136,11 @@ function getPanelEmbed(client, player = null, track = null) {
     const duration = track.info.isStream ? 'LIVE' : new Date(track.info.length).toISOString().substr(14, 5);
     const isAutoplay = (autoplayMap.get(player.guildId) ?? true) ? 'Enabled' : 'Disabled';
     const thumbnail = getTrackThumbnail(track);
+    const source = (track.info.sourceName || 'Audio').toUpperCase();
 
     return new EmbedBuilder()
         .setColor('#5865F2')
-        .setDescription(`## <a:play_rec:1559415361290641429> Now Playing...\n\n[**${track.info.title}**](${track.info.uri})\n\n> **Author:** \`${track.info.author}\`\n> **Duration:** \`${duration}\` • **Volume:** \`${player.volume}%\`\n> **Autoplay:** \`${isAutoplay}\` • **Loop:** \`${player.loop}\`\n> **Voice Channel:** <#${player.voiceChannel}>`)
+        .setDescription(`## <a:play_rec:1559415361290641429> Now Playing...\n\n[**${track.info.title}**](${track.info.uri})\n\n> **Author:** \`${track.info.author}\` • **Source:** \`${source}\`\n> **Duration:** \`${duration}\` • **Volume:** \`${player.volume}%\`\n> **Autoplay:** \`${isAutoplay}\` • **Loop:** \`${player.loop}\`\n> **Voice Channel:** <#${player.voiceChannel}>`)
         .setImage(thumbnail)
         .setFooter({ text: `Requested by ${track.info.requester?.username || 'System'}` });
 }
@@ -172,23 +164,22 @@ async function updateGuildPanel(client, guildId, player = null, track = null) {
     } catch (_) {}
 }
 
-// Autoplay recommendation engine
+// Pure Spotify / SoundCloud Autoplay Engine
 async function playNextAutoplay(poru, player, client) {
     const lastTrack = previousTracks.get(player.guildId) || player.currentTrack;
     if (!lastTrack) return;
 
     try {
-        const queries = [
-            `${lastTrack.info.author} audio`,
+        const queryTerms = [
+            `${lastTrack.info.author}`,
             `${lastTrack.info.title}`,
-            `nasheed ${lastTrack.info.author}`,
-            `best of ${lastTrack.info.author}`
+            `${lastTrack.info.author} mix`
         ];
-        const search = queries[Math.floor(Math.random() * queries.length)];
+        const search = queryTerms[Math.floor(Math.random() * queryTerms.length)];
 
-        let res = await poru.resolve({ query: search, source: 'scsearch', requester: client.user });
+        let res = await poru.resolve({ query: search, source: 'spsearch', requester: client.user });
         if (!res || !res.tracks?.length) {
-            res = await poru.resolve({ query: search, source: 'spsearch', requester: client.user });
+            res = await poru.resolve({ query: search, source: 'scsearch', requester: client.user });
         }
 
         if (res?.tracks?.length) {
@@ -211,9 +202,10 @@ module.exports = async (client) => {
         }
     ];
 
+    // Default to Spotify & SoundCloud only
     const poru = new Poru(client, nodes, {
         library: 'discord.js',
-        defaultPlatform: 'scsearch'
+        defaultPlatform: 'spsearch'
     });
 
     client.poru = poru;
@@ -224,7 +216,7 @@ module.exports = async (client) => {
 
     // Node Connect
     poru.on('nodeConnect', async (node) => {
-        console.log(`✔ Private Lavalink Server Online: ${node.name}`);
+        console.log(`✔ Private Lavalink Online: ${node.name}`);
         try {
             const records = await Music247.find({ enabled: true });
             for (const rec of records) {
@@ -252,17 +244,16 @@ module.exports = async (client) => {
             previousTracks.set(player.guildId, player.currentTrack);
         }
 
-        // Live Voice Status with Animated Emoji
+        // Live Voice Channel Subtitle Status
         await updateVoiceStatus(
             client, 
             player.voiceChannel, 
             `<a:play_rec:1559415361290641429> ${track.info.title.substring(0, 35)}`
         );
 
-        // Ensure proper audio stream output volume
         if (player.volume !== 100) player.setVolume(100);
 
-        // Recording custom playlists
+        // Record custom playlist
         try {
             const activePlaylists = await CustomPlaylist.find({ recording: true });
             for (const pl of activePlaylists) {
@@ -289,7 +280,6 @@ module.exports = async (client) => {
             return await playNextAutoplay(poru, player, client);
         }
 
-        // Clear Voice status
         await updateVoiceStatus(client, player.voiceChannel, '');
         await updateGuildPanel(client, player.guildId, null, null);
 
@@ -303,7 +293,7 @@ module.exports = async (client) => {
         }
     });
 
-    // Handle VC Empty -> Return to 24/7 Channel & Clear Status
+    // VC Empty -> Return to 24/7 Channel & Clear Status
     client.on('voiceStateUpdate', async (oldState, newState) => {
         const guildId = oldState.guild.id || newState.guild.id;
         const player = poru.players.get(guildId);
@@ -314,7 +304,6 @@ module.exports = async (client) => {
 
         const humans = currentChannel.members.filter(m => !m.user.bot);
         if (humans.size === 0) {
-            // Clear status before moving
             await updateVoiceStatus(client, currentChannel.id, '');
 
             const rec247 = await Music247.findOne({ guildId, enabled: true });
@@ -354,14 +343,14 @@ module.exports = async (client) => {
                 .setColor('#5865F2')
                 .setTitle('🎶 SparkCore Music Commands')
                 .setDescription('Prefix: `%`\n\n' +
-                    '`%play <name/url>` — Multi-platform audio playback\n' +
-                    '`%join` — Connect bot to voice channel\n' +
-                    '`%stop` — Stop playback and reset status\n' +
-                    '`%skip` — Skip to next track or autoplay recommendation\n' +
-                    '`%24/7` — Permanent channel bind\n' +
-                    '`%music panel` or `%setup` — Create interactive music panel\n' +
-                    '`%playlist create <name>` — Auto-record next 10 songs\n' +
-                    '`%playlist <name>` — Queue custom saved playlist'
+                    '`%play <song name or link>` — Play from Spotify or SoundCloud\n' +
+                    '`%join` — Summon bot to your current voice channel\n' +
+                    '`%stop` — Stop playback and reset to 24/7 standby\n' +
+                    '`%skip` — Skip to next track or autoplay next track\n' +
+                    '`%24/7` — Set persistent 24/7 channel home\n' +
+                    '`%music panel` or `%setup` — Create interactive live music panel\n' +
+                    '`%playlist create <name>` — Record the next 10 songs into a playlist\n' +
+                    '`%playlist <name>` — Load and queue your saved playlist'
                 );
             return message.reply({ embeds: [helpEmbed] });
         }
@@ -432,13 +421,13 @@ module.exports = async (client) => {
             }
         }
 
-                // %play (Universal YouTube & Metadata Resolver)
+        // %play (Pure Spotify & SoundCloud Pipeline)
         if (commandName === 'play' || commandName === 'p') {
             const vc = message.member.voice.channel;
             if (!vc) return message.reply('❌ Please join a voice channel first.');
 
-            let rawQuery = args.join(' ').trim();
-            if (!rawQuery) return message.reply('❌ Enter a song name or valid URL: `%play <query>`');
+            const query = args.join(' ').trim();
+            if (!query) return message.reply('❌ Enter a song name or Spotify/SoundCloud link: `%play <query>`');
 
             let player = poru.players.get(message.guild.id);
             if (!player) {
@@ -450,56 +439,29 @@ module.exports = async (client) => {
                 });
             }
 
-            const statusMsg = await message.reply('🔍 Resolving audio stream...');
+            const statusMsg = await message.reply('🔍 Searching track on Spotify & SoundCloud...');
 
             try {
                 let res = null;
-                const ytId = extractYouTubeID(rawQuery);
-                let fetchedTitle = null;
 
-                // Handle YouTube links by resolving via YouTube API oEmbed metadata
-                if (ytId) {
-                    try {
-                        const oembed = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${ytId}&format=json`)
-                            .then(r => r.json())
-                            .catch(() => null);
-
-                        if (oembed && oembed.title) {
-                            fetchedTitle = oembed.title;
-                        }
-                    } catch (_) {}
-
-                    // Try native Lavalink YouTube resolution first
-                    res = await poru.resolve({ query: `https://www.youtube.com/watch?v=${ytId}`, requester: message.author });
-                    
-                    // If datacenter IP blocked, fallback to stream title search
-                    if (!res || !res.tracks?.length) {
-                        const searchQuery = fetchedTitle || rawQuery;
-                        res = await poru.resolve({ query: searchQuery, source: 'scsearch', requester: message.author });
-                        if (!res || !res.tracks?.length) {
-                            res = await poru.resolve({ query: searchQuery, source: 'spsearch', requester: message.author });
-                        }
-                    }
-                } else if (rawQuery.startsWith('http')) {
-                    res = await poru.resolve({ query: rawQuery, requester: message.author });
+                // Direct URL support (Spotify / SoundCloud / Links)
+                if (query.startsWith('http://') || query.startsWith('https://')) {
+                    res = await poru.resolve({ query, requester: message.author });
                 }
 
-                // Keyword Title Search Waterfall (SoundCloud -> Spotify -> Native)
+                // Keyword Title Search (Spotify -> SoundCloud -> Query Fallback)
                 if (!res || !res.tracks?.length) {
-                    res = await poru.resolve({ query: rawQuery, source: 'scsearch', requester: message.author });
+                    res = await poru.resolve({ query, source: 'spsearch', requester: message.author });
                 }
                 if (!res || !res.tracks?.length) {
-                    res = await poru.resolve({ query: `${rawQuery} audio`, source: 'scsearch', requester: message.author });
+                    res = await poru.resolve({ query, source: 'scsearch', requester: message.author });
                 }
                 if (!res || !res.tracks?.length) {
-                    res = await poru.resolve({ query: rawQuery, source: 'spsearch', requester: message.author });
-                }
-                if (!res || !res.tracks?.length) {
-                    res = await poru.resolve({ query: rawQuery, source: 'ytsearch', requester: message.author });
+                    res = await poru.resolve({ query: `${query} audio`, source: 'scsearch', requester: message.author });
                 }
 
                 if (!res || !res.tracks?.length) {
-                    return statusMsg.edit(`❌ Audio not found for: **${rawQuery}**`);
+                    return statusMsg.edit(`❌ Audio not found for: **${query}**`);
                 }
 
                 if (res.loadType === 'PLAYLIST_LOADED') {
@@ -509,14 +471,6 @@ module.exports = async (client) => {
                 }
 
                 const track = res.tracks[0];
-                
-                // If resolving from a YouTube URL, preserve original title and YouTube thumbnail
-                if (ytId) {
-                    if (fetchedTitle) track.info.title = fetchedTitle;
-                    track.info.image = `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg`;
-                    track.info.uri = `https://www.youtube.com/watch?v=${ytId}`;
-                }
-
                 player.queue.add(track);
 
                 if (!player.isPlaying && !player.isPaused) {
@@ -529,7 +483,6 @@ module.exports = async (client) => {
                 return statusMsg.edit(`❌ Playback error: \`${err.message}\``);
             }
         }
-                    
 
         // %stop
         if (commandName === 'stop') {
@@ -663,6 +616,7 @@ module.exports = async (client) => {
             return interaction.reply({ content: '▶️ Resumed playback.', flags: 64 });
         }
 
+        // NEXT BUTTON (Smart Autoplay Integration)
         if (id === 'btn_next') {
             const title = player.currentTrack.info.title;
             if (player.queue.length > 0) {
@@ -745,5 +699,5 @@ module.exports = async (client) => {
         }
     });
 
-    console.log('✔ Custom Rythm Music Engine & Live Voice Status Active.');
+    console.log('✔ Custom Rythm Music Engine (Spotify & SoundCloud Engine) Active.');
 };
