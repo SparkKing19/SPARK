@@ -13,29 +13,36 @@ const CustomPlaylist = require('../models/customPlaylist');
 const autoplayMap = new Map();
 const previousTracks = new Map();
 
-// Helper: Voice Channel Status updater
-async function updateVoiceStatus(client, voiceChannelId, statusText) {
-    if (!voiceChannelId) return;
+// Voice Channel Subtitle Status (REST API fallback)
+async function updateVoiceStatus(client, channelId, statusText) {
+    if (!channelId) return;
     try {
-        const channel = client.channels.cache.get(voiceChannelId);
+        const channel = client.channels.cache.get(channelId);
         if (channel && typeof channel.setStatus === 'function') {
             await channel.setStatus(statusText).catch(() => {});
+        } else {
+            // Direct Discord API Call for Voice Status
+            await client.rest.put(`/channels/${channelId}/voice-status`, {
+                body: { status: statusText }
+            }).catch(() => {});
         }
     } catch (_) {}
 }
 
-// Helper: Safe Track Skip/Stop
-function safeSkipTrack(player) {
-    if (!player) return;
-    if (typeof player.skip === 'function') player.skip();
-    else if (typeof player.stop === 'function') player.stop();
-    else player.destroy();
+// Smart Thumbnail Resolver (SoundCloud / YouTube fix)
+function getTrackThumbnail(track) {
+    if (track.info.image && track.info.image.startsWith('http')) return track.info.image;
+    if (track.info.identifier && track.info.sourceName === 'youtube') {
+        return `https://i.ytimg.com/vi/${track.info.identifier}/hqdefault.jpg`;
+    }
+    // High-res audio fallback banner
+    return 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?q=80&w=1000&auto=format&fit=crop';
 }
 
-// Helper: Controller Components
+// Controller Components
 function getPanelComponents(player = null) {
     const isLoop = player ? player.loop === 'TRACK' : false;
-    const isAutoplay = player ? (autoplayMap.get(player.guildId) || false) : false;
+    const isAutoplay = player ? (autoplayMap.get(player.guildId) ?? true) : true;
 
     // Row 1: ⏸️ ⏮️ 🛑 ⏯️ ▶️
     const row1 = new ActionRowBuilder().addComponents(
@@ -120,7 +127,7 @@ function getPanelComponents(player = null) {
     return [row1, row2, row3];
 }
 
-// Helper: Embed Builder (Top Title, Bottom Image Banner)
+// Embed Builder (Top Title + Bottom High-Res Banner)
 function getPanelEmbed(client, player = null, track = null) {
     if (!player || !track) {
         return new EmbedBuilder()
@@ -132,12 +139,13 @@ function getPanelEmbed(client, player = null, track = null) {
     }
 
     const duration = track.info.isStream ? 'LIVE' : new Date(track.info.length).toISOString().substr(14, 5);
-    const isAutoplay = autoplayMap.get(player.guildId) ? 'Active' : 'Disabled';
+    const isAutoplay = (autoplayMap.get(player.guildId) ?? true) ? 'Enabled' : 'Disabled';
+    const thumbnail = getTrackThumbnail(track);
 
     return new EmbedBuilder()
         .setColor('#5865F2')
         .setDescription(`## <a:play_rec:1559415361290641429> Now Playing...\n\n[**${track.info.title}**](${track.info.uri})\n\n> **Author:** \`${track.info.author}\`\n> **Duration:** \`${duration}\` • **Volume:** \`${player.volume}%\`\n> **Autoplay:** \`${isAutoplay}\` • **Loop:** \`${player.loop}\`\n> **Voice Channel:** <#${player.voiceChannel}>`)
-        .setImage(track.info.image || client.user.displayAvatarURL({ size: 1024 }))
+        .setImage(thumbnail)
         .setFooter({ text: `Requested by ${track.info.requester?.username || 'System'}` });
 }
 
@@ -157,6 +165,34 @@ async function updateGuildPanel(client, guildId, player = null, track = null) {
             embeds: [getPanelEmbed(client, player, track)],
             components: getPanelComponents(player)
         });
+    } catch (_) {}
+}
+
+// Smart Autoplay Fetcher
+async function playNextAutoplay(poru, player, client) {
+    const lastTrack = previousTracks.get(player.guildId) || player.currentTrack;
+    if (!lastTrack) return;
+
+    try {
+        const queryTerms = [
+            `${lastTrack.info.author} audio`,
+            `${lastTrack.info.title}`,
+            `nasheed ${lastTrack.info.author}`,
+            `best of ${lastTrack.info.author}`
+        ];
+        const search = queryTerms[Math.floor(Math.random() * queryTerms.length)];
+
+        let res = await poru.resolve({ query: search, source: 'scsearch', requester: client.user });
+        if (!res || !res.tracks?.length) {
+            res = await poru.resolve({ query: search, source: 'spsearch', requester: client.user });
+        }
+
+        if (res?.tracks?.length) {
+            const filtered = res.tracks.filter(t => t.info.title !== lastTrack.info.title);
+            const next = filtered.length ? filtered[Math.floor(Math.random() * Math.min(filtered.length, 5))] : res.tracks[0];
+            player.queue.add(next);
+            return player.play();
+        }
     } catch (_) {}
 }
 
@@ -212,14 +248,14 @@ module.exports = async (client) => {
             previousTracks.set(player.guildId, player.currentTrack);
         }
 
-        // Voice Channel Subtitle Status (Screenshot feature)
+        // Voice Channel Subtitle Status
         await updateVoiceStatus(
             client, 
             player.voiceChannel, 
-            `Playing ${track.info.title.substring(0, 40)}`
+            `Playing ${track.info.title.substring(0, 35)}`
         );
 
-        // Recording playlist buffer
+        // Recording custom playlists
         try {
             const activePlaylists = await CustomPlaylist.find({ recording: true });
             for (const pl of activePlaylists) {
@@ -239,31 +275,16 @@ module.exports = async (client) => {
         await updateGuildPanel(client, player.guildId, player, track);
     });
 
-    // Queue End / Autoplay
+    // Queue End -> Auto Next Playback
     poru.on('queueEnd', async (player) => {
-        const isAutoplay = autoplayMap.get(player.guildId);
-        const lastTrack = previousTracks.get(player.guildId) || player.currentTrack;
-
-        if (isAutoplay && lastTrack) {
-            try {
-                const query = `${lastTrack.info.author} songs`;
-                let res = await poru.resolve({ query, source: 'scsearch', requester: client.user });
-                if (!res || !res.tracks?.length) {
-                    res = await poru.resolve({ query, source: 'spsearch', requester: client.user });
-                }
-
-                if (res?.tracks?.length) {
-                    const next = res.tracks[Math.floor(Math.random() * Math.min(res.tracks.length, 5))];
-                    player.queue.add(next);
-                    return player.play();
-                }
-            } catch (_) {}
+        const isAutoplay = autoplayMap.get(player.guildId) ?? true;
+        if (isAutoplay) {
+            return await playNextAutoplay(poru, player, client);
         }
 
         await updateVoiceStatus(client, player.voiceChannel, 'Playing Nothing');
         await updateGuildPanel(client, player.guildId, null, null);
 
-        // Check if 24/7 channel return is required
         const rec247 = await Music247.findOne({ guildId: player.guildId, enabled: true });
         if (rec247) {
             if (player.voiceChannel !== rec247.voiceChannelId) {
@@ -271,6 +292,33 @@ module.exports = async (client) => {
             }
         } else {
             player.destroy();
+        }
+    });
+
+    // Check if voice channel is empty -> Teleport back to 24/7 Channel
+    client.on('voiceStateUpdate', async (oldState, newState) => {
+        const guildId = oldState.guild.id || newState.guild.id;
+        const player = poru.players.get(guildId);
+        if (!player) return;
+
+        const botVoiceChannel = oldState.guild.channels.cache.get(player.voiceChannel);
+        if (!botVoiceChannel) return;
+
+        // If only bot is left in VC
+        const humans = botVoiceChannel.members.filter(m => !m.user.bot);
+        if (humans.size === 0) {
+            const rec247 = await Music247.findOne({ guildId, enabled: true });
+            if (rec247) {
+                player.queue.clear();
+                if (typeof player.skip === 'function') player.skip();
+                if (player.voiceChannel !== rec247.voiceChannelId) {
+                    player.setVoiceChannel(rec247.voiceChannelId);
+                }
+                await updateVoiceStatus(client, rec247.voiceChannelId, 'Playing Nothing');
+                await updateGuildPanel(client, guildId, null, null);
+            } else {
+                player.destroy();
+            }
         }
     });
 
@@ -296,15 +344,15 @@ module.exports = async (client) => {
                 .setColor('#5865F2')
                 .setTitle('🎶 SparkCore Music Commands')
                 .setDescription('Prefix: `%`\n\n' +
-                    '`%play <name/url>` — Play audio from YouTube, Spotify, or SoundCloud\n' +
-                    '`%join` — Summon the bot to your current voice channel\n' +
-                    '`%stop` — Stop audio playback and return to 24/7 standby\n' +
-                    '`%skip` — Skip to the next audio track\n' +
-                    '`%24/7` — Toggle persistent 24/7 channel reservation\n' +
-                    '`%music panel` or `%setup` — Deploy persistent interactive music panel\n' +
-                    '`%playlist create <name>` — Record the next 10 songs into your personal playlist\n' +
-                    '`%playlist <name>` — Queue your saved custom playlist\n' +
-                    '`%addowner @user` — Add an authorized extra manager'
+                    '`%play <name/url>` — Play song with multi-engine resolution\n' +
+                    '`%join` — Summon bot to current voice channel\n' +
+                    '`%stop` — Stop audio and reset to 24/7 standby\n' +
+                    '`%skip` — Skip track (triggers autoplay if queue empty)\n' +
+                    '`%24/7` — Bind current channel as permanent 24/7 home\n' +
+                    '`%music panel` or `%setup` — Create persistent live music panel\n' +
+                    '`%playlist create <name>` — Auto-save the next 10 songs into a playlist\n' +
+                    '`%playlist <name>` — Play your saved playlist\n' +
+                    '`%addowner @user` — Authorize a server manager'
                 );
             return message.reply({ embeds: [helpEmbed] });
         }
@@ -317,7 +365,7 @@ module.exports = async (client) => {
             const isExtraOwner = conf?.extraOwners?.includes(message.author.id);
 
             if (!isOwner && !isAdmin && !isExtraOwner) {
-                return message.reply('❌ Only Server Owners, Administrators, or Extra Owners can setup the panel.');
+                return message.reply('❌ Only Server Owners, Admins, or Extra Owners can setup the panel.');
             }
 
             const embed = getPanelEmbed(client, null, null);
@@ -393,7 +441,7 @@ module.exports = async (client) => {
                 });
             }
 
-            const statusMsg = await message.reply('🔍 Searching audio stream across sources...');
+            const statusMsg = await message.reply('🔍 Searching audio across engines...');
 
             try {
                 const isUrl = query.startsWith('http://') || query.startsWith('https://');
@@ -403,12 +451,15 @@ module.exports = async (client) => {
                     res = await poru.resolve({ query, requester: message.author });
                 }
 
-                // Fallback for searches and YouTube links with parsing restrictions
-                if (!res || !res.tracks?.length) {
-                    res = await poru.resolve({ query, source: 'spsearch', requester: message.author });
-                }
+                // Multi-engine search waterfall
                 if (!res || !res.tracks?.length) {
                     res = await poru.resolve({ query, source: 'scsearch', requester: message.author });
+                }
+                if (!res || !res.tracks?.length) {
+                    res = await poru.resolve({ query: `${query} audio`, source: 'scsearch', requester: message.author });
+                }
+                if (!res || !res.tracks?.length) {
+                    res = await poru.resolve({ query, source: 'spsearch', requester: message.author });
                 }
                 if (!res || !res.tracks?.length) {
                     res = await poru.resolve({ query, source: 'ytsearch', requester: message.author });
@@ -448,7 +499,7 @@ module.exports = async (client) => {
 
             const rec247 = await Music247.findOne({ guildId: message.guild.id, enabled: true });
             if (rec247) {
-                safeSkipTrack(player);
+                if (typeof player.skip === 'function') player.skip();
                 if (player.voiceChannel !== rec247.voiceChannelId) {
                     player.setVoiceChannel(rec247.voiceChannelId);
                 }
@@ -521,7 +572,7 @@ module.exports = async (client) => {
             return interaction.reply({ content: `❌ You must be inside <#${player.voiceChannel}> to control playback.`, flags: 64 });
         }
 
-        // 12 Filter Handlers
+        // Filters
         if (interaction.isStringSelectMenu() && interaction.customId === 'menu_filters') {
             const val = interaction.values[0];
             await interaction.deferUpdate();
@@ -554,7 +605,7 @@ module.exports = async (client) => {
             return;
         }
 
-        // Button Actions
+        // Buttons
         const id = interaction.customId;
 
         if (id === 'btn_pause') {
@@ -569,17 +620,22 @@ module.exports = async (client) => {
             return interaction.reply({ content: '▶️ Resumed playback.', flags: 64 });
         }
 
+        // NEXT BUTTON (Smart Queue or Immediate Autoplay)
         if (id === 'btn_next') {
             const title = player.currentTrack.info.title;
-            safeSkipTrack(player);
-            return interaction.reply({ content: `⏯️ Skipped **${title}**.`, flags: 64 });
+            if (player.queue.length > 0) {
+                if (typeof player.skip === 'function') player.skip();
+            } else {
+                await playNextAutoplay(poru, player, client);
+            }
+            return interaction.reply({ content: `⏭️ Playing next after **${title}**.`, flags: 64 });
         }
 
         if (id === 'btn_previous') {
             const prev = previousTracks.get(interaction.guildId);
             if (!prev) return interaction.reply({ content: '❌ No previous song recorded.', flags: 64 });
             player.queue.unshift(prev);
-            safeSkipTrack(player);
+            if (typeof player.skip === 'function') player.skip();
             return interaction.reply({ content: `⏮️ Playing previous: **${prev.info.title}**`, flags: 64 });
         }
 
@@ -588,7 +644,7 @@ module.exports = async (client) => {
             player.queue.clear();
             const rec247 = await Music247.findOne({ guildId: interaction.guildId, enabled: true });
             if (rec247) {
-                safeSkipTrack(player);
+                if (typeof player.skip === 'function') player.skip();
                 if (player.voiceChannel !== rec247.voiceChannelId) {
                     player.setVoiceChannel(rec247.voiceChannelId);
                 }
@@ -607,10 +663,10 @@ module.exports = async (client) => {
         }
 
         if (id === 'btn_autoplay') {
-            const current = autoplayMap.get(interaction.guildId) || false;
+            const current = autoplayMap.get(interaction.guildId) ?? true;
             autoplayMap.set(interaction.guildId, !current);
             await updateGuildPanel(client, player.guildId, player, player.currentTrack);
-            return interaction.reply({ content: `🔁 Autoplay next: **${!current ? 'Enabled' : 'Disabled'}**.`, flags: 64 });
+            return interaction.reply({ content: `🔁 Endless Autoplay: **${!current ? 'Enabled' : 'Disabled'}**.`, flags: 64 });
         }
 
         if (id === 'btn_volup') {
@@ -642,7 +698,7 @@ module.exports = async (client) => {
                 },
                 { upsert: true }
             );
-            return interaction.reply({ content: `💾 Added **${player.currentTrack.info.title}** to your \`Favorites\` playlist!`, flags: 64 });
+            return interaction.reply({ content: `💾 Added **${player.currentTrack.info.title}** to \`Favorites\`!`, flags: 64 });
         }
     });
 
