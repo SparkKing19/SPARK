@@ -2,10 +2,14 @@ const { Player } = require('discord-player');
 const { DefaultExtractors } = require('@discord-player/extractor');
 const { YoutubeiExtractor } = require('discord-player-youtubei');
 const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
+const ffmpeg = require('ffmpeg-static');
 const Music247 = require('../models/music247');
 
 module.exports = async (client) => {
+    // Explicit FFmpeg binary mapping
     const player = new Player(client, {
+        skipFFmpeg: false,
+        ffmpeg: ffmpeg,
         ytdlOptions: {
             quality: 'highestaudio',
             highWaterMark: 1 << 25
@@ -17,7 +21,7 @@ module.exports = async (client) => {
     await player.extractors.register(YoutubeiExtractor, {}).catch(() => {});
     client.player = player;
 
-    // Track Start Event -> Controller Embed
+    // Track Start Event -> Rythm-style Controller
     player.events.on('playerStart', (queue, track) => {
         const embed = new EmbedBuilder()
             .setColor('#5865F2')
@@ -29,7 +33,7 @@ module.exports = async (client) => {
                 { name: 'Channel', value: `<#${queue.channel.id}>`, inline: true }
             )
             .setThumbnail(track.thumbnail || client.user.displayAvatarURL())
-            .setFooter({ text: `Volume: ${queue.node.volume}% | Source: ${track.queryType || 'Audio Stream'}` })
+            .setFooter({ text: `Volume: ${queue.node.volume}% | Audio Engine: Active` })
             .setTimestamp();
 
         const row = new ActionRowBuilder().addComponents(
@@ -58,6 +62,14 @@ module.exports = async (client) => {
         queue.metadata?.channel?.send({ embeds: [embed], components: [row] }).catch(() => {});
     });
 
+    player.events.on('playerError', (queue, error) => {
+        console.error('Audio Stream Playback Error:', error);
+    });
+
+    player.events.on('error', (queue, error) => {
+        console.error('Player Node Error:', error);
+    });
+
     player.events.on('emptyChannel', async (queue) => {
         const is247 = await Music247.findOne({ guildId: queue.guild.id, enabled: true }).catch(() => null);
         if (is247) return;
@@ -71,11 +83,7 @@ module.exports = async (client) => {
         }
     });
 
-    player.events.on('error', (queue, error) => {
-        console.error(`Music Player Error: ${error.message}`);
-    });
-
-    // Auto Reconnect to 24/7 channels on Bot Ready
+    // Auto Reconnect to 24/7 channels
     client.once('ready', async () => {
         const records = await Music247.find({ enabled: true }).catch(() => []);
         for (const rec of records) {
