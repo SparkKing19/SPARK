@@ -13,15 +13,14 @@ const CustomPlaylist = require('../models/customPlaylist');
 const autoplayMap = new Map();
 const previousTracks = new Map();
 
-// Voice Channel Subtitle Status (REST API fallback)
-async function updateVoiceStatus(client, channelId, statusText) {
+// Voice Channel Subtitle Status Updater (Set & Clear)
+async function updateVoiceStatus(client, channelId, statusText = '') {
     if (!channelId) return;
     try {
         const channel = client.channels.cache.get(channelId);
         if (channel && typeof channel.setStatus === 'function') {
             await channel.setStatus(statusText).catch(() => {});
         } else {
-            // Direct Discord API Call for Voice Status
             await client.rest.put(`/channels/${channelId}/voice-status`, {
                 body: { status: statusText }
             }).catch(() => {});
@@ -29,13 +28,18 @@ async function updateVoiceStatus(client, channelId, statusText) {
     } catch (_) {}
 }
 
-// Smart Thumbnail Resolver (SoundCloud / YouTube fix)
+// Extract YouTube ID from link
+function extractYouTubeID(url) {
+    const match = url.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/);
+    return match ? match[1] : null;
+}
+
+// Thumbnail Resolver
 function getTrackThumbnail(track) {
     if (track.info.image && track.info.image.startsWith('http')) return track.info.image;
-    if (track.info.identifier && track.info.sourceName === 'youtube') {
+    if (track.info.identifier) {
         return `https://i.ytimg.com/vi/${track.info.identifier}/hqdefault.jpg`;
     }
-    // High-res audio fallback banner
     return 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?q=80&w=1000&auto=format&fit=crop';
 }
 
@@ -127,7 +131,7 @@ function getPanelComponents(player = null) {
     return [row1, row2, row3];
 }
 
-// Embed Builder (Top Title + Bottom High-Res Banner)
+// Embed Builder (Top Title + Bottom Image Banner)
 function getPanelEmbed(client, player = null, track = null) {
     if (!player || !track) {
         return new EmbedBuilder()
@@ -168,19 +172,19 @@ async function updateGuildPanel(client, guildId, player = null, track = null) {
     } catch (_) {}
 }
 
-// Smart Autoplay Fetcher
+// Autoplay recommendation engine
 async function playNextAutoplay(poru, player, client) {
     const lastTrack = previousTracks.get(player.guildId) || player.currentTrack;
     if (!lastTrack) return;
 
     try {
-        const queryTerms = [
+        const queries = [
             `${lastTrack.info.author} audio`,
             `${lastTrack.info.title}`,
             `nasheed ${lastTrack.info.author}`,
             `best of ${lastTrack.info.author}`
         ];
-        const search = queryTerms[Math.floor(Math.random() * queryTerms.length)];
+        const search = queries[Math.floor(Math.random() * queries.length)];
 
         let res = await poru.resolve({ query: search, source: 'scsearch', requester: client.user });
         if (!res || !res.tracks?.length) {
@@ -209,7 +213,7 @@ module.exports = async (client) => {
 
     const poru = new Poru(client, nodes, {
         library: 'discord.js',
-        defaultPlatform: 'ytsearch'
+        defaultPlatform: 'scsearch'
     });
 
     client.poru = poru;
@@ -242,18 +246,21 @@ module.exports = async (client) => {
         } catch (_) {}
     });
 
-    // Track Start
+    // Track Start Listener
     poru.on('trackStart', async (player, track) => {
         if (player.currentTrack) {
             previousTracks.set(player.guildId, player.currentTrack);
         }
 
-        // Voice Channel Subtitle Status
+        // Live Voice Status with Animated Emoji
         await updateVoiceStatus(
             client, 
             player.voiceChannel, 
-            `Playing ${track.info.title.substring(0, 35)}`
+            `<a:play_rec:1559415361290641429> ${track.info.title.substring(0, 35)}`
         );
+
+        // Ensure proper audio stream output volume
+        if (player.volume !== 100) player.setVolume(100);
 
         // Recording custom playlists
         try {
@@ -282,7 +289,8 @@ module.exports = async (client) => {
             return await playNextAutoplay(poru, player, client);
         }
 
-        await updateVoiceStatus(client, player.voiceChannel, 'Playing Nothing');
+        // Clear Voice status
+        await updateVoiceStatus(client, player.voiceChannel, '');
         await updateGuildPanel(client, player.guildId, null, null);
 
         const rec247 = await Music247.findOne({ guildId: player.guildId, enabled: true });
@@ -295,18 +303,20 @@ module.exports = async (client) => {
         }
     });
 
-    // Check if voice channel is empty -> Teleport back to 24/7 Channel
+    // Handle VC Empty -> Return to 24/7 Channel & Clear Status
     client.on('voiceStateUpdate', async (oldState, newState) => {
         const guildId = oldState.guild.id || newState.guild.id;
         const player = poru.players.get(guildId);
         if (!player) return;
 
-        const botVoiceChannel = oldState.guild.channels.cache.get(player.voiceChannel);
-        if (!botVoiceChannel) return;
+        const currentChannel = oldState.guild.channels.cache.get(player.voiceChannel);
+        if (!currentChannel) return;
 
-        // If only bot is left in VC
-        const humans = botVoiceChannel.members.filter(m => !m.user.bot);
+        const humans = currentChannel.members.filter(m => !m.user.bot);
         if (humans.size === 0) {
+            // Clear status before moving
+            await updateVoiceStatus(client, currentChannel.id, '');
+
             const rec247 = await Music247.findOne({ guildId, enabled: true });
             if (rec247) {
                 player.queue.clear();
@@ -314,7 +324,7 @@ module.exports = async (client) => {
                 if (player.voiceChannel !== rec247.voiceChannelId) {
                     player.setVoiceChannel(rec247.voiceChannelId);
                 }
-                await updateVoiceStatus(client, rec247.voiceChannelId, 'Playing Nothing');
+                await updateVoiceStatus(client, rec247.voiceChannelId, '');
                 await updateGuildPanel(client, guildId, null, null);
             } else {
                 player.destroy();
@@ -338,21 +348,20 @@ module.exports = async (client) => {
         const args = message.content.slice(PREFIX.length).trim().split(/ +/);
         const commandName = args.shift().toLowerCase();
 
-        // %music (Commands Help)
+        // %music
         if (commandName === 'music' && (!args[0] || args[0].toLowerCase() !== 'panel')) {
             const helpEmbed = new EmbedBuilder()
                 .setColor('#5865F2')
                 .setTitle('🎶 SparkCore Music Commands')
                 .setDescription('Prefix: `%`\n\n' +
-                    '`%play <name/url>` — Play song with multi-engine resolution\n' +
-                    '`%join` — Summon bot to current voice channel\n' +
-                    '`%stop` — Stop audio and reset to 24/7 standby\n' +
-                    '`%skip` — Skip track (triggers autoplay if queue empty)\n' +
-                    '`%24/7` — Bind current channel as permanent 24/7 home\n' +
-                    '`%music panel` or `%setup` — Create persistent live music panel\n' +
-                    '`%playlist create <name>` — Auto-save the next 10 songs into a playlist\n' +
-                    '`%playlist <name>` — Play your saved playlist\n' +
-                    '`%addowner @user` — Authorize a server manager'
+                    '`%play <name/url>` — Multi-platform audio playback\n' +
+                    '`%join` — Connect bot to voice channel\n' +
+                    '`%stop` — Stop playback and reset status\n' +
+                    '`%skip` — Skip to next track or autoplay recommendation\n' +
+                    '`%24/7` — Permanent channel bind\n' +
+                    '`%music panel` or `%setup` — Create interactive music panel\n' +
+                    '`%playlist create <name>` — Auto-record next 10 songs\n' +
+                    '`%playlist <name>` — Queue custom saved playlist'
                 );
             return message.reply({ embeds: [helpEmbed] });
         }
@@ -407,7 +416,7 @@ module.exports = async (client) => {
             if (!isOwner && !isAdmin) return message.reply('❌ Only Server Owners or Admins can configure 24/7 mode.');
 
             const vc = message.member.voice.channel;
-            if (!vc) return message.reply('❌ Join the specific voice channel you want as the 24/7 home.');
+            if (!vc) return message.reply('❌ Join the specific voice channel you want as 24/7 home.');
 
             const existing = await Music247.findOne({ guildId: message.guild.id, enabled: true });
             if (existing) {
@@ -423,13 +432,13 @@ module.exports = async (client) => {
             }
         }
 
-        // %play
+        // %play (Universal YouTube & Search Resolver)
         if (commandName === 'play' || commandName === 'p') {
             const vc = message.member.voice.channel;
             if (!vc) return message.reply('❌ Please join a voice channel first.');
 
-            const query = args.join(' ');
-            if (!query) return message.reply('❌ Enter a song name or valid URL: `%play <query>`');
+            const rawQuery = args.join(' ');
+            if (!rawQuery) return message.reply('❌ Enter a song name or valid URL: `%play <query>`');
 
             let player = poru.players.get(message.guild.id);
             if (!player) {
@@ -441,32 +450,38 @@ module.exports = async (client) => {
                 });
             }
 
-            const statusMsg = await message.reply('🔍 Searching audio across engines...');
+            const statusMsg = await message.reply('🔍 Searching audio stream...');
 
             try {
-                const isUrl = query.startsWith('http://') || query.startsWith('https://');
                 let res = null;
+                const ytId = extractYouTubeID(rawQuery);
 
-                if (isUrl) {
-                    res = await poru.resolve({ query, requester: message.author });
-                }
-
-                // Multi-engine search waterfall
-                if (!res || !res.tracks?.length) {
-                    res = await poru.resolve({ query, source: 'scsearch', requester: message.author });
-                }
-                if (!res || !res.tracks?.length) {
-                    res = await poru.resolve({ query: `${query} audio`, source: 'scsearch', requester: message.author });
-                }
-                if (!res || !res.tracks?.length) {
-                    res = await poru.resolve({ query, source: 'spsearch', requester: message.author });
-                }
-                if (!res || !res.tracks?.length) {
-                    res = await poru.resolve({ query, source: 'ytsearch', requester: message.author });
+                // If user provided a YouTube Link
+                if (ytId) {
+                    res = await poru.resolve({ query: `https://www.youtube.com/watch?v=${ytId}`, requester: message.author });
+                    if (!res || !res.tracks?.length) {
+                        res = await poru.resolve({ query: ytId, source: 'scsearch', requester: message.author });
+                    }
+                } else if (rawQuery.startsWith('http')) {
+                    res = await poru.resolve({ query: rawQuery, requester: message.author });
                 }
 
+                // Keyword Title Search Waterfall (SoundCloud -> Spotify -> YouTube)
                 if (!res || !res.tracks?.length) {
-                    return statusMsg.edit(`❌ Audio not found for: **${query}**`);
+                    res = await poru.resolve({ query: rawQuery, source: 'scsearch', requester: message.author });
+                }
+                if (!res || !res.tracks?.length) {
+                    res = await poru.resolve({ query: `${rawQuery} audio`, source: 'scsearch', requester: message.author });
+                }
+                if (!res || !res.tracks?.length) {
+                    res = await poru.resolve({ query: rawQuery, source: 'spsearch', requester: message.author });
+                }
+                if (!res || !res.tracks?.length) {
+                    res = await poru.resolve({ query: rawQuery, source: 'ytsearch', requester: message.author });
+                }
+
+                if (!res || !res.tracks?.length) {
+                    return statusMsg.edit(`❌ Audio not found for: **${rawQuery}**`);
                 }
 
                 if (res.loadType === 'PLAYLIST_LOADED') {
@@ -497,6 +512,8 @@ module.exports = async (client) => {
             previousTracks.delete(message.guild.id);
             player.queue.clear();
 
+            await updateVoiceStatus(client, player.voiceChannel, '');
+
             const rec247 = await Music247.findOne({ guildId: message.guild.id, enabled: true });
             if (rec247) {
                 if (typeof player.skip === 'function') player.skip();
@@ -507,7 +524,6 @@ module.exports = async (client) => {
                 player.destroy();
             }
 
-            await updateVoiceStatus(client, player.voiceChannel, 'Playing Nothing');
             await updateGuildPanel(client, message.guild.id, null, null);
             return message.reply('🛑 Stopped playback.');
         }
@@ -620,7 +636,6 @@ module.exports = async (client) => {
             return interaction.reply({ content: '▶️ Resumed playback.', flags: 64 });
         }
 
-        // NEXT BUTTON (Smart Queue or Immediate Autoplay)
         if (id === 'btn_next') {
             const title = player.currentTrack.info.title;
             if (player.queue.length > 0) {
@@ -642,6 +657,8 @@ module.exports = async (client) => {
         if (id === 'btn_stop') {
             previousTracks.delete(interaction.guildId);
             player.queue.clear();
+            await updateVoiceStatus(client, player.voiceChannel, '');
+
             const rec247 = await Music247.findOne({ guildId: interaction.guildId, enabled: true });
             if (rec247) {
                 if (typeof player.skip === 'function') player.skip();
@@ -651,7 +668,6 @@ module.exports = async (client) => {
             } else {
                 player.destroy();
             }
-            await updateVoiceStatus(client, player.voiceChannel, 'Playing Nothing');
             await updateGuildPanel(client, player.guildId, null, null);
             return interaction.reply({ content: '🛑 Playback terminated.', flags: 64 });
         }
@@ -702,5 +718,5 @@ module.exports = async (client) => {
         }
     });
 
-    console.log('✔ Custom Rythm Music Panel & Voice Status Active.');
+    console.log('✔ Custom Rythm Music Engine & Live Voice Status Active.');
 };
