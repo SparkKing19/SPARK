@@ -3,38 +3,68 @@ const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('
 const Music247 = require('../models/music247');
 
 module.exports = async (client) => {
-    // High-performance Public Lavalink v4 Nodes
+    // Ultra-stable Verified Lavalink v4 Nodes
     const nodes = [
         {
-            name: 'Lavalink-V4-Main',
+            name: 'Ajie-Main-V4',
             host: 'lava-v4.ajieblogs.eu.org',
             port: 443,
             password: 'https://dsc.gg/ajidevserver',
             secure: true
         },
         {
-            name: 'Lavalink-V4-Backup',
-            host: 'lavalink-v4.serenetia.com',
+            name: 'Inari-Backup-V4',
+            host: 'lavalink.inari.site',
             port: 443,
-            password: 'youshallnotpass',
+            password: 'https://discord.gg/purohost',
             secure: true
         }
     ];
 
     const poru = new Poru(client, nodes, {
         library: 'discord.js',
-        defaultPlatform: 'ytsearch'
+        defaultPlatform: 'ytsearch',
+        reconnectTries: Infinity, // Auto crash avoid
+        reconnectTimeout: 10000
     });
 
     client.poru = poru;
 
-    // Node Connect & Error Listeners
-    poru.on('nodeConnect', (node) => {
+    // Node Event Listeners (Safe Error Catcher)
+    poru.on('nodeConnect', async (node) => {
         console.log(`✔ Lavalink Node Connected: ${node.name}`);
+
+        // Node ready hone ke baad hi 24/7 auto-reconnect trigger hoga (prevents 'No nodes available' crash)
+        try {
+            const records = await Music247.find({ enabled: true }).catch(() => []);
+            for (const rec of records) {
+                const guild = client.guilds.cache.get(rec.guildId);
+                if (!guild) continue;
+
+                const voiceChannel = guild.channels.cache.get(rec.voiceChannelId);
+                if (!voiceChannel) continue;
+
+                let player = poru.players.get(rec.guildId);
+                if (!player) {
+                    player = poru.createConnection({
+                        guildId: rec.guildId,
+                        voiceChannel: rec.voiceChannelId,
+                        textChannel: rec.textChannelId,
+                        deaf: true
+                    });
+                }
+            }
+        } catch (err) {
+            console.error('24/7 Reconnect Error:', err.message);
+        }
     });
 
     poru.on('nodeError', (node, error) => {
-        console.error(`⚠️ Lavalink Node Error (${node.name}):`, error.message);
+        console.error(`⚠️ Node Error [${node.name}]:${error.message}`);
+    });
+
+    poru.on('nodeDisconnect', (node) => {
+        console.log(`⚠️ Lavalink Node Disconnected: ${node.name}`);
     });
 
     // Track Start Event (Rythm Controller Embed)
@@ -98,31 +128,12 @@ module.exports = async (client) => {
         }
     });
 
-    // Ready hook for Lavalink initialization & 24/7 auto-join
-    client.once('ready', async () => {
+    // Client Ready -> Initialize Poru
+    client.once('ready', () => {
         poru.init(client);
-
-        const records = await Music247.find({ enabled: true }).catch(() => []);
-        for (const rec of records) {
-            const guild = client.guilds.cache.get(rec.guildId);
-            if (!guild) continue;
-
-            const voiceChannel = guild.channels.cache.get(rec.voiceChannelId);
-            if (!voiceChannel) continue;
-
-            let player = poru.players.get(rec.guildId);
-            if (!player) {
-                player = poru.createConnection({
-                    guildId: rec.guildId,
-                    voiceChannel: rec.voiceChannelId,
-                    textChannel: rec.textChannelId,
-                    deaf: true
-                });
-            }
-        }
     });
 
-    // Controller Buttons
+    // Controller Buttons Interaction Handler
     client.on('interactionCreate', async (interaction) => {
         if (!interaction.isButton() || !interaction.customId.startsWith('music_')) return;
 
