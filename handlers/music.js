@@ -11,7 +11,8 @@ module.exports = async (client) => {
         }
     });
 
-    await player.extractors.loadMulti(DefaultExtractors);
+    // v6 compatible extractor loader
+    await player.extractors.loadDefault();
     client.player = player;
 
     // Track Start Event -> Rythm-style Controller
@@ -57,15 +58,15 @@ module.exports = async (client) => {
 
     // Empty Channel check (24/7 protected)
     player.events.on('emptyChannel', async (queue) => {
-        const is247 = await Music247.findOne({ guildId: queue.guild.id, enabled: true });
-        if (is247) return; // 24/7 me channel nahi chhodega
+        const is247 = await Music247.findOne({ guildId: queue.guild.id, enabled: true }).catch(() => null);
+        if (is247) return;
 
         queue.metadata?.channel?.send('👋 Voice channel khaali ho gaya, leaving to save resources.').catch(() => {});
     });
 
     // Empty Queue check (24/7 protected)
     player.events.on('emptyQueue', async (queue) => {
-        const is247 = await Music247.findOne({ guildId: queue.guild.id, enabled: true });
+        const is247 = await Music247.findOne({ guildId: queue.guild.id, enabled: true }).catch(() => null);
         if (!is247) {
             queue.metadata?.channel?.send('✅ Queue khatam ho gayi!').catch(() => {});
         }
@@ -139,7 +140,7 @@ module.exports = async (client) => {
         }
 
         if (interaction.customId === 'music_stop') {
-            const is247 = await Music247.findOne({ guildId: interaction.guildId, enabled: true });
+            const is247 = await Music247.findOne({ guildId: interaction.guildId, enabled: true }).catch(() => null);
             queue.tracks.clear();
             queue.node.stop();
 
