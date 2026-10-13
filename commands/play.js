@@ -16,13 +16,22 @@ module.exports = {
             return interaction.reply({ content: '❌ Pehle kisi Voice Channel me connect ho jao!', ephemeral: true });
         }
 
-        await interaction.deferReply();
+        try {
+            await interaction.deferReply();
+        } catch {
+            return;
+        }
+
         const query = interaction.options.getString('query');
         const poru = interaction.client.poru;
 
-        const isAnyNodeOnline = poru && poru.leastUsedNodes.some(n => n.isConnected);
-        if (!isAnyNodeOnline) {
-            return interaction.editReply('⚠️ Audio server reconnect ho raha hai, kripya kuch seconds wait karke command run karein.');
+        if (!poru) {
+            return interaction.editReply('❌ Music system abhi initialize ho raha hai.');
+        }
+
+        const isOnline = Array.from(poru.nodes.values()).some(n => n.isConnected);
+        if (!isOnline) {
+            return interaction.editReply('⚠️ Audio server reconnect ho raha hai, 5 second baad dobara try karein.');
         }
 
         try {
