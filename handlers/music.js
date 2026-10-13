@@ -432,12 +432,12 @@ module.exports = async (client) => {
             }
         }
 
-        // %play (Universal YouTube & Search Resolver)
+                // %play (Universal YouTube & Metadata Resolver)
         if (commandName === 'play' || commandName === 'p') {
             const vc = message.member.voice.channel;
             if (!vc) return message.reply('❌ Please join a voice channel first.');
 
-            const rawQuery = args.join(' ');
+            let rawQuery = args.join(' ').trim();
             if (!rawQuery) return message.reply('❌ Enter a song name or valid URL: `%play <query>`');
 
             let player = poru.players.get(message.guild.id);
@@ -450,23 +450,41 @@ module.exports = async (client) => {
                 });
             }
 
-            const statusMsg = await message.reply('🔍 Searching audio stream...');
+            const statusMsg = await message.reply('🔍 Resolving audio stream...');
 
             try {
                 let res = null;
                 const ytId = extractYouTubeID(rawQuery);
+                let fetchedTitle = null;
 
-                // If user provided a YouTube Link
+                // Handle YouTube links by resolving via YouTube API oEmbed metadata
                 if (ytId) {
+                    try {
+                        const oembed = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${ytId}&format=json`)
+                            .then(r => r.json())
+                            .catch(() => null);
+
+                        if (oembed && oembed.title) {
+                            fetchedTitle = oembed.title;
+                        }
+                    } catch (_) {}
+
+                    // Try native Lavalink YouTube resolution first
                     res = await poru.resolve({ query: `https://www.youtube.com/watch?v=${ytId}`, requester: message.author });
+                    
+                    // If datacenter IP blocked, fallback to stream title search
                     if (!res || !res.tracks?.length) {
-                        res = await poru.resolve({ query: ytId, source: 'scsearch', requester: message.author });
+                        const searchQuery = fetchedTitle || rawQuery;
+                        res = await poru.resolve({ query: searchQuery, source: 'scsearch', requester: message.author });
+                        if (!res || !res.tracks?.length) {
+                            res = await poru.resolve({ query: searchQuery, source: 'spsearch', requester: message.author });
+                        }
                     }
                 } else if (rawQuery.startsWith('http')) {
                     res = await poru.resolve({ query: rawQuery, requester: message.author });
                 }
 
-                // Keyword Title Search Waterfall (SoundCloud -> Spotify -> YouTube)
+                // Keyword Title Search Waterfall (SoundCloud -> Spotify -> Native)
                 if (!res || !res.tracks?.length) {
                     res = await poru.resolve({ query: rawQuery, source: 'scsearch', requester: message.author });
                 }
@@ -491,6 +509,14 @@ module.exports = async (client) => {
                 }
 
                 const track = res.tracks[0];
+                
+                // If resolving from a YouTube URL, preserve original title and YouTube thumbnail
+                if (ytId) {
+                    if (fetchedTitle) track.info.title = fetchedTitle;
+                    track.info.image = `https://i.ytimg.com/vi/${ytId}/hqdefault.jpg`;
+                    track.info.uri = `https://www.youtube.com/watch?v=${ytId}`;
+                }
+
                 player.queue.add(track);
 
                 if (!player.isPlaying && !player.isPaused) {
@@ -503,6 +529,7 @@ module.exports = async (client) => {
                 return statusMsg.edit(`❌ Playback error: \`${err.message}\``);
             }
         }
+                    
 
         // %stop
         if (commandName === 'stop') {
