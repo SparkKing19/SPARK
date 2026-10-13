@@ -3,27 +3,13 @@ const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('
 const Music247 = require('../models/music247');
 
 module.exports = async (client) => {
-    // Multi-node redundant pool (Developer style fallback manager)
+    // Railway Private Lavalink Node Setup
     const nodes = [
         {
-            name: 'Node-Ajie-V4',
-            host: 'lava-v4.ajieblogs.eu.org',
+            name: 'SparkCore-Private-Lavalink',
+            host: 'Lavalink-production-cf42.up.railway.app',
             port: 443,
-            password: 'https://dsc.gg/ajidevserver',
-            secure: true
-        },
-        {
-            name: 'Node-Freemium-V4',
-            host: 'lavalink.freemiumhost.com',
-            port: 443,
-            password: 'freemium.discord',
-            secure: true
-        },
-        {
-            name: 'Node-Serenetia-V4',
-            host: 'lavalink-v4.serenetia.com',
-            port: 443,
-            password: 'youshallnotpass',
+            password: 'sparkcore123',
             secure: true
         }
     ];
@@ -32,42 +18,47 @@ module.exports = async (client) => {
         library: 'discord.js',
         defaultPlatform: 'ytsearch',
         reconnectTries: Infinity,
-        reconnectTimeout: 4000
+        reconnectTimeout: 5000
     });
 
     client.poru = poru;
 
-    // Node Lifecycle Listeners
+    // Node Listeners
     poru.on('nodeConnect', async (node) => {
-        console.log(`✔ Lavalink Node Active: ${node.name}`);
+        console.log(`✔ Private Lavalink Server Online: ${node.name}`);
 
-        // Safe 24/7 reconnect
-        setTimeout(async () => {
-            try {
-                const records = await Music247.find({ enabled: true }).catch(() => []);
-                for (const rec of records) {
-                    const guild = client.guilds.cache.get(rec.guildId);
-                    if (!guild) continue;
+        // 24/7 channels auto reconnect
+        try {
+            const records = await Music247.find({ enabled: true }).catch(() => []);
+            for (const rec of records) {
+                const guild = client.guilds.cache.get(rec.guildId);
+                if (!guild) continue;
 
-                    const voiceChannel = guild.channels.cache.get(rec.voiceChannelId);
-                    if (!voiceChannel) continue;
+                const voiceChannel = guild.channels.cache.get(rec.voiceChannelId);
+                if (!voiceChannel) continue;
 
-                    let player = poru.players.get(rec.guildId);
-                    if (!player && poru.leastUsedNodes.some(n => n.isConnected)) {
-                        poru.createConnection({
-                            guildId: rec.guildId,
-                            voiceChannel: rec.voiceChannelId,
-                            textChannel: rec.textChannelId,
-                            deaf: true
-                        });
-                    }
+                let player = poru.players.get(rec.guildId);
+                if (!player) {
+                    poru.createConnection({
+                        guildId: rec.guildId,
+                        voiceChannel: rec.voiceChannelId,
+                        textChannel: rec.textChannelId,
+                        deaf: true
+                    });
                 }
-            } catch (err) {}
-        }, 3000);
+            }
+        } catch (err) {
+            console.error('24/7 Reconnect Error:', err.message);
+        }
     });
 
-    poru.on('nodeError', (node, error) => {});
-    poru.on('nodeDisconnect', (node) => {});
+    poru.on('nodeError', (node, error) => {
+        console.error(`Lavalink Server Error: ${error.message}`);
+    });
+
+    poru.on('nodeDisconnect', (node) => {
+        console.log(`Lavalink Disconnected: ${node.name} (Reconnecting...)`);
+    });
 
     // Track Start Event (Rythm Controller Embed)
     poru.on('trackStart', (player, track) => {
@@ -88,7 +79,7 @@ module.exports = async (client) => {
                 { name: 'Channel', value: `<#${player.voiceChannel}>`, inline: true }
             )
             .setThumbnail(track.info.image || client.user.displayAvatarURL())
-            .setFooter({ text: `Volume: ${player.volume}% | Engine: Lavalink v4` })
+            .setFooter({ text: `Volume: ${player.volume}% | Private Engine Active` })
             .setTimestamp();
 
         const row = new ActionRowBuilder().addComponents(
@@ -186,6 +177,5 @@ module.exports = async (client) => {
         }
     });
 
-    console.log('✔ Rythm Lavalink Music Engine & 24/7 Active.');
+    console.log('✔ Rythm Lavalink Music Engine Active.');
 };
-            
