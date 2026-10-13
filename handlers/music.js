@@ -129,24 +129,39 @@ module.exports = async (client) => {
         console.error(`Lavalink Server Error: ${err.message}`);
     });
 
-    // Track Start -> Exact Card Embed
+    // Track Start Event (Exact Card Embed)
     poru.on('trackStart', (player, track) => {
         const channel = client.channels.cache.get(player.textChannel);
         if (!channel) return;
 
-        // Save current to previous map before changing
         if (player.currentTrack) {
             previousTracks.set(player.guildId, player.currentTrack);
         }
 
         const source = track.info.sourceName ? track.info.sourceName.toUpperCase() : 'YOUTUBE';
         const duration = track.info.isStream ? 'LIVE' : new Date(track.info.length).toISOString().substr(14, 5);
+        const reqUser = track.info.requester ? track.info.requester.username : 'User';
+        const reqAvatar = track.info.requester ? track.info.requester.displayAvatarURL() : undefined;
 
         const embed = new EmbedBuilder()
             .setColor('#2B2D31')
             .setDescription(`## <a:play_rec:1559415361290641429> Now Playing...\n\n[**${track.info.title}**](${track.info.uri})\n\n> **Artist:** \`${track.info.author}\` • **Source:** \`${source}\`\n> **Duration:** \`${duration}\` • **Volume:** \`${player.volume}%\``)
             .setImage(track.info.image || client.user.displayAvatarURL({ size: 1024 }))
-            .setFooter({ text: `Requested by ${track.info.requester?.username \vert{}\vert{} 'User'}`, iconURL: track.info.requester?.displayAvatarURL() \vert{}\vert{} undefined });          channel.send({ embeds: [embed], components: buildControllerComponents(player) })             .then(msg => { player.controllerMsg = msg; })             .catch(() => {});     });      // Queue End -> Autoplay Engine     poru.on('queueEnd', async (player) => {         const isAutoplay = autoplayState.get(player.guildId);         const lastTrack = previousTracks.get(player.guildId) \vert{}\vert{} player.currentTrack;          if (isAutoplay && lastTrack) {             try {                 const searchTitle = `${lastTrack.info.author} songs`;
+            .setFooter({ text: `Requested by ${reqUser}`, iconURL: reqAvatar });
+
+        channel.send({ embeds: [embed], components: buildControllerComponents(player) })
+            .then(msg => { player.controllerMsg = msg; })
+            .catch(() => {});
+    });
+
+    // Queue End Event -> Autoplay Engine
+    poru.on('queueEnd', async (player) => {
+        const isAutoplay = autoplayState.get(player.guildId);
+        const lastTrack = previousTracks.get(player.guildId) || player.currentTrack;
+
+        if (isAutoplay && lastTrack) {
+            try {
+                const searchTitle = `${lastTrack.info.author} songs`;
                 const res = await poru.resolve({ query: searchTitle, source: 'scsearch', requester: client.user });
                 if (res && res.tracks && res.tracks.length) {
                     const nextTrack = res.tracks[Math.floor(Math.random() * Math.min(res.tracks.length, 5))];
@@ -185,7 +200,7 @@ module.exports = async (client) => {
             return interaction.reply({ content: '❌ Controller use karne ke liye bot ke Voice Channel me hona zaroori hai!', ephemeral: true });
         }
 
-        // 1. Audio Filter Selection
+        // Audio Filter Selection
         if (interaction.isStringSelectMenu() && interaction.customId === 'menu_filters') {
             const val = interaction.values[0];
             await interaction.deferUpdate();
@@ -208,7 +223,6 @@ module.exports = async (client) => {
             return;
         }
 
-        // 2. Button Handlers
         const action = interaction.customId;
 
         if (action === 'btn_pause_resume') {
@@ -297,4 +311,4 @@ module.exports = async (client) => {
 
     console.log('✔ Custom Rythm UI Controller Engine Active.');
 };
-        
+                 
