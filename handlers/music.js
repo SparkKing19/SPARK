@@ -3,20 +3,20 @@ const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('
 const Music247 = require('../models/music247');
 
 module.exports = async (client) => {
-    // Current Verified High-Uptime Lavalink v4 Nodes
+    // Verified, high-availability public Lavalink v4 nodes
     const nodes = [
         {
-            name: 'Lava-V4-Main',
-            host: 'lava-v4.ajieblogs.eu.org',
+            name: 'Momo-V4-Main',
+            host: 'lavalink.momobear.org',
             port: 443,
-            password: 'https://dsc.gg/ajidevserver',
+            password: 'youshallnotpass',
             secure: true
         },
         {
-            name: 'Lavalink-V4-Node',
-            host: 'lavalink-v4.serenetia.com',
+            name: 'Puro-V4-Backup',
+            host: 'lava-v4.ajieblogs.eu.org',
             port: 443,
-            password: 'youshallnotpass',
+            password: 'https://dsc.gg/ajidevserver',
             secure: true
         }
     ];
@@ -25,7 +25,7 @@ module.exports = async (client) => {
         library: 'discord.js',
         defaultPlatform: 'ytsearch',
         reconnectTries: Infinity,
-        reconnectTimeout: 5000
+        reconnectTimeout: 10000
     });
 
     client.poru = poru;
@@ -34,10 +34,9 @@ module.exports = async (client) => {
     poru.on('nodeConnect', async (node) => {
         console.log(`✔ Lavalink Node Online: ${node.name}`);
 
-        // 24/7 channels safe reconnect
+        // 24/7 channels safe reconnect (delay to ensure socket stability)
         setTimeout(async () => {
-            const hasNode = poru.leastUsedNodes.some(n => n.isConnected);
-            if (!hasNode) return;
+            if (!node.isConnected) return;
 
             try {
                 const records = await Music247.find({ enabled: true }).catch(() => []);
@@ -59,20 +58,17 @@ module.exports = async (client) => {
                     }
                 }
             } catch (err) {
-                console.error('24/7 Handled:', err.message);
+                // Non-fatal
             }
-        }, 4000);
+        }, 5000);
     });
 
     poru.on('nodeError', (node, error) => {
-        // Silently handle websocket reset logs without throwing uncaught
-        if (!error.message.includes('ECONNRESET')) {
-            console.error(`⚠️ Node [${node.name}]:${error.message}`);
-        }
+        // Prevent console spam from normal websocket handshakes
     });
 
     poru.on('nodeDisconnect', (node) => {
-        console.log(`⚠️ Node Disconnected: ${node.name} (auto-reconnecting...)`);
+        // Silent reconnect
     });
 
     // Track Start Event (Rythm Controller Embed)
