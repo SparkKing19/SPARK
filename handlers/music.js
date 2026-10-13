@@ -3,20 +3,27 @@ const { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('
 const Music247 = require('../models/music247');
 
 module.exports = async (client) => {
-    // Verified, high-availability public Lavalink v4 nodes
+    // Multi-Region Public Lavalink v4 Nodes
     const nodes = [
         {
-            name: 'Momo-V4-Main',
-            host: 'lavalink.momobear.org',
-            port: 443,
-            password: 'youshallnotpass',
-            secure: true
-        },
-        {
-            name: 'Puro-V4-Backup',
+            name: 'Ajie-V4',
             host: 'lava-v4.ajieblogs.eu.org',
             port: 443,
             password: 'https://dsc.gg/ajidevserver',
+            secure: true
+        },
+        {
+            name: 'Freemium-V4',
+            host: 'lavalink.freemiumhost.com',
+            port: 443,
+            password: 'freemium.discord',
+            secure: true
+        },
+        {
+            name: 'Serenetia-V4',
+            host: 'lavalink-v4.serenetia.com',
+            port: 443,
+            password: 'youshallnotpass',
             secure: true
         }
     ];
@@ -25,19 +32,17 @@ module.exports = async (client) => {
         library: 'discord.js',
         defaultPlatform: 'ytsearch',
         reconnectTries: Infinity,
-        reconnectTimeout: 10000
+        reconnectTimeout: 5000
     });
 
     client.poru = poru;
 
     // Node Listeners
     poru.on('nodeConnect', async (node) => {
-        console.log(`✔ Lavalink Node Online: ${node.name}`);
+        console.log(`✔ Lavalink Node Connected: ${node.name}`);
 
-        // 24/7 channels safe reconnect (delay to ensure socket stability)
+        // 24/7 channels safe reconnect
         setTimeout(async () => {
-            if (!node.isConnected) return;
-
             try {
                 const records = await Music247.find({ enabled: true }).catch(() => []);
                 for (const rec of records) {
@@ -57,19 +62,12 @@ module.exports = async (client) => {
                         });
                     }
                 }
-            } catch (err) {
-                // Non-fatal
-            }
-        }, 5000);
+            } catch (err) {}
+        }, 3000);
     });
 
-    poru.on('nodeError', (node, error) => {
-        // Prevent console spam from normal websocket handshakes
-    });
-
-    poru.on('nodeDisconnect', (node) => {
-        // Silent reconnect
-    });
+    poru.on('nodeError', (node, error) => {});
+    poru.on('nodeDisconnect', (node) => {});
 
     // Track Start Event (Rythm Controller Embed)
     poru.on('trackStart', (player, track) => {
