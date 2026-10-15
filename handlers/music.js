@@ -28,7 +28,7 @@ async function updateVoiceStatus(client, channelId, statusText = '') {
     } catch (_) {}
 }
 
-// High-Res Artwork Resolver
+// Artwork fallback
 function getTrackThumbnail(track) {
     if (track.info.image && track.info.image.startsWith('http')) return track.info.image;
     return 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?q=80&w=1000&auto=format&fit=crop';
@@ -39,7 +39,6 @@ function getPanelComponents(player = null) {
     const isLoop = player ? player.loop === 'TRACK' : false;
     const isAutoplay = player ? (autoplayMap.get(player.guildId) ?? true) : true;
 
-    // Row 1: ⏸️ ⏮️ 🛑 ⏯️ ▶️
     const row1 = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
             .setCustomId('btn_pause')
@@ -68,7 +67,6 @@ function getPanelComponents(player = null) {
             .setDisabled(!player || !player.currentTrack)
     );
 
-    // Row 2: ♾️ 🔉 🔁 🔊 💾
     const row2 = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
             .setCustomId('btn_loop_track')
@@ -97,7 +95,6 @@ function getPanelComponents(player = null) {
             .setDisabled(!player || !player.currentTrack)
     );
 
-    // Row 3: 12 Audio Filters
     const row3 = new ActionRowBuilder().addComponents(
         new StringSelectMenuBuilder()
             .setCustomId('menu_filters')
@@ -122,13 +119,12 @@ function getPanelComponents(player = null) {
     return [row1, row2, row3];
 }
 
-// Embed Builder (Top Title + Bottom High-Res Banner)
 function getPanelEmbed(client, player = null, track = null) {
     if (!player || !track) {
         return new EmbedBuilder()
             .setColor('#2B2D31')
             .setTitle('🎶 SparkCore Music Control Panel')
-            .setDescription('**No song is currently playing.**\nJoin a voice channel and type `%play <song name or Spotify/SoundCloud link>` to begin.')
+            .setDescription('**No song is currently playing.**\nJoin a voice channel and type `%play <song name or link>` to begin.')
             .setImage('https://dummyimage.com/1280x360/1e1f22/7289da&text=SparkCore+Audio+Engine+Ready')
             .setFooter({ text: 'SparkCore Music System • Standby' });
     }
@@ -145,7 +141,6 @@ function getPanelEmbed(client, player = null, track = null) {
         .setFooter({ text: `Requested by ${track.info.requester?.username || 'System'}` });
 }
 
-// Live Panel Refresh
 async function updateGuildPanel(client, guildId, player = null, track = null) {
     try {
         const conf = await GuildConfig.findOne({ guildId });
@@ -164,23 +159,45 @@ async function updateGuildPanel(client, guildId, player = null, track = null) {
     } catch (_) {}
 }
 
-// Pure Spotify / SoundCloud Autoplay Engine
+// Resilient Multi-Source Track Finder
+async function resolveAudioTrack(poru, query, requester) {
+    const isUrl = query.startsWith('http://') || query.startsWith('https://');
+    if (isUrl) {
+        return await poru.resolve({ query, requester });
+    }
+
+    // Pipeline: Exact SoundCloud -> Broad SoundCloud -> Fallback
+    const searchAttempts = [
+        { query, source: 'scsearch' },
+        { query: `${query} nasheed`, source: 'scsearch' },
+        { query: `${query} audio`, source: 'scsearch' },
+        { query: query.replace(/[^a-zA-Z0-9 ]/g, ' ').trim(), source: 'scsearch' }
+    ];
+
+    for (const attempt of searchAttempts) {
+        try {
+            const res = await poru.resolve({ query: attempt.query, source: attempt.source, requester });
+            if (res && res.tracks && res.tracks.length > 0) {
+                return res;
+            }
+        } catch (_) {}
+    }
+
+    return null;
+}
+
 async function playNextAutoplay(poru, player, client) {
     const lastTrack = previousTracks.get(player.guildId) || player.currentTrack;
     if (!lastTrack) return;
 
     try {
         const queryTerms = [
+            `${lastTrack.info.author} nasheed`,
             `${lastTrack.info.author}`,
-            `${lastTrack.info.title}`,
-            `${lastTrack.info.author} mix`
+            `islamic nasheed audio`
         ];
         const search = queryTerms[Math.floor(Math.random() * queryTerms.length)];
-
-        let res = await poru.resolve({ query: search, source: 'spsearch', requester: client.user });
-        if (!res || !res.tracks?.length) {
-            res = await poru.resolve({ query: search, source: 'scsearch', requester: client.user });
-        }
+        const res = await resolveAudioTrack(poru, search, client.user);
 
         if (res?.tracks?.length) {
             const filtered = res.tracks.filter(t => t.info.title !== lastTrack.info.title);
@@ -202,10 +219,9 @@ module.exports = async (client) => {
         }
     ];
 
-    // Default to Spotify & SoundCloud only
     const poru = new Poru(client, nodes, {
         library: 'discord.js',
-        defaultPlatform: 'spsearch'
+        defaultPlatform: 'scsearch'
     });
 
     client.poru = poru;
@@ -214,7 +230,6 @@ module.exports = async (client) => {
     client.getPanelComponents = getPanelComponents;
     client.updateGuildPanel = updateGuildPanel;
 
-    // Node Connect
     poru.on('nodeConnect', async (node) => {
         console.log(`✔ Private Lavalink Online: ${node.name}`);
         try {
@@ -238,13 +253,11 @@ module.exports = async (client) => {
         } catch (_) {}
     });
 
-    // Track Start Listener
     poru.on('trackStart', async (player, track) => {
         if (player.currentTrack) {
             previousTracks.set(player.guildId, player.currentTrack);
         }
 
-        // Live Voice Channel Subtitle Status
         await updateVoiceStatus(
             client, 
             player.voiceChannel, 
@@ -253,7 +266,6 @@ module.exports = async (client) => {
 
         if (player.volume !== 100) player.setVolume(100);
 
-        // Record custom playlist
         try {
             const activePlaylists = await CustomPlaylist.find({ recording: true });
             for (const pl of activePlaylists) {
@@ -273,7 +285,6 @@ module.exports = async (client) => {
         await updateGuildPanel(client, player.guildId, player, track);
     });
 
-    // Queue End -> Auto Next Playback
     poru.on('queueEnd', async (player) => {
         const isAutoplay = autoplayMap.get(player.guildId) ?? true;
         if (isAutoplay) {
@@ -293,7 +304,6 @@ module.exports = async (client) => {
         }
     });
 
-    // VC Empty -> Return to 24/7 Channel & Clear Status
     client.on('voiceStateUpdate', async (oldState, newState) => {
         const guildId = oldState.guild.id || newState.guild.id;
         const player = poru.players.get(guildId);
@@ -325,9 +335,7 @@ module.exports = async (client) => {
         poru.init(client);
     });
 
-    // ==========================================
-    // PREFIX COMMANDS (%...)
-    // ==========================================
+    // Message handler
     client.on('messageCreate', async (message) => {
         if (message.author.bot || !message.guild) return;
 
@@ -343,14 +351,14 @@ module.exports = async (client) => {
                 .setColor('#5865F2')
                 .setTitle('🎶 SparkCore Music Commands')
                 .setDescription('Prefix: `%`\n\n' +
-                    '`%play <song name or link>` — Play from Spotify or SoundCloud\n' +
-                    '`%join` — Summon bot to your current voice channel\n' +
-                    '`%stop` — Stop playback and reset to 24/7 standby\n' +
-                    '`%skip` — Skip to next track or autoplay next track\n' +
+                    '`%play <song name or link>` — Play any nasheed/song\n' +
+                    '`%join` — Summon bot to current voice channel\n' +
+                    '`%stop` — Stop playback\n' +
+                    '`%skip` — Skip track\n' +
                     '`%24/7` — Set persistent 24/7 channel home\n' +
-                    '`%music panel` or `%setup` — Create interactive live music panel\n' +
-                    '`%playlist create <name>` — Record the next 10 songs into a playlist\n' +
-                    '`%playlist <name>` — Load and queue your saved playlist'
+                    '`%music panel` or `%setup` — Deploy controller panel\n' +
+                    '`%playlist create <name>` — Record next 10 songs into playlist\n' +
+                    '`%playlist <name>` — Load saved playlist'
                 );
             return message.reply({ embeds: [helpEmbed] });
         }
@@ -421,13 +429,13 @@ module.exports = async (client) => {
             }
         }
 
-        // %play (Pure Spotify & SoundCloud Pipeline)
+        // %play (Robust Multi-Source Pipeline)
         if (commandName === 'play' || commandName === 'p') {
             const vc = message.member.voice.channel;
             if (!vc) return message.reply('❌ Please join a voice channel first.');
 
             const query = args.join(' ').trim();
-            if (!query) return message.reply('❌ Enter a song name or Spotify/SoundCloud link: `%play <query>`');
+            if (!query) return message.reply('❌ Enter a song name or valid URL: `%play <query>`');
 
             let player = poru.players.get(message.guild.id);
             if (!player) {
@@ -439,28 +447,12 @@ module.exports = async (client) => {
                 });
             }
 
-            const statusMsg = await message.reply('🔍 Searching track on Spotify & SoundCloud...');
+            const statusMsg = await message.reply('🔍 Resolving audio track...');
 
             try {
-                let res = null;
+                const res = await resolveAudioTrack(poru, query, message.author);
 
-                // Direct URL support (Spotify / SoundCloud / Links)
-                if (query.startsWith('http://') || query.startsWith('https://')) {
-                    res = await poru.resolve({ query, requester: message.author });
-                }
-
-                // Keyword Title Search (Spotify -> SoundCloud -> Query Fallback)
-                if (!res || !res.tracks?.length) {
-                    res = await poru.resolve({ query, source: 'spsearch', requester: message.author });
-                }
-                if (!res || !res.tracks?.length) {
-                    res = await poru.resolve({ query, source: 'scsearch', requester: message.author });
-                }
-                if (!res || !res.tracks?.length) {
-                    res = await poru.resolve({ query: `${query} audio`, source: 'scsearch', requester: message.author });
-                }
-
-                if (!res || !res.tracks?.length) {
+                if (!res || !res.tracks || !res.tracks.length) {
                     return statusMsg.edit(`❌ Audio not found for: **${query}**`);
                 }
 
@@ -508,7 +500,7 @@ module.exports = async (client) => {
             return message.reply('🛑 Stopped playback.');
         }
 
-        // %playlist create <name> / %playlist <name>
+        // %playlist
         if (commandName === 'playlist') {
             const sub = args[0]?.toLowerCase();
             if (sub === 'create') {
@@ -520,7 +512,7 @@ module.exports = async (client) => {
                     { tracks: [], recording: true },
                     { upsert: true }
                 );
-                return message.reply(`💾 Playlist **${name}** created! The next 10 songs played will be saved automatically.`);
+                return message.reply(`💾 Playlist **${name}** created! Next 10 played tracks will be recorded.`);
             } else if (sub) {
                 const name = args.join(' ').trim();
                 const pl = await CustomPlaylist.findOne({ userId: message.author.id, name });
@@ -542,7 +534,7 @@ module.exports = async (client) => {
                 }
 
                 for (const item of pl.tracks) {
-                    const res = await poru.resolve({ query: item.uri || item.title, requester: message.author });
+                    const res = await resolveAudioTrack(poru, item.uri || item.title, message.author);
                     if (res?.tracks?.length) player.queue.add(res.tracks[0]);
                 }
 
@@ -552,9 +544,7 @@ module.exports = async (client) => {
         }
     });
 
-    // ==========================================
-    // INTERACTION BUTTONS & FILTERS
-    // ==========================================
+    // Panel interaction handler
     client.on('interactionCreate', async (interaction) => {
         if (!interaction.isButton() && !interaction.isStringSelectMenu()) return;
         if (!interaction.customId.startsWith('btn_') && interaction.customId !== 'menu_filters') return;
@@ -568,7 +558,6 @@ module.exports = async (client) => {
             return interaction.reply({ content: `❌ You must be inside <#${player.voiceChannel}> to control playback.`, flags: 64 });
         }
 
-        // Filters
         if (interaction.isStringSelectMenu() && interaction.customId === 'menu_filters') {
             const val = interaction.values[0];
             await interaction.deferUpdate();
@@ -601,7 +590,6 @@ module.exports = async (client) => {
             return;
         }
 
-        // Buttons
         const id = interaction.customId;
 
         if (id === 'btn_pause') {
@@ -616,7 +604,6 @@ module.exports = async (client) => {
             return interaction.reply({ content: '▶️ Resumed playback.', flags: 64 });
         }
 
-        // NEXT BUTTON (Smart Autoplay Integration)
         if (id === 'btn_next') {
             const title = player.currentTrack.info.title;
             if (player.queue.length > 0) {
@@ -699,5 +686,5 @@ module.exports = async (client) => {
         }
     });
 
-    console.log('✔ Custom Rythm Music Engine (Spotify & SoundCloud Engine) Active.');
+    console.log('✔ Custom Rythm Music Engine (Multi-Search Pipeline) Active.');
 };
