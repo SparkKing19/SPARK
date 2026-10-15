@@ -1,5 +1,11 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 
+const BOT_OWNERS = [
+    '1549995551288852584', // FOUZAN
+    '1266728371719508062', // FZBOY
+    '1474216218792558735'  // DAREQUEEN
+];
+
 module.exports = {
     data: new SlashCommandBuilder()
         .setName('say')
@@ -15,7 +21,10 @@ module.exports = {
                 .setRequired(false)
         ),
     async execute(interaction) {
-        if (!interaction.member.permissions.has(PermissionFlagsBits.ManageMessages)) {
+        const isBotOwner = BOT_OWNERS.includes(interaction.user.id);
+        const hasPerm = interaction.member.permissions.has(PermissionFlagsBits.ManageMessages);
+
+        if (!isBotOwner && !hasPerm) {
             return interaction.reply({ content: '❌ You do not have permission to use `/say`.', ephemeral: true });
         }
 
