@@ -13,7 +13,7 @@ const CustomPlaylist = require('../models/customPlaylist');
 const autoplayMap = new Map();
 const previousTracks = new Map();
 
-// Voice Channel Subtitle Status
+// Helper: Voice Channel Subtitle Status (Set & Clear)
 async function updateVoiceStatus(client, channelId, statusText = '') {
     if (!channelId) return;
     try {
@@ -28,29 +28,79 @@ async function updateVoiceStatus(client, channelId, statusText = '') {
     } catch (_) {}
 }
 
+// Helper: High-Res Artwork
 function getTrackThumbnail(track) {
     if (track.info.image && track.info.image.startsWith('http')) return track.info.image;
     return 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?q=80&w=1000&auto=format&fit=crop';
 }
 
+// Helper: Safe Track Skip/Stop
+function safeSkipTrack(player) {
+    if (!player) return;
+    if (typeof player.skip === 'function') player.skip();
+    else if (typeof player.stop === 'function') player.stop();
+    else player.destroy();
+}
+
+// Controller Components (Row 1: ⏸️ ⏮️ 🛑 ⏯️ ▶️ | Row 2: ♾️ 🔉 🔁 🔊 💾)
 function getPanelComponents(player = null) {
     const isLoop = player ? player.loop === 'TRACK' : false;
     const isAutoplay = player ? (autoplayMap.get(player.guildId) ?? true) : true;
 
     const row1 = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('btn_pause').setEmoji('⏸️').setStyle(ButtonStyle.Secondary).setDisabled(!player || !player.currentTrack),
-        new ButtonBuilder().setCustomId('btn_previous').setEmoji('⏮️').setStyle(ButtonStyle.Secondary).setDisabled(!player || !player.currentTrack),
-        new ButtonBuilder().setCustomId('btn_stop').setEmoji('🛑').setStyle(ButtonStyle.Danger).setDisabled(!player || !player.currentTrack),
-        new ButtonBuilder().setCustomId('btn_next').setEmoji('⏯️').setStyle(ButtonStyle.Secondary).setDisabled(!player || !player.currentTrack),
-        new ButtonBuilder().setCustomId('btn_resume').setEmoji('▶️').setStyle(ButtonStyle.Success).setDisabled(!player || !player.currentTrack)
+        new ButtonBuilder()
+            .setCustomId('btn_pause')
+            .setEmoji('⏸️')
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(!player || !player.currentTrack),
+        new ButtonBuilder()
+            .setCustomId('btn_previous')
+            .setEmoji('⏮️')
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(!player || !player.currentTrack),
+        new ButtonBuilder()
+            .setCustomId('btn_stop')
+            .setEmoji('🛑')
+            .setStyle(ButtonStyle.Danger)
+            .setDisabled(!player || !player.currentTrack),
+        new ButtonBuilder()
+            .setCustomId('btn_next')
+            .setEmoji('⏯️')
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(!player || !player.currentTrack),
+        new ButtonBuilder()
+            .setCustomId('btn_resume')
+            .setEmoji('▶️')
+            .setStyle(ButtonStyle.Success)
+            .setDisabled(!player || !player.currentTrack)
     );
 
     const row2 = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('btn_loop_track').setEmoji('♾️').setStyle(isLoop ? ButtonStyle.Primary : ButtonStyle.Secondary).setDisabled(!player || !player.currentTrack),
-        new ButtonBuilder().setCustomId('btn_voldown').setEmoji('🔉').setStyle(ButtonStyle.Secondary).setDisabled(!player || !player.currentTrack),
-        new ButtonBuilder().setCustomId('btn_autoplay').setEmoji('🔁').setStyle(isAutoplay ? ButtonStyle.Primary : ButtonStyle.Secondary).setDisabled(!player || !player.currentTrack),
-        new ButtonBuilder().setCustomId('btn_volup').setEmoji('🔊').setStyle(ButtonStyle.Secondary).setDisabled(!player || !player.currentTrack),
-        new ButtonBuilder().setCustomId('btn_save_playlist').setEmoji('💾').setStyle(ButtonStyle.Secondary).setDisabled(!player || !player.currentTrack)
+        new ButtonBuilder()
+            .setCustomId('btn_loop_track')
+            .setEmoji('♾️')
+            .setStyle(isLoop ? ButtonStyle.Primary : ButtonStyle.Secondary)
+            .setDisabled(!player || !player.currentTrack),
+        new ButtonBuilder()
+            .setCustomId('btn_voldown')
+            .setEmoji('🔉')
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(!player || !player.currentTrack),
+        new ButtonBuilder()
+            .setCustomId('btn_autoplay')
+            .setEmoji('🔁')
+            .setStyle(isAutoplay ? ButtonStyle.Primary : ButtonStyle.Secondary)
+            .setDisabled(!player || !player.currentTrack),
+        new ButtonBuilder()
+            .setCustomId('btn_volup')
+            .setEmoji('🔊')
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(!player || !player.currentTrack),
+        new ButtonBuilder()
+            .setCustomId('btn_save_playlist')
+            .setEmoji('💾')
+            .setStyle(ButtonStyle.Secondary)
+            .setDisabled(!player || !player.currentTrack)
     );
 
     const row3 = new ActionRowBuilder().addComponents(
@@ -77,6 +127,7 @@ function getPanelComponents(player = null) {
     return [row1, row2, row3];
 }
 
+// Embed Builder (Top Title + Bottom High-Res Artwork)
 function getPanelEmbed(client, player = null, track = null) {
     if (!player || !track) {
         return new EmbedBuilder()
@@ -99,6 +150,7 @@ function getPanelEmbed(client, player = null, track = null) {
         .setFooter({ text: `Requested by ${track.info.requester?.username || 'System'}` });
 }
 
+// Live Panel Refresh
 async function updateGuildPanel(client, guildId, player = null, track = null) {
     try {
         const conf = await GuildConfig.findOne({ guildId });
@@ -117,57 +169,49 @@ async function updateGuildPanel(client, guildId, player = null, track = null) {
     } catch (_) {}
 }
 
-// Direct Multi-Engine Search Bridge
-async function searchWebTrack(query) {
-    try {
-        // Direct search fallback via public audio lookup
-        const cleanQuery = encodeURIComponent(query);
-        const res = await fetch(`https://itunes.apple.com/search?term=${cleanQuery}&entity=song&limit=1`)
-            .then(r => r.json())
-            .catch(() => null);
-
-        if (res && res.results && res.results.length > 0) {
-            const item = res.results[0];
-            return `${item.artistName} -${item.trackName}`;
-        }
-    } catch (_) {}
-    return query;
-}
-
+// Direct Multi-Attempt SoundCloud Resolver
 async function resolveAudioTrack(poru, query, requester) {
     const isUrl = query.startsWith('http://') || query.startsWith('https://');
     if (isUrl) {
-        return await poru.resolve({ query, requester });
+        return await poru.resolve({ query, requester }).catch(() => null);
     }
 
-    // Attempt 1: Direct Poru resolve
-    try {
-        let res = await poru.resolve({ query, source: 'scsearch', requester });
-        if (res && res.tracks && res.tracks.length > 0) return res;
-    } catch (_) {}
+    // Pipeline: Multiple variations taaki empty array bypass ho sake
+    const searchPipelines = [
+        { query: `scsearch:${query}`, source: null },
+        { query: query, source: 'scsearch' },
+        { query: `${query} nasheed`, source: 'scsearch' },
+        { query: `${query} audio`, source: 'scsearch' },
+        { query: query.replace(/[^a-zA-Z0-9 ]/g, ' ').trim(), source: 'scsearch' },
+        { query: query, source: null }
+    ];
 
-    // Attempt 2: Clean Metadata Match
-    try {
-        const refined = await searchWebTrack(query);
-        let res = await poru.resolve({ query: refined, source: 'scsearch', requester });
-        if (res && res.tracks && res.tracks.length > 0) return res;
-    } catch (_) {}
-
-    // Attempt 3: Default broad audio keyword
-    try {
-        let res = await poru.resolve({ query: `${query} nasheed audio`, source: 'scsearch', requester });
-        if (res && res.tracks && res.tracks.length > 0) return res;
-    } catch (_) {}
+    for (const pipeline of searchPipelines) {
+        try {
+            const opts = { query: pipeline.query, requester };
+            if (pipeline.source) opts.source = pipeline.source;
+            const res = await poru.resolve(opts);
+            if (res && res.tracks && res.tracks.length > 0) {
+                return res;
+            }
+        } catch (_) {}
+    }
 
     return null;
 }
 
+// Autoplay recommendation engine
 async function playNextAutoplay(poru, player, client) {
     const lastTrack = previousTracks.get(player.guildId) || player.currentTrack;
     if (!lastTrack) return;
 
     try {
-        const search = `${lastTrack.info.author} audio`;
+        const queries = [
+            `${lastTrack.info.author} audio`,
+            `${lastTrack.info.author}`,
+            `nasheed audio`
+        ];
+        const search = queries[Math.floor(Math.random() * queries.length)];
         const res = await resolveAudioTrack(poru, search, client.user);
 
         if (res?.tracks?.length) {
@@ -201,6 +245,7 @@ module.exports = async (client) => {
     client.getPanelComponents = getPanelComponents;
     client.updateGuildPanel = updateGuildPanel;
 
+    // Node Connect & 24/7 Auto-Join
     poru.on('nodeConnect', async (node) => {
         console.log(`✔ Private Lavalink Online: ${node.name}`);
         try {
@@ -224,6 +269,7 @@ module.exports = async (client) => {
         } catch (_) {}
     });
 
+    // Track Start
     poru.on('trackStart', async (player, track) => {
         if (player.currentTrack) {
             previousTracks.set(player.guildId, player.currentTrack);
@@ -256,6 +302,7 @@ module.exports = async (client) => {
         await updateGuildPanel(client, player.guildId, player, track);
     });
 
+    // Queue End -> Autoplay Or Reset
     poru.on('queueEnd', async (player) => {
         const isAutoplay = autoplayMap.get(player.guildId) ?? true;
         if (isAutoplay) {
@@ -275,6 +322,7 @@ module.exports = async (client) => {
         }
     });
 
+    // Auto-Return to 24/7 Channel When VC Empty
     client.on('voiceStateUpdate', async (oldState, newState) => {
         const guildId = oldState.guild.id || newState.guild.id;
         const player = poru.players.get(guildId);
@@ -290,7 +338,7 @@ module.exports = async (client) => {
             const rec247 = await Music247.findOne({ guildId, enabled: true });
             if (rec247) {
                 player.queue.clear();
-                if (typeof player.skip === 'function') player.skip();
+                safeSkipTrack(player);
                 if (player.voiceChannel !== rec247.voiceChannelId) {
                     player.setVoiceChannel(rec247.voiceChannelId);
                 }
@@ -302,11 +350,14 @@ module.exports = async (client) => {
         }
     });
 
-    // Fix ready deprecation warning
-    client.once('clientReady', () => {
+    // Initialize Poru
+    client.once('ready', () => {
         poru.init(client);
     });
 
+    // ==========================================
+    // PREFIX COMMANDS (%...)
+    // ==========================================
     client.on('messageCreate', async (message) => {
         if (message.author.bot || !message.guild) return;
 
@@ -322,14 +373,14 @@ module.exports = async (client) => {
                 .setColor('#5865F2')
                 .setTitle('🎶 SparkCore Music Commands')
                 .setDescription('Prefix: `%`\n\n' +
-                    '`%play <song name or link>` — Play audio\n' +
-                    '`%join` — Summon bot\n' +
-                    '`%stop` — Stop audio\n' +
+                    '`%play <song name or link>` — Play track or audio link\n' +
+                    '`%join` — Summon bot to your current voice channel\n' +
+                    '`%stop` — Stop playback and reset\n' +
                     '`%skip` — Skip track\n' +
-                    '`%24/7` — Toggle 24/7 channel reservation\n' +
-                    '`%music panel` or `%setup` — Deploy controller panel\n' +
-                    '`%playlist create <name>` — Record next 10 songs\n' +
-                    '`%playlist <name>` — Queue saved playlist'
+                    '`%24/7` — Set persistent 24/7 channel home\n' +
+                    '`%music panel` or `%setup` — Create interactive live music panel\n' +
+                    '`%playlist create <name>` — Record next 10 songs into playlist\n' +
+                    '`%playlist <name>` — Load saved playlist'
                 );
             return message.reply({ embeds: [helpEmbed] });
         }
@@ -406,7 +457,7 @@ module.exports = async (client) => {
             if (!vc) return message.reply('❌ Please join a voice channel first.');
 
             const query = args.join(' ').trim();
-            if (!query) return message.reply('❌ Enter a song name or valid URL: `%play <query>`');
+            if (!query) return message.reply('❌ Enter a song name or valid audio link: `%play <query>`');
 
             let player = poru.players.get(message.guild.id);
             if (!player) {
@@ -459,7 +510,7 @@ module.exports = async (client) => {
 
             const rec247 = await Music247.findOne({ guildId: message.guild.id, enabled: true });
             if (rec247) {
-                if (typeof player.skip === 'function') player.skip();
+                safeSkipTrack(player);
                 if (player.voiceChannel !== rec247.voiceChannelId) {
                     player.setVoiceChannel(rec247.voiceChannelId);
                 }
@@ -515,7 +566,9 @@ module.exports = async (client) => {
         }
     });
 
-    // Panel Interaction Handlers
+    // ==========================================
+    // INTERACTION BUTTONS & FILTERS
+    // ==========================================
     client.on('interactionCreate', async (interaction) => {
         if (!interaction.isButton() && !interaction.isStringSelectMenu()) return;
         if (!interaction.customId.startsWith('btn_') && interaction.customId !== 'menu_filters') return;
@@ -578,7 +631,7 @@ module.exports = async (client) => {
         if (id === 'btn_next') {
             const title = player.currentTrack.info.title;
             if (player.queue.length > 0) {
-                if (typeof player.skip === 'function') player.skip();
+                safeSkipTrack(player);
             } else {
                 await playNextAutoplay(poru, player, client);
             }
@@ -589,7 +642,7 @@ module.exports = async (client) => {
             const prev = previousTracks.get(interaction.guildId);
             if (!prev) return interaction.reply({ content: '❌ No previous song recorded.', flags: 64 });
             player.queue.unshift(prev);
-            if (typeof player.skip === 'function') player.skip();
+            safeSkipTrack(player);
             return interaction.reply({ content: `⏮️ Playing previous: **${prev.info.title}**`, flags: 64 });
         }
 
@@ -600,7 +653,7 @@ module.exports = async (client) => {
 
             const rec247 = await Music247.findOne({ guildId: interaction.guildId, enabled: true });
             if (rec247) {
-                if (typeof player.skip === 'function') player.skip();
+                safeSkipTrack(player);
                 if (player.voiceChannel !== rec247.voiceChannelId) {
                     player.setVoiceChannel(rec247.voiceChannelId);
                 }
@@ -657,5 +710,5 @@ module.exports = async (client) => {
         }
     });
 
-    console.log('✔ Direct Audio Resolver Active.');
+    console.log('✔ Custom Rythm Music Engine (Multi-Attempt SoundCloud Pipeline) Active.');
 };
