@@ -1,22 +1,28 @@
+// models/serverSettings.js
 const mongoose = require('mongoose');
 
 const serverSettingsSchema = new mongoose.Schema({
     guildId: { type: String, required: true, unique: true },
-    customLogoUrl: { type: String, default: null }, // Null means use default bot avatar
+    mode: { type: String, enum: ['normal', 'premium'], default: 'premium' },
+    customLogoUrl: { type: String, default: null },
     features: {
-        welcome: { type: Boolean, default: true },
-        ticket: { type: Boolean, default: true },
-        onboarding: { type: Boolean, default: true },
-        stats: { type: Boolean, default: true },
-        store: { type: Boolean, default: true },
-        moderation: { type: Boolean, default: true },
-        autoresponse: { type: Boolean, default: true },
-        voicegen: { type: Boolean, default: true },
-        apply: { type: Boolean, default: true },
-        youtube: { type: Boolean, default: true },
-        invite: { type: Boolean, default: true },
-        goodbye: { type: Boolean, default: true },
-        giveaway: { type: Boolean, default: true }
+        welcome: { type: Boolean, default: false },
+        ticket: { type: Boolean, default: false },
+        onboarding: { type: Boolean, default: false },
+        stats: { type: Boolean, default: false },
+        store: { type: Boolean, default: false },
+        moderation: { type: Boolean, default: false },
+        autoresponse: { type: Boolean, default: false },
+        voicegen: { type: Boolean, default: false },
+        apply: { type: Boolean, default: false },
+        youtube: { type: Boolean, default: false },
+        invite: { type: Boolean, default: false },
+        goodbye: { type: Boolean, default: false },
+        giveaway: { type: Boolean, default: false },
+        music: { type: Boolean, default: false },
+        leveling: { type: Boolean, default: false },
+        botprofile: { type: Boolean, default: false },
+        ai: { type: Boolean, default: false }
     }
 });
 
