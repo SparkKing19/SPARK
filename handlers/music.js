@@ -13,7 +13,7 @@ const CustomPlaylist = require('../models/customPlaylist');
 const autoplayMap = new Map();
 const previousTracks = new Map();
 
-// Voice Channel Subtitle Status (Set & Clear)
+// Voice Channel Subtitle Status
 async function updateVoiceStatus(client, channelId, statusText = '') {
     if (!channelId) return;
     try {
@@ -28,71 +28,29 @@ async function updateVoiceStatus(client, channelId, statusText = '') {
     } catch (_) {}
 }
 
-// Artwork fallback
 function getTrackThumbnail(track) {
     if (track.info.image && track.info.image.startsWith('http')) return track.info.image;
     return 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?q=80&w=1000&auto=format&fit=crop';
 }
 
-// Controller Components
 function getPanelComponents(player = null) {
     const isLoop = player ? player.loop === 'TRACK' : false;
     const isAutoplay = player ? (autoplayMap.get(player.guildId) ?? true) : true;
 
     const row1 = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-            .setCustomId('btn_pause')
-            .setEmoji('⏸️')
-            .setStyle(ButtonStyle.Secondary)
-            .setDisabled(!player || !player.currentTrack),
-        new ButtonBuilder()
-            .setCustomId('btn_previous')
-            .setEmoji('⏮️')
-            .setStyle(ButtonStyle.Secondary)
-            .setDisabled(!player || !player.currentTrack),
-        new ButtonBuilder()
-            .setCustomId('btn_stop')
-            .setEmoji('🛑')
-            .setStyle(ButtonStyle.Danger)
-            .setDisabled(!player || !player.currentTrack),
-        new ButtonBuilder()
-            .setCustomId('btn_next')
-            .setEmoji('⏯️')
-            .setStyle(ButtonStyle.Secondary)
-            .setDisabled(!player || !player.currentTrack),
-        new ButtonBuilder()
-            .setCustomId('btn_resume')
-            .setEmoji('▶️')
-            .setStyle(ButtonStyle.Success)
-            .setDisabled(!player || !player.currentTrack)
+        new ButtonBuilder().setCustomId('btn_pause').setEmoji('⏸️').setStyle(ButtonStyle.Secondary).setDisabled(!player || !player.currentTrack),
+        new ButtonBuilder().setCustomId('btn_previous').setEmoji('⏮️').setStyle(ButtonStyle.Secondary).setDisabled(!player || !player.currentTrack),
+        new ButtonBuilder().setCustomId('btn_stop').setEmoji('🛑').setStyle(ButtonStyle.Danger).setDisabled(!player || !player.currentTrack),
+        new ButtonBuilder().setCustomId('btn_next').setEmoji('⏯️').setStyle(ButtonStyle.Secondary).setDisabled(!player || !player.currentTrack),
+        new ButtonBuilder().setCustomId('btn_resume').setEmoji('▶️').setStyle(ButtonStyle.Success).setDisabled(!player || !player.currentTrack)
     );
 
     const row2 = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-            .setCustomId('btn_loop_track')
-            .setEmoji('♾️')
-            .setStyle(isLoop ? ButtonStyle.Primary : ButtonStyle.Secondary)
-            .setDisabled(!player || !player.currentTrack),
-        new ButtonBuilder()
-            .setCustomId('btn_voldown')
-            .setEmoji('🔉')
-            .setStyle(ButtonStyle.Secondary)
-            .setDisabled(!player || !player.currentTrack),
-        new ButtonBuilder()
-            .setCustomId('btn_autoplay')
-            .setEmoji('🔁')
-            .setStyle(isAutoplay ? ButtonStyle.Primary : ButtonStyle.Secondary)
-            .setDisabled(!player || !player.currentTrack),
-        new ButtonBuilder()
-            .setCustomId('btn_volup')
-            .setEmoji('🔊')
-            .setStyle(ButtonStyle.Secondary)
-            .setDisabled(!player || !player.currentTrack),
-        new ButtonBuilder()
-            .setCustomId('btn_save_playlist')
-            .setEmoji('💾')
-            .setStyle(ButtonStyle.Secondary)
-            .setDisabled(!player || !player.currentTrack)
+        new ButtonBuilder().setCustomId('btn_loop_track').setEmoji('♾️').setStyle(isLoop ? ButtonStyle.Primary : ButtonStyle.Secondary).setDisabled(!player || !player.currentTrack),
+        new ButtonBuilder().setCustomId('btn_voldown').setEmoji('🔉').setStyle(ButtonStyle.Secondary).setDisabled(!player || !player.currentTrack),
+        new ButtonBuilder().setCustomId('btn_autoplay').setEmoji('🔁').setStyle(isAutoplay ? ButtonStyle.Primary : ButtonStyle.Secondary).setDisabled(!player || !player.currentTrack),
+        new ButtonBuilder().setCustomId('btn_volup').setEmoji('🔊').setStyle(ButtonStyle.Secondary).setDisabled(!player || !player.currentTrack),
+        new ButtonBuilder().setCustomId('btn_save_playlist').setEmoji('💾').setStyle(ButtonStyle.Secondary).setDisabled(!player || !player.currentTrack)
     );
 
     const row3 = new ActionRowBuilder().addComponents(
@@ -159,29 +117,47 @@ async function updateGuildPanel(client, guildId, player = null, track = null) {
     } catch (_) {}
 }
 
-// Resilient Multi-Source Track Finder
+// Direct Multi-Engine Search Bridge
+async function searchWebTrack(query) {
+    try {
+        // Direct search fallback via public audio lookup
+        const cleanQuery = encodeURIComponent(query);
+        const res = await fetch(`https://itunes.apple.com/search?term=${cleanQuery}&entity=song&limit=1`)
+            .then(r => r.json())
+            .catch(() => null);
+
+        if (res && res.results && res.results.length > 0) {
+            const item = res.results[0];
+            return `${item.artistName} -${item.trackName}`;
+        }
+    } catch (_) {}
+    return query;
+}
+
 async function resolveAudioTrack(poru, query, requester) {
     const isUrl = query.startsWith('http://') || query.startsWith('https://');
     if (isUrl) {
         return await poru.resolve({ query, requester });
     }
 
-    // Pipeline: Exact SoundCloud -> Broad SoundCloud -> Fallback
-    const searchAttempts = [
-        { query, source: 'scsearch' },
-        { query: `${query} nasheed`, source: 'scsearch' },
-        { query: `${query} audio`, source: 'scsearch' },
-        { query: query.replace(/[^a-zA-Z0-9 ]/g, ' ').trim(), source: 'scsearch' }
-    ];
+    // Attempt 1: Direct Poru resolve
+    try {
+        let res = await poru.resolve({ query, source: 'scsearch', requester });
+        if (res && res.tracks && res.tracks.length > 0) return res;
+    } catch (_) {}
 
-    for (const attempt of searchAttempts) {
-        try {
-            const res = await poru.resolve({ query: attempt.query, source: attempt.source, requester });
-            if (res && res.tracks && res.tracks.length > 0) {
-                return res;
-            }
-        } catch (_) {}
-    }
+    // Attempt 2: Clean Metadata Match
+    try {
+        const refined = await searchWebTrack(query);
+        let res = await poru.resolve({ query: refined, source: 'scsearch', requester });
+        if (res && res.tracks && res.tracks.length > 0) return res;
+    } catch (_) {}
+
+    // Attempt 3: Default broad audio keyword
+    try {
+        let res = await poru.resolve({ query: `${query} nasheed audio`, source: 'scsearch', requester });
+        if (res && res.tracks && res.tracks.length > 0) return res;
+    } catch (_) {}
 
     return null;
 }
@@ -191,12 +167,7 @@ async function playNextAutoplay(poru, player, client) {
     if (!lastTrack) return;
 
     try {
-        const queryTerms = [
-            `${lastTrack.info.author} nasheed`,
-            `${lastTrack.info.author}`,
-            `islamic nasheed audio`
-        ];
-        const search = queryTerms[Math.floor(Math.random() * queryTerms.length)];
+        const search = `${lastTrack.info.author} audio`;
         const res = await resolveAudioTrack(poru, search, client.user);
 
         if (res?.tracks?.length) {
@@ -331,11 +302,11 @@ module.exports = async (client) => {
         }
     });
 
-    client.once('ready', () => {
+    // Fix ready deprecation warning
+    client.once('clientReady', () => {
         poru.init(client);
     });
 
-    // Message handler
     client.on('messageCreate', async (message) => {
         if (message.author.bot || !message.guild) return;
 
@@ -351,14 +322,14 @@ module.exports = async (client) => {
                 .setColor('#5865F2')
                 .setTitle('🎶 SparkCore Music Commands')
                 .setDescription('Prefix: `%`\n\n' +
-                    '`%play <song name or link>` — Play any nasheed/song\n' +
-                    '`%join` — Summon bot to current voice channel\n' +
-                    '`%stop` — Stop playback\n' +
+                    '`%play <song name or link>` — Play audio\n' +
+                    '`%join` — Summon bot\n' +
+                    '`%stop` — Stop audio\n' +
                     '`%skip` — Skip track\n' +
-                    '`%24/7` — Set persistent 24/7 channel home\n' +
+                    '`%24/7` — Toggle 24/7 channel reservation\n' +
                     '`%music panel` or `%setup` — Deploy controller panel\n' +
-                    '`%playlist create <name>` — Record next 10 songs into playlist\n' +
-                    '`%playlist <name>` — Load saved playlist'
+                    '`%playlist create <name>` — Record next 10 songs\n' +
+                    '`%playlist <name>` — Queue saved playlist'
                 );
             return message.reply({ embeds: [helpEmbed] });
         }
@@ -429,7 +400,7 @@ module.exports = async (client) => {
             }
         }
 
-        // %play (Robust Multi-Source Pipeline)
+        // %play
         if (commandName === 'play' || commandName === 'p') {
             const vc = message.member.voice.channel;
             if (!vc) return message.reply('❌ Please join a voice channel first.');
@@ -544,7 +515,7 @@ module.exports = async (client) => {
         }
     });
 
-    // Panel interaction handler
+    // Panel Interaction Handlers
     client.on('interactionCreate', async (interaction) => {
         if (!interaction.isButton() && !interaction.isStringSelectMenu()) return;
         if (!interaction.customId.startsWith('btn_') && interaction.customId !== 'menu_filters') return;
@@ -686,5 +657,5 @@ module.exports = async (client) => {
         }
     });
 
-    console.log('✔ Custom Rythm Music Engine (Multi-Search Pipeline) Active.');
+    console.log('✔ Direct Audio Resolver Active.');
 };
