@@ -1,7 +1,12 @@
 const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
 const Giveaway = require('../models/giveaway');
 
-// Helper: Parse Indian Standard Time (IST - UTC+5:30)
+const BOT_OWNERS = [
+    '1549995551288852584', // FOUZAN
+    '1266728371719508062', // FZBOY
+    '1474216218792558735'  // DAREQUEEN
+];
+
 function parseISTClockTime(timeStr) {
     const match = timeStr.trim().match(/^(\d{1,2}):(\d{2})$/);
     if (!match) return null;
@@ -11,7 +16,6 @@ function parseISTClockTime(timeStr) {
 
     if (targetHour < 0 || targetHour > 23 || targetMin < 0 || targetMin > 59) return null;
 
-    // Current time in IST
     const nowUtc = Date.now();
     const istOffset = 5.5 * 60 * 60 * 1000;
     const nowIstDate = new Date(nowUtc + istOffset);
@@ -20,10 +24,8 @@ function parseISTClockTime(timeStr) {
     const istMonth = nowIstDate.getUTCMonth();
     const istDay = nowIstDate.getUTCDate();
 
-    // Create target time in IST (treated as UTC internally, then subtract offset)
     let targetUtcEpoch = Date.UTC(istYear, istMonth, istDay, targetHour, targetMin, 0) - istOffset;
 
-    // Agar time pehle hi nikal chuka hai toh agle din ka target banao
     if (targetUtcEpoch <= nowUtc) {
         targetUtcEpoch += 24 * 60 * 60 * 1000;
     }
@@ -56,8 +58,11 @@ module.exports = {
                 .setRequired(true)
         ),
     async execute(interaction) {
-        if (!interaction.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
-            return interaction.reply({ content: '❌ Aapke paas giveaway host karne ki permission nahi hai.', ephemeral: true });
+        const isBotOwner = BOT_OWNERS.includes(interaction.user.id);
+        const hasPerm = interaction.member.permissions.has(PermissionFlagsBits.ManageGuild);
+
+        if (!isBotOwner && !hasPerm) {
+            return interaction.reply({ content: '❌ You do not have permission to host giveaways.', ephemeral: true });
         }
 
         const channel = interaction.options.getChannel('channel');
@@ -68,7 +73,7 @@ module.exports = {
         const endDate = parseISTClockTime(rawTime);
         if (!endDate) {
             return interaction.reply({ 
-                content: '❌ Invalid time format! Format `HH:MM` use karein (jaise: `06:05`, `18:30`, `22:00`).', 
+                content: '❌ Invalid time format! Use `HH:MM` format (e.g., `06:05`, `18:30`, `22:00`).', 
                 ephemeral: true 
             });
         }
@@ -96,7 +101,6 @@ module.exports = {
             await giveawayMsg.react('🎉');
         });
 
-        // Save in MongoDB
         await Giveaway.create({
             guildId: interaction.guild.id,
             channelId: channel.id,
@@ -108,6 +112,7 @@ module.exports = {
             ended: false
         });
 
-        await interaction.reply({ content: `✅ Giveaway started! Exact **${rawTime} (IST)** par end hoga.`, ephemeral: true });
+        await interaction.reply({ content: `✅ Giveaway started! Will end at **${rawTime} (IST)**.`, ephemeral: true });
     }
 };
+                
