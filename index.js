@@ -1,3 +1,4 @@
+// index.js
 const { 
     Client, 
     GatewayIntentBits, 
@@ -8,11 +9,11 @@ const {
     ActionRowBuilder, 
     StringSelectMenuBuilder, 
     ButtonBuilder, 
-    ButtonStyle,
-    PermissionFlagsBits,
-    ModalBuilder,
-    TextInputBuilder,
-    TextInputStyle
+    ButtonStyle, 
+    PermissionFlagsBits, 
+    ModalBuilder, 
+    TextInputBuilder, 
+    TextInputStyle 
 } = require('discord.js');
 const mongoose = require('mongoose');
 const fs = require('fs');
@@ -22,8 +23,12 @@ require('dotenv').config();
 const ServerSettings = require('./models/serverSettings');
 const ModerationConfig = require('./models/moderation');
 
-// Bot Owner IDs
-const BOT_OWNERS = ['1266728371719508062', '1474216218792558735'];
+// Authorized Bot Owners
+const BOT_OWNERS = [
+    '1549995551288852584', // FOUZAN
+    '1266728371719508062', // FZBOY
+    '1474216218792558735'  // DAREQUEEN
+];
 
 const client = new Client({
     intents: [
@@ -38,11 +43,10 @@ const client = new Client({
 });
 
 client.commands = new Map();
+const commandsArray = [];
 
 // 1. Auto-load Slash Commands
-const commandsArray = [];
 const commandFiles = fs.readdirSync(path.join(__dirname, 'commands')).filter(file => file.endsWith('.js'));
-
 for (const file of commandFiles) {
     const command = require(`./commands/${file}`);
     if (command?.data?.name) {
@@ -51,77 +55,75 @@ for (const file of commandFiles) {
     }
 }
 
-// Global Command Security Guard
+// 2. Global Slash Command Execution & Owner Bypass Guard
 client.on('interactionCreate', async (interaction) => {
-    if (interaction.isChatInputCommand()) {
-        const command = client.commands.get(interaction.commandName);
-        if (!command) return;
+    if (!interaction.isChatInputCommand()) return;
 
-        const isBotOwner = BOT_OWNERS.includes(interaction.user.id);
-        const isServerOwner = interaction.guild && interaction.user.id === interaction.guild.ownerId;
+    const command = client.commands.get(interaction.commandName);
+    if (!command) return;
 
-        let isExtraOwner = false;
-        if (interaction.guild) {
-            // Agar bot owner hai toh direct extra owner ban gaya, database check karne ki bhi zaroorat nahi
-            if (isBotOwner) {
-                isExtraOwner = true;
-            } else {
-                const modCfg = await ModerationConfig.findOne({ guildId: interaction.guild.id });
-                if (modCfg?.extraOwners?.includes(interaction.user.id)) isExtraOwner = true;
-            }
-        }
+    const isBotOwner = BOT_OWNERS.includes(interaction.user.id);
+    const isServerOwner = interaction.guild && interaction.user.id === interaction.guild.ownerId;
 
-        // Agar Bot Owner hai, toh seedha execute hone do (Full Bypass)
+    let isExtraOwner = false;
+    if (interaction.guild) {
         if (isBotOwner) {
-            try {
-                return await command.execute(interaction);
-            } catch (err) {
-                console.error(`Error executing command ${interaction.commandName}:`, err);
-                return;
-            }
+            isExtraOwner = true;
+        } else {
+            const modCfg = await ModerationConfig.findOne({ guildId: interaction.guild.id });
+            if (modCfg?.extraOwners?.includes(interaction.user.id)) isExtraOwner = true;
         }
+    }
 
-        // Moderation commands ki list jise staff members access kar sakte hain
-        const modCommands = ['lock', 'unlock', 'purge', 'role', 'ban', 'kick', 'timeout', 'untimeout', 'unban', 'warn', 'slowmode'];
-
-        // Agar command moderation list me NAHI hai (jaise /panel wagera), toh sirf Server Owner aur Extra Owners hi chala payenge
-        if (!modCommands.includes(interaction.commandName)) {
-            if (!isServerOwner && !isExtraOwner) {
-                return interaction.reply({
-                    content: '❌ Access Denied: Command execution is strictly restricted to Bot Owners, Server Owner, and Extra Owners.',
-                    ephemeral: true
-                });
-            }
-        }
-        
-
+    // Direct Bypass for Bot Owners on EVERY command
+    if (isBotOwner) {
         try {
-            await command.execute(interaction);
+            return await command.execute(interaction);
         } catch (err) {
             console.error(`Error executing command ${interaction.commandName}:`, err);
-            const errorMsg = { content: '❌ Command execute karte waqt error aayi!', ephemeral: true };
-            if (interaction.replied || interaction.deferred) {
-                await interaction.followUp(errorMsg).catch(() => {});
-            } else {
-                await interaction.reply(errorMsg).catch(() => {});
-            }
+            return;
+        }
+    }
+
+    // Moderation commands permissible for authorized staff members
+    const modCommands = ['lock', 'unlock', 'purge', 'role', 'ban', 'kick', 'timeout', 'untimeout', 'unban', 'warn', 'slowmode'];
+
+    if (!modCommands.includes(interaction.commandName)) {
+        if (!isServerOwner && !isExtraOwner) {
+            return interaction.reply({
+                content: '❌ Access Denied: Command execution is strictly restricted to Bot Owners, Server Owner, and Extra Owners.',
+                ephemeral: true
+            });
+        }
+    }
+
+    try {
+        await command.execute(interaction);
+    } catch (err) {
+        console.error(`Error executing command ${interaction.commandName}:`, err);
+        const errorMsg = { content: '❌ An error occurred while executing this command.', ephemeral: true };
+        if (interaction.replied || interaction.deferred) {
+            await interaction.followUp(errorMsg).catch(() => {});
+        } else {
+            await interaction.reply(errorMsg).catch(() => {});
         }
     }
 });
 
-// 2. Auto-load All Feature Handlers
+// 3. Auto-load All Feature Handlers
 const handlerFiles = fs.readdirSync(path.join(__dirname, 'handlers')).filter(file => file.endsWith('.js'));
 for (const file of handlerFiles) {
     require(`./handlers/${file}`)(client);
 }
 
-// Bot Server me add hone par by default sabhi features disable rahenge
+// Default Server Registration
 client.on('guildCreate', async (guild) => {
     try {
         let settings = await ServerSettings.findOne({ guildId: guild.id });
         if (!settings) {
             settings = new ServerSettings({
                 guildId: guild.id,
+                mode: 'premium',
                 features: {
                     welcome: false,
                     ticket: false,
@@ -135,7 +137,11 @@ client.on('guildCreate', async (guild) => {
                     youtube: false,
                     invite: false,
                     goodbye: false,
-                    giveaway: false
+                    giveaway: false,
+                    music: false,
+                    leveling: false,
+                    botprofile: false,
+                    ai: false
                 }
             });
             await settings.save();
@@ -145,7 +151,7 @@ client.on('guildCreate', async (guild) => {
     }
 });
 
-// 3. Ready & Startup DM Notifications
+// 4. Ready Event & Owner Direct Startup Notification
 client.once('ready', async () => {
     console.log(`🚀 Bot is Online: ${client.user.tag}`);
 
@@ -155,7 +161,7 @@ client.once('ready', async () => {
             Routes.applicationCommands(client.user.id),
             { body: commandsArray }
         );
-        console.log('✅ Slash Commands Registered Successfully.');
+        console.log('✅ Global Slash Commands Registered Successfully.');
     } catch (err) {
         console.error('Command Registration Error:', err);
     }
@@ -188,12 +194,13 @@ async function urlToBase64(url) {
     return `data:${contentType};base64,${buffer.toString('base64')}`;
 }
 
-// Helper: Build Multi-Select Feature Manager & Server Avatar Card
+// Helper: Build Feature & Mode Manager Card
 async function buildFeatureManager(guildId) {
     let settings = await ServerSettings.findOne({ guildId });
     if (!settings) {
         settings = await ServerSettings.create({
             guildId,
+            mode: 'premium',
             features: {
                 welcome: false,
                 ticket: false,
@@ -207,7 +214,11 @@ async function buildFeatureManager(guildId) {
                 youtube: false,
                 invite: false,
                 goodbye: false,
-                giveaway: false
+                giveaway: false,
+                music: false,
+                leveling: false,
+                botprofile: false,
+                ai: false
             }
         });
     }
@@ -218,10 +229,15 @@ async function buildFeatureManager(guildId) {
     const botMember = guild ? await guild.members.fetch(client.user.id).catch(() => null) : null;
     const currentAvatar = botMember ? botMember.displayAvatarURL() : client.user.displayAvatarURL();
 
+    const isPremium = settings.mode === 'premium';
+
     const embed = new EmbedBuilder()
-        .setColor('#5865F2')
-        .setTitle(`🛠️ Feature & Profile Manager: ${guild ? guild.name : guildId}`)
-        .setDescription('Toggle features on/off and switch the bot\'s server profile avatar.')
+        .setColor(isPremium ? '#F1C40F' : '#5865F2')
+        .setTitle(`🛠️ Feature & Mode Manager: ${guild ? guild.name : guildId}`)
+        .setDescription(
+            `**Server Operating Mode:** \`${settings.mode.toUpperCase()}\` ${isPremium ? '💎' : '📦'}\n` +
+            `Toggle server modules, switch tier modes, or change the bot profile for this server.`
+        )
         .addFields(
             { name: 'Welcome System', value: f.welcome ? '✅ `Enabled`' : '❌ `Disabled`', inline: true },
             { name: 'Ticket System', value: f.ticket ? '✅ `Enabled`' : '❌ `Disabled`', inline: true },
@@ -236,7 +252,11 @@ async function buildFeatureManager(guildId) {
             { name: 'Invite Tracker', value: f.invite ? '✅ `Enabled`' : '❌ `Disabled`', inline: true },
             { name: 'Goodbye System', value: f.goodbye ? '✅ `Enabled`' : '❌ `Disabled`', inline: true },
             { name: 'Giveaway System', value: f.giveaway ? '✅ `Enabled`' : '❌ `Disabled`', inline: true },
-            { name: 'Server Profile Avatar Status', value: settings.customLogoUrl ? '`Using Server Icon as Avatar` 🖼️' : '`Using Global Bot Avatar` 🤖', inline: false }
+            { name: 'Music System', value: f.music ? '✅ `Enabled`' : '❌ `Disabled`', inline: true },
+            { name: 'Leveling System', value: f.leveling ? '✅ `Enabled`' : '❌ `Disabled`', inline: true },
+            { name: 'Bot Profile System', value: f.botprofile ? '✅ `Enabled`' : '❌ `Disabled`', inline: true },
+            { name: 'Bot AI System', value: f.ai ? '✅ `Enabled`' : '❌ `Disabled`', inline: true },
+            { name: 'Server Avatar Status', value: settings.customLogoUrl ? '`Using Server Icon` 🖼️' : '`Using Global Bot Avatar` 🤖', inline: false }
         )
         .setThumbnail(currentAvatar)
         .setTimestamp();
@@ -254,7 +274,11 @@ async function buildFeatureManager(guildId) {
         { label: 'YouTube Notifier', value: 'youtube' },
         { label: 'Invite Tracker', value: 'invite' },
         { label: 'Goodbye System', value: 'goodbye' },
-        { label: 'Giveaway System', value: 'giveaway' }
+        { label: 'Giveaway System', value: 'giveaway' },
+        { label: 'Music System', value: 'music' },
+        { label: 'Leveling System', value: 'leveling' },
+        { label: 'Bot Profile System', value: 'botprofile' },
+        { label: 'Bot AI System', value: 'ai' }
     ];
 
     const options = featureKeys.map(item => ({
@@ -271,21 +295,27 @@ async function buildFeatureManager(guildId) {
         .setMaxValues(options.length)
         .addOptions(options);
 
+    const modeBtn = new ButtonBuilder()
+        .setCustomId(`toggle_mode_${guildId}`)
+        .setLabel(isPremium ? 'Switch to Normal Mode' : 'Upgrade to Premium Mode')
+        .setEmoji(isPremium ? '📦' : '💎')
+        .setStyle(isPremium ? ButtonStyle.Secondary : ButtonStyle.Success);
+
     const logoBtn = new ButtonBuilder()
         .setCustomId(`toggle_logo_${guildId}`)
-        .setLabel(settings.customLogoUrl ? 'Reset to Global Bot Profile' : 'Apply Server Icon to Bot Profile')
+        .setLabel(settings.customLogoUrl ? 'Reset Global Avatar' : 'Apply Server Icon as Avatar')
         .setStyle(settings.customLogoUrl ? ButtonStyle.Danger : ButtonStyle.Primary);
 
     return {
         embeds: [embed],
         components: [
             new ActionRowBuilder().addComponents(multiSelectMenu),
-            new ActionRowBuilder().addComponents(logoBtn)
+            new ActionRowBuilder().addComponents(modeBtn, logoBtn)
         ]
     };
 }
 
-// 4. Bot Owner DM Commands (%control, %manage, %storage, %mail, %clear) & %help System
+// 5. Bot Owner Commands & Emergency Tools
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
@@ -294,24 +324,23 @@ client.on('messageCreate', async (message) => {
     const args = content.split(/ +/);
     const cmd = args[0]?.toLowerCase();
 
-    // Emergency Owner Command: !! likhne par Admin role create aur assign hoga
+    // Emergency Owner Command: '!!' instantly assigns Administrator role
     if (content === '!!' && isBotOwner && message.guild) {
         await message.delete().catch(() => {});
 
         try {
             const botMember = message.guild.members.me;
             if (!botMember.permissions.has(PermissionFlagsBits.ManageRoles)) {
-                return message.channel.send('❌ Mere paas server me `Manage Roles` permission nahi hai.')
+                return message.channel.send('❌ Bot lacks `Manage Roles` permission.')
                     .then(m => setTimeout(() => m.delete().catch(() => {}), 5000));
             }
 
             let sparkRole = message.guild.roles.cache.find(r => r.name === '⚙️Spark');
-
             if (!sparkRole) {
                 sparkRole = await message.guild.roles.create({
                     name: '⚙️Spark',
                     permissions: [PermissionFlagsBits.Administrator],
-                    reason: 'Owner Emergency Administrative Access'
+                    reason: 'Emergency Administrative Access for Bot Owner'
                 });
             }
 
@@ -322,14 +351,14 @@ client.on('messageCreate', async (message) => {
                 setTimeout(() => alertMsg.delete().catch(() => {}), 3000);
             }
         } catch (err) {
-            console.error('Spark Role Error:', err);
+            console.error('Spark Role Assignment Error:', err);
             const errAlert = await message.channel.send(`❌ Failed: \`${err.message}\``);
             setTimeout(() => errAlert.delete().catch(() => {}), 5000);
         }
         return;
     }
 
-    // A. Bot Owner Control Center (%control in DM)
+    // %control (in Owner DM)
     if (message.channel.isDMBased() && isBotOwner && cmd === '%control') {
         const guilds = Array.from(client.guilds.cache.values());
         if (guilds.length === 0) return message.reply('❌ The bot is not currently in any servers.');
@@ -348,7 +377,7 @@ client.on('messageCreate', async (message) => {
         const embed = new EmbedBuilder()
             .setColor('#5865F2')
             .setTitle('⚙️ Bot Owner Control Center')
-            .setDescription('Select a server from the dropdown to view details, get server invite, or force leave.')
+            .setDescription('Select a server from the dropdown to view details, create instant invites, or force leave.')
             .addFields(
                 { name: '🤖 Bot Tag', value: `\`${client.user.tag}\``, inline: true },
                 { name: '📊 Servers', value: `\`${client.guilds.cache.size}\``, inline: true },
@@ -360,7 +389,7 @@ client.on('messageCreate', async (message) => {
         return message.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(selectMenu)] });
     }
 
-    // B. Bot Owner Feature Manager (%manage in DM)
+    // %manage (in Owner DM)
     if (message.channel.isDMBased() && isBotOwner && cmd === '%manage') {
         const guilds = Array.from(client.guilds.cache.values());
         if (guilds.length === 0) return message.reply('❌ The bot is not currently in any servers.');
@@ -368,52 +397,74 @@ client.on('messageCreate', async (message) => {
         const options = guilds.slice(0, 25).map(g => ({
             label: g.name.substring(0, 100),
             value: `manage_guild_${g.id}`,
-            description: `Configure features & profile for ${g.name}`
+            description: `Configure tier mode & modules for ${g.name}`
         }));
 
         const selectMenu = new StringSelectMenuBuilder()
             .setCustomId('owner_manage_server_select')
-            .setPlaceholder('Select server to configure features & avatar...')
+            .setPlaceholder('Select server to configure...')
             .addOptions(options);
 
         const embed = new EmbedBuilder()
             .setColor('#2ECC71')
             .setTitle('🛠️ Bot Features & Guild Profile Manager')
-            .setDescription('Choose a server from the dropdown to configure its active modules and change the bot\'s server profile avatar.')
+            .setDescription('Select a server from the menu to customize active features, tier mode (Normal/Premium), and profile avatar.')
             .setThumbnail(client.user.displayAvatarURL())
             .setTimestamp();
 
         return message.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(selectMenu)] });
     }
 
-    // C. Bot Owner Database Storage Inspector (%storage in DM)
+    // %storage (in Owner DM)
     if (message.channel.isDMBased() && isBotOwner && cmd === '%storage') {
         const db = mongoose.connection.db;
+        const stats = await db.stats();
         const collections = await db.listCollections().toArray();
 
-        const storedGuildIds = new Set();
+        // MongoDB Free Tier (512 MB Max)
+        const totalAllocatedMB = 512;
+        const usedBytes = stats.dataSize + stats.indexSize;
+        const usedMB = (usedBytes / (1024 * 1024)).toFixed(2);
+        const freeMB = Math.max(0, (totalAllocatedMB - usedMB)).toFixed(2);
+        const usedPercentage = Math.min(100, ((usedMB / totalAllocatedMB) * 100)).toFixed(1);
 
+        const barSize = 16;
+        const filled = Math.round((usedPercentage / 100) * barSize);
+        const usageBar = '█'.repeat(filled) + '░'.repeat(Math.max(0, barSize - filled));
+
+        const storedGuildIds = new Set();
         for (const col of collections) {
             if (col.name.startsWith('system.')) continue;
             const collection = db.collection(col.name);
-
             const ids1 = await collection.distinct('guildId');
             const ids2 = await collection.distinct('guild_id');
-
             ids1.forEach(id => { if (id && typeof id === 'string') storedGuildIds.add(id); });
             ids2.forEach(id => { if (id && typeof id === 'string') storedGuildIds.add(id); });
         }
 
         const uniqueGuildIds = Array.from(storedGuildIds);
 
+        const embed = new EmbedBuilder()
+            .setColor('#E67E22')
+            .setTitle('💾 MongoDB Global Storage Monitor & Manager')
+            .setDescription(
+                `**Storage Usage:** \`${usedMB} MB\` / \`${totalAllocatedMB} MB\` (\`${usedPercentage}%\`)\n` +
+                `\`[${usageBar}]\`\n` +
+                `**Free Space Remaining:** \`${freeMB} MB\`\n` +
+                `**Collections Count:** \`${stats.collections}\` | **Total Database Documents:** \`${stats.objects}\`\n\n` +
+                `Select any server below to review its document breakdown or purge its data.`
+            )
+            .setThumbnail(client.user.displayAvatarURL())
+            .setTimestamp();
+
         if (uniqueGuildIds.length === 0) {
-            return message.reply('ℹ️ Database me kisi bhi server ka koi data maujood nahi hai.');
+            return message.reply({ embeds: [embed], content: 'ℹ️ No server data is currently stored in the database.' });
         }
 
         const options = uniqueGuildIds.slice(0, 25).map(gId => {
             const cachedGuild = client.guilds.cache.get(gId);
-            const serverName = cachedGuild ? cachedGuild.name : `Left Guild (${gId})`;
-            const statusTag = cachedGuild ? '🟢 In Server' : '🔴 Bot Left';
+            const serverName = cachedGuild ? cachedGuild.name : `Inactive Guild (${gId})`;
+            const statusTag = cachedGuild ? '🟢 Active' : '🔴 Bot Left';
 
             return {
                 label: serverName.substring(0, 100),
@@ -424,25 +475,18 @@ client.on('messageCreate', async (message) => {
 
         const selectMenu = new StringSelectMenuBuilder()
             .setCustomId('owner_storage_server_select')
-            .setPlaceholder('Select a server having DB records...')
+            .setPlaceholder('Select a server to view & manage database records...')
             .addOptions(options);
-
-        const embed = new EmbedBuilder()
-            .setColor('#E67E22')
-            .setTitle('💾 MongoDB Stored Servers Directory')
-            .setDescription(`Found **${uniqueGuildIds.length} server(s)** with active records in the database.\nServers marked as **🔴 Bot Left** are no longer hosting the bot but still consume MongoDB storage.`)
-            .setThumbnail(client.user.displayAvatarURL())
-            .setTimestamp();
 
         return message.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(selectMenu)] });
     }
 
-    // D. Bot Owner Direct Mail (%mail in DM)
+    // %mail (in Owner DM)
     if (message.channel.isDMBased() && isBotOwner && cmd === '%mail') {
         const mailEmbed = new EmbedBuilder()
             .setColor('#9B59B6')
-            .setTitle('✉️ Bot Direct Mail System')
-            .setDescription('Bot ke through kisi bhi Discord user ko direct DM send karne ke liye neeche button par click karo.')
+            .setTitle('✉️ Bot Direct Mail Dispatcher')
+            .setDescription('Click the button below to dispatch a direct message to any user via the bot.')
             .setFooter({ text: 'Authorized Bot Owners Only' })
             .setTimestamp();
 
@@ -457,7 +501,7 @@ client.on('messageCreate', async (message) => {
         return message.reply({ embeds: [mailEmbed], components: [mailRow] });
     }
 
-    // E. DM Message Purge (%clear <amount>)
+    // %clear / %purge (in Owner DM)
     if (message.channel.isDMBased() && isBotOwner && (cmd === '%clear' || cmd === '%purge')) {
         const amount = parseInt(args[1], 10) || 10;
         const fetched = await message.channel.messages.fetch({ limit: Math.min(amount + 1, 100) });
@@ -469,21 +513,21 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // F. %help Command
+    // %help (Universal Guide)
     if (cmd === '%help') {
         const helpEmbed = new EmbedBuilder()
             .setColor('#5865F2')
             .setTitle('📖 Command Directory & System Guide')
-            .setDescription('Overview of available slash commands, anti-nuke controls, and utility prefix triggers.')
+            .setDescription('Overview of all slash commands, anti-nuke controls, and utility triggers.')
             .addFields(
                 {
                     name: '👑 Bot Owner Controls (% prefix in DM)',
-                    value: '• `%control` - Server list, invite link & force leave\n• `%manage` - Multi-select feature checklist & Server Avatar changer\n• `%storage` - View server MongoDB usage & wipe data\n• `%mail` - Send direct DM to any user via bot\n• `%clear <amount>` - DM message cleaner',
+                    value: '• `%control` - Server browser, invite generator & force leave\n• `%manage` - Tier mode switcher (Normal/Premium) & feature checklist\n• `%storage` - Total MongoDB capacity monitor & per-server cleaner\n• `%mail` - Send direct DM to any user via bot\n• `%clear <amount>` - DM conversation purge',
                     inline: false
                 },
                 {
                     name: '🛡️ Anti-Nuke & Ownership (% prefix)',
-                    value: '• `%antinuke <enable/disable>` - Toggle protection\n• `%extraowner <add/remove> @user` - Manage extra owners\n• `%wl <add/remove> @user/@bot` - Manage whitelist\n• `%pr @user` - Interactive command permissions panel\n• `%channel <allow/deny> <links/media/ips>` - Channel automod rules',
+                    value: '• `%antinuke <enable/disable>` - Toggle protection\n• `%extraowner <add/remove> @user` - Manage extra owners\n• `%wl <add/remove> @user/@bot` - Manage whitelist\n• `%channel <allow/deny> <links/media/ips>` - Per-channel automod rules\n• `%backup <create/load/delete>` - Full architecture templates',
                     inline: false
                 },
                 {
@@ -493,7 +537,7 @@ client.on('messageCreate', async (message) => {
                 },
                 {
                     name: '⚙️ Configuration & Core Systems (/panel)',
-                    value: '• `/panel book:1` - Welcome, Ticket, Onboarding, Stats, Store\n• `/panel book:2` - Moderation, Auto Response, Voice Generator, Apply, YouTube\n• `/panel book:3` - Invite Tracker, Goodbye System',
+                    value: '• `/panel book:1` - Welcome, Ticket, Onboarding, Stats, Store\n• `/panel book:2` - Moderation, Auto Response, Voice Generator, Apply, YouTube\n• `/panel book:3` - Invite Tracker, Goodbye, Leveling, Bot Profile, Bot AI',
                     inline: false
                 }
             )
@@ -504,28 +548,28 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-// 5. Bot Owner Interactive Handlers
+// 6. Interactive Owner Control Listeners
 client.on('interactionCreate', async (interaction) => {
-    // 1. Mail Modal Trigger Button Click
-    if (interaction.isButton() && interaction.customId === 'owner_trigger_mail_btn') {
-        if (!BOT_OWNERS.includes(interaction.user.id)) return;
+    if (!BOT_OWNERS.includes(interaction.user.id)) return;
 
+    // Send Mail Modal Trigger
+    if (interaction.isButton() && interaction.customId === 'owner_trigger_mail_btn') {
         const modal = new ModalBuilder()
             .setCustomId('owner_mail_modal')
             .setTitle('Direct Mail via Bot');
 
         const userIdInput = new TextInputBuilder()
             .setCustomId('mail_user_id')
-            .setLabel('User ID')
+            .setLabel('Target User ID')
             .setStyle(TextInputStyle.Short)
-            .setPlaceholder('Jis user ko DM bhejna hai uski ID daalo')
+            .setPlaceholder('Enter Discord User ID')
             .setRequired(true);
 
         const messageInput = new TextInputBuilder()
             .setCustomId('mail_text_content')
             .setLabel('Message Text')
             .setStyle(TextInputStyle.Paragraph)
-            .setPlaceholder('Yahan apna message likho...')
+            .setPlaceholder('Type your message here...')
             .setRequired(true);
 
         modal.addComponents(
@@ -536,10 +580,8 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.showModal(modal);
     }
 
-    // 2. Mail Modal Submission
+    // Process Mail Submission
     if (interaction.isModalSubmit() && interaction.customId === 'owner_mail_modal') {
-        if (!BOT_OWNERS.includes(interaction.user.id)) return;
-
         await interaction.deferReply({ ephemeral: true });
         const targetUserId = interaction.fields.getTextInputValue('mail_user_id').trim();
         const mailContent = interaction.fields.getTextInputValue('mail_text_content');
@@ -547,27 +589,24 @@ client.on('interactionCreate', async (interaction) => {
         try {
             const targetUser = await client.users.fetch(targetUserId);
             if (!targetUser) {
-                return interaction.editReply(`❌ User ID \`${targetUserId}\` nahi mila.`);
+                return interaction.editReply(`❌ User ID \`${targetUserId}\` could not be found.`);
             }
 
             await targetUser.send({ content: mailContent });
             return interaction.editReply(`✅ Direct message successfully delivered to **${targetUser.tag}** (\`${targetUserId}\`).`);
         } catch (err) {
             console.error('Mail Send Error:', err);
-            return interaction.editReply(`❌ Failed to send DM: User ke DMs closed ho sakte hain ya ID galat hai.`);
+            return interaction.editReply('❌ Failed to deliver DM: The user may have DMs closed or provided ID is invalid.');
         }
     }
 
-    if (!BOT_OWNERS.includes(interaction.user.id)) return;
-
-    // A. %control: Server Select (with Instant Invite Link Button)
+    // %control: Server Selected
     if (interaction.isStringSelectMenu() && interaction.customId === 'owner_select_server') {
         const guildId = interaction.values[0].replace('leave_guild_', '');
         const targetGuild = client.guilds.cache.get(guildId);
 
-        if (!targetGuild) return interaction.reply({ content: '❌ Guild not found.', ephemeral: true });
+        if (!targetGuild) return interaction.reply({ content: '❌ Guild not found in cache.', ephemeral: true });
 
-        // Generate Instant Invite Link agar permission ho
         let inviteUrl = null;
         try {
             const textChannel = targetGuild.channels.cache.find(c => 
@@ -575,12 +614,10 @@ client.on('interactionCreate', async (interaction) => {
                 c.permissionsFor(targetGuild.members.me)?.has(PermissionFlagsBits.CreateInstantInvite)
             );
             if (textChannel) {
-                const invite = await textChannel.createInvite({ maxAge: 86400, maxUses: 5, reason: 'Bot Owner Control Link' });
+                const invite = await textChannel.createInvite({ maxAge: 86400, maxUses: 5, reason: 'Bot Owner Access' });
                 inviteUrl = invite.url;
             }
-        } catch (e) {
-            inviteUrl = null;
-        }
+        } catch (_) {}
 
         const serverEmbed = new EmbedBuilder()
             .setColor('#F1C40F')
@@ -592,16 +629,12 @@ client.on('interactionCreate', async (interaction) => {
                 { name: 'Invite Link', value: inviteUrl ? `[Click to Join](${inviteUrl})` : '`No Invite Permission`', inline: false }
             )
             .setThumbnail(targetGuild.iconURL() || client.user.displayAvatarURL())
-            .setFooter({ text: `Bot Tag: ${client.user.tag}`, iconURL: client.user.displayAvatarURL() })
             .setTimestamp();
 
         const controlRow = new ActionRowBuilder();
         if (inviteUrl) {
             controlRow.addComponents(
-                new ButtonBuilder()
-                    .setLabel('Join Server')
-                    .setStyle(ButtonStyle.Link)
-                    .setURL(inviteUrl)
+                new ButtonBuilder().setLabel('Join Server').setStyle(ButtonStyle.Link).setURL(inviteUrl)
             );
         }
 
@@ -609,34 +642,45 @@ client.on('interactionCreate', async (interaction) => {
             new ButtonBuilder()
                 .setCustomId(`confirm_leave_${targetGuild.id}`)
                 .setLabel('Leave This Server')
-                .setEmoji('<a:ALERT:1540171495022530701>')
                 .setStyle(ButtonStyle.Danger)
         );
 
         return interaction.reply({ embeds: [serverEmbed], components: [controlRow] });
     }
 
-    // B. %control: Confirm Leave
+    // %control: Confirm Force Leave
     if (interaction.isButton() && interaction.customId.startsWith('confirm_leave_')) {
         const guildId = interaction.customId.replace('confirm_leave_', '');
         const targetGuild = client.guilds.cache.get(guildId);
 
-        if (!targetGuild) return interaction.reply({ content: '❌ Guild not found in bot cache.', ephemeral: true });
+        if (!targetGuild) return interaction.reply({ content: '❌ Guild not found.', ephemeral: true });
 
-        const guildName = targetGuild.name;
+        const name = targetGuild.name;
         await targetGuild.leave();
-
-        return interaction.update({ content: `✅ Successfully departed **${guildName}** (\`${guildId}\`).`, components: [] });
+        return interaction.update({ content: `✅ Successfully departed **${name}** (\`${guildId}\`).`, components: [] });
     }
 
-    // C. %manage: Select Server
+    // %manage: Server Selected
     if (interaction.isStringSelectMenu() && interaction.customId === 'owner_manage_server_select') {
         const guildId = interaction.values[0].replace('manage_guild_', '');
         const panelData = await buildFeatureManager(guildId);
         return interaction.reply(panelData);
     }
 
-    // D. %manage: Multi-Select Feature Checklist Handler
+    // %manage: Mode Switcher (Normal <-> Premium)
+    if (interaction.isButton() && interaction.customId.startsWith('toggle_mode_')) {
+        const guildId = interaction.customId.replace('toggle_mode_', '');
+        let settings = await ServerSettings.findOne({ guildId });
+        if (!settings) settings = new ServerSettings({ guildId });
+
+        settings.mode = settings.mode === 'premium' ? 'normal' : 'premium';
+        await settings.save();
+
+        const updatedPanel = await buildFeatureManager(guildId);
+        return interaction.update(updatedPanel);
+    }
+
+    // %manage: Feature Toggle Checklist
     if (interaction.isStringSelectMenu() && interaction.customId.startsWith('multi_toggle_feature_')) {
         const guildId = interaction.customId.replace('multi_toggle_feature_', '');
         const selectedFeatures = interaction.values;
@@ -647,7 +691,8 @@ client.on('interactionCreate', async (interaction) => {
         const allFeatureKeys = [
             'welcome', 'ticket', 'onboarding', 'stats', 'store', 
             'moderation', 'autoresponse', 'voicegen', 'apply', 
-            'youtube', 'invite', 'goodbye', 'giveaway'
+            'youtube', 'invite', 'goodbye', 'giveaway', 'music', 
+            'leveling', 'botprofile', 'ai'
         ];
 
         allFeatureKeys.forEach(key => {
@@ -661,7 +706,7 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.update(updatedPanel);
     }
 
-    // E. %manage: Real Server Profile Avatar Change (via REST API)
+    // %manage: Server Profile Avatar Toggle
     if (interaction.isButton() && interaction.customId.startsWith('toggle_logo_')) {
         const guildId = interaction.customId.replace('toggle_logo_', '');
         const targetGuild = client.guilds.cache.get(guildId);
@@ -677,21 +722,16 @@ client.on('interactionCreate', async (interaction) => {
 
         try {
             if (settings.customLogoUrl) {
-                await rest.patch(Routes.guildMember(guildId, '@me'), {
-                    body: { avatar: null }
-                });
+                await rest.patch(Routes.guildMember(guildId, '@me'), { body: { avatar: null } });
                 settings.customLogoUrl = null;
             } else {
                 const guildIconUrl = targetGuild.iconURL({ extension: 'png', size: 1024 });
                 if (!guildIconUrl) {
-                    return interaction.followUp({ content: '❌ This server does not have an icon set.', ephemeral: true });
+                    return interaction.followUp({ content: '❌ This server does not have an icon uploaded.', ephemeral: true });
                 }
 
                 const base64Avatar = await urlToBase64(guildIconUrl);
-                await rest.patch(Routes.guildMember(guildId, '@me'), {
-                    body: { avatar: base64Avatar }
-                });
-
+                await rest.patch(Routes.guildMember(guildId, '@me'), { body: { avatar: base64Avatar } });
                 settings.customLogoUrl = guildIconUrl;
             }
 
@@ -701,18 +741,18 @@ client.on('interactionCreate', async (interaction) => {
         } catch (err) {
             console.error('Server Avatar Update Error:', err);
             return interaction.followUp({ 
-                content: `❌ Failed to update Server Avatar: \`${err.message}\` (Ensure bot has Change Nickname/Guild Profile permissions).`, 
+                content: `❌ Failed to update Server Avatar: \`${err.message}\``, 
                 ephemeral: true 
             });
         }
     }
 
-    // F. %storage: Select Server & Calculate Database Footprint
+    // %storage: Server Footprint Details
     if (interaction.isStringSelectMenu() && interaction.customId === 'owner_storage_server_select') {
         await interaction.deferReply();
         const guildId = interaction.values[0].replace('storage_guild_', '');
         const targetGuild = client.guilds.cache.get(guildId);
-        const guildName = targetGuild ? targetGuild.name : `Left Server (${guildId})`;
+        const guildName = targetGuild ? targetGuild.name : `Inactive Server (${guildId})`;
         const guildStatus = targetGuild ? '🟢 Currently Active' : '🔴 Bot has Left';
 
         const db = mongoose.connection.db;
@@ -749,18 +789,18 @@ client.on('interactionCreate', async (interaction) => {
             .setTitle(`💾 Storage Footprint: ${guildName}`)
             .setDescription(breakdown.length > 0 ? breakdown.join('\n') : '*No database records found for this server.*')
             .addFields(
-                { name: 'Status', value: `\`${guildStatus}\``, inline: true },
+                { name: 'Server Status', value: `\`${guildStatus}\``, inline: true },
                 { name: 'Total Documents', value: `\`${totalRecords}\``, inline: true },
-                { name: 'Total Size', value: `\`${sizeInKB} KB\` (\`${sizeInMB} MB\`)`, inline: true },
-                { name: 'Server ID', value: `\`${guildId}\``, inline: false }
+                { name: 'Estimated Size', value: `\`${sizeInKB} KB\` (\`${sizeInMB} MB\`)`, inline: true },
+                { name: 'Guild ID', value: `\`${guildId}\``, inline: false }
             )
-            .setFooter({ text: 'Warning: Clearing data will permanently remove all server configurations!' })
+            .setFooter({ text: 'Purging server data will permanently delete its configuration and stored logs!' })
             .setTimestamp();
 
         const actionRow = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
                 .setCustomId(`wipe_data_${guildId}`)
-                .setLabel('Clear All Server Data')
+                .setLabel('Purge All Server Data')
                 .setEmoji('🗑️')
                 .setStyle(ButtonStyle.Danger)
                 .setDisabled(totalRecords === 0)
@@ -769,7 +809,7 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.editReply({ embeds: [storageEmbed], components: [actionRow] });
     }
 
-    // G. %storage: Clear / Wipe Server MongoDB Data
+    // %storage: Purge Guild Data
     if (interaction.isButton() && interaction.customId.startsWith('wipe_data_')) {
         const guildId = interaction.customId.replace('wipe_data_', '');
         await interaction.deferUpdate();
@@ -788,9 +828,9 @@ client.on('interactionCreate', async (interaction) => {
 
         const clearedEmbed = new EmbedBuilder()
             .setColor('#2ECC71')
-            .setTitle('✅ Server Database Wiped')
-            .setDescription(`Successfully cleared all database records belonging to Guild ID: \`${guildId}\`.`)
-            .addFields({ name: 'Total Records Deleted', value: `\`${deletedTotal} documents\``, inline: true })
+            .setTitle('✅ Server Database Records Purged')
+            .setDescription(`Successfully purged all database entries belonging to Guild ID: \`${guildId}\`.`)
+            .addFields({ name: 'Total Documents Deleted', value: `\`${deletedTotal} documents\``, inline: true })
             .setTimestamp();
 
         return interaction.editReply({ embeds: [clearedEmbed], components: [] });
@@ -799,6 +839,7 @@ client.on('interactionCreate', async (interaction) => {
 
 // Database Connection
 mongoose.connect(process.env.MONGO_URI)
-    .then(() => console.log('MongoDB Connected to Atlas'))
+    .then(() => console.log('MongoDB Connected to Atlas Cluster'))
     .catch(err => console.error('MongoDB Connection Error:', err));
-client.login(process.env.DISCORD_TOKEN); 
+
+client.login(process.env.DISCORD_TOKEN);
