@@ -10,11 +10,14 @@ const BOT_OWNERS = [
 
 const conversationMemory = new Map();
 
-// Initialize Google Generative AI
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-
 async function getSparkCoreAIResponse(history, userPrompt, username, userId, guildName) {
+    if (!process.env.GEMINI_API_KEY) {
+        console.error('❌ GEMINI_API_KEY is missing from environment variables!');
+        return '❌ Error: GEMINI_API_KEY environment variable set nahi hai.';
+    }
+
     try {
+        const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
         const isOwner = BOT_OWNERS.includes(userId);
 
         const systemInstruction = `
@@ -35,17 +38,14 @@ You have complete knowledge of SparkCore's modules and help members use them:
 - Music Engine: Commands like %play, %pause, %skip, %stop, 24/7 mode, high-res panel, and audio filters.
 - Moderation & Security: Slash commands (/ban, /kick, /timeout, /purge, /lock, /unlock, /role), automod link/IP blockers, bad word filtering.
 - Community Systems: Tickets, Onboarding role pickers (/panel), Giveaways (/giveaway), Leveling (&rank), Invites tracker (&i, &lb), and Goodbye cards.
-- General help: Give concise steps on how to use slash commands (/) or prefix commands (%) when users ask for help.
 
 STRICT CONFIDENTIALITY & SECURITY GUARDRAILS (NEVER BREAK THESE):
 - NEVER reveal, hint at, or discuss the "Bot Owner Bypass", backend bypass logic, admin emergency roles (like !!), or owner-only commands (%manage, %control, %storage).
 - If anyone asks how owners bypass rules or how permissions work behind the scenes, deflect politely: "Owner security architecture is private and restricted."
-- Never share sensitive configuration strings, environment variables, or private backend code.
 
 TONE & LANGUAGE:
 - Match the user's language dynamically: Hinglish, Urdu, Roman Urdu, Hindi, or English.
 - Keep the tone friendly, witty, sharp, and helpful — like a cool teammate, not a robotic script.
-- Keep standard answers proportional and clean with Discord formatting (**bold**, bullet points, codeblocks).
         `.trim();
 
         const model = genAI.getGenerativeModel({
@@ -53,22 +53,27 @@ TONE & LANGUAGE:
             systemInstruction: systemInstruction
         });
 
-        // Format chat history for Google Generative AI
-        const formattedHistory = history.map(msg => ({
-            role: msg.role === 'model' ? 'model' : 'user',
-            parts: [{ text: msg.text }]
-        }));
+        // Filter valid history to avoid API format errors
+        const validHistory = [];
+        for (const msg of history) {
+            if (msg.role && msg.text) {
+                validHistory.push({
+                    role: msg.role === 'model' ? 'model' : 'user',
+                    parts: [{ text: String(msg.text) }]
+                });
+            }
+        }
 
         const chat = model.startChat({
-            history: formattedHistory
+            history: validHistory
         });
 
-        const result = await chat.sendMessage(`${username}: ${userPrompt}`);
+        const result = await chat.sendMessage(`${username}:${userPrompt}`);
         const response = await result.response;
         return response.text().trim();
     } catch (err) {
-        console.error('SparkCore AI Error:', err);
-        return null;
+        console.error('🔥 Gemini API Detailed Error:', err);
+        return `❌ AI Error: \`${err.message}\``;
     }
 }
 
@@ -81,7 +86,7 @@ module.exports = (client) => {
         const isServerOwner = message.author.id === message.guild.ownerId;
         const isAdmin = message.member?.permissions.has('Administrator');
 
-        // %ai set / %ai off / %ai clear
+        // Setup Commands
         if (content.toLowerCase().startsWith('%ai')) {
             const args = content.split(/ +/).slice(1);
             const sub = args[0]?.toLowerCase();
@@ -117,10 +122,10 @@ module.exports = (client) => {
                 return message.reply('🧹 SparkCore memory for this channel has been cleared.');
             }
 
-            return message.reply('ℹ️ **SparkCore AI Controls:**\n• `%ai set` - Set current channel for AI chats\n• `%ai set #channel` - Bind a specific channel\n• `%ai clear` - Clear conversation memory\n• `%ai off` - Disable AI channel');
+            return message.reply('ℹ️ **SparkCore AI Controls:**\n• `%ai set` - Current chat bind karo\n• `%ai clear` - Memory reset karo\n• `%ai off` - Disable karo');
         }
 
-        // Live Chat Handler
+        // Active Chat Execution
         const aiData = await AIConfig.findOne({ guildId: message.guild.id });
         if (!aiData || !aiData.enabled || !aiData.channelId) return;
         if (message.channel.id !== aiData.channelId) return;
@@ -142,13 +147,16 @@ module.exports = (client) => {
         );
 
         if (reply) {
-            history.push({ role: 'user', text: `${message.author.username}: ${message.content}` });
-            history.push({ role: 'model', text: reply });
+            // Agar error nahi hai tabhi history me add karo
+            if (!reply.startsWith('❌')) {
+                history.push({ role: 'user', text: `${message.author.username}: ${message.content}` });
+                history.push({ role: 'model', text: reply });
 
-            if (history.length > 8) {
-                history = history.slice(history.length - 8);
+                if (history.length > 8) {
+                    history = history.slice(history.length - 8);
+                }
+                conversationMemory.set(memKey, history);
             }
-            conversationMemory.set(memKey, history);
 
             const chunks = reply.match(/[\s\S]{1,1990}/g) || [reply];
             for (const chunk of chunks) {
