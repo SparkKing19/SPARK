@@ -3,8 +3,8 @@ const {
     TextInputBuilder, 
     TextInputStyle, 
     ActionRowBuilder, 
-    EmbedBuilder,
-    PermissionsBitField 
+    PermissionsBitField,
+    AttachmentBuilder 
 } = require('discord.js');
 const LevelingConfig = require('../models/leveling');
 const { parseVariables } = require('../utils/variables');
@@ -15,6 +15,40 @@ const BOT_OWNERS = [
     '1266728371719508062', // FZBOY
     '1474216218792558735'  // DAREQUEEN
 ];
+
+// Helper: Bina Embed ke Avatar ke sath direct message bhejna
+async function sendNonEmbedNotification(channel, user, contentText) {
+    try {
+        // Tareeqa 1: Webhook use karke user avatar aur direct text
+        if (channel.guild.members.me?.permissionsIn(channel).has(PermissionsBitField.Flags.ManageWebhooks)) {
+            const webhooks = await channel.fetchWebhooks().catch(() => null);
+            let hook = webhooks?.find(w => w.name === 'SparkCore Level Alerts');
+            
+            if (!hook) {
+                hook = await channel.createWebhook({
+                    name: 'SparkCore Level Alerts',
+                    avatar: channel.client.user.displayAvatarURL()
+                }).catch(() => null);
+            }
+
+            if (hook) {
+                await hook.send({
+                    content: contentText,
+                    username: user.username,
+                    avatarURL: user.displayAvatarURL({ dynamic: true })
+                });
+                return;
+            }
+        }
+    } catch (_) {}
+
+    // Tareeqa 2: Fallback agar webhook permission na ho (Direct text + Avatar attachment)
+    const avatarAttach = new AttachmentBuilder(user.displayAvatarURL({ extension: 'png', size: 128 }), { name: 'avatar.png' });
+    await channel.send({
+        content: contentText,
+        files: [avatarAttach]
+    }).catch(() => {});
+}
 
 module.exports = (client) => {
 
@@ -82,7 +116,7 @@ module.exports = (client) => {
         }
     });
 
-    // 3. Message Counter, Commands & Dynamic Dual Level-Up Engine (No Cooldown)
+    // 3. Message Counter & Dual Notifications
     client.on('messageCreate', async (message) => {
         if (!message.guild || message.author.bot) return;
 
@@ -129,16 +163,9 @@ module.exports = (client) => {
                 lbRows.push(`${rankBadge} <@${entry.userId}> • **Level ${entry.level}** (${entry.messages} msgs)`);
             }
 
-            const lbEmbed = new EmbedBuilder()
-                .setColor('#5865F2')
-                .setAuthor({ 
-                    name: `${message.guild.name} — Top 10 Level Leaderboard`, 
-                    iconURL: message.guild.iconURL({ dynamic: true }) 
-                })
-                .setDescription(lbRows.join('\n'))
-                .setFooter({ text: `Requested by ${message.author.username}`, iconURL: message.author.displayAvatarURL() });
-
-            return message.reply({ embeds: [lbEmbed] });
+            return message.reply({
+                content: `🏆 **${message.guild.name} — Top 10 Level Leaderboard**\n\n${lbRows.join('\n')}`
+            });
         }
 
         // C. COMMAND: &rank
@@ -151,17 +178,9 @@ module.exports = (client) => {
             const userRecord = data.users.find(u => u.userId === target.id) || { level: 0, messages: 0 };
             const requiredForNext = (userRecord.level + 1) * data.messagesPerLevel;
 
-            const rankEmbed = new EmbedBuilder()
-                .setColor('#F1C40F')
-                .setAuthor({ name: `${target.username}'s Rank Card`, iconURL: target.displayAvatarURL() })
-                .addFields(
-                    { name: '🏆 Level', value: `\`Level ${userRecord.level}\``, inline: true },
-                    { name: '💬 Progress', value: `\`${userRecord.messages} / ${requiredForNext} msgs\``, inline: true },
-                    { name: '⚡ Rate', value: `\`+${data.messagesPerLevel} msgs/lvl\``, inline: true }
-                )
-                .setFooter({ text: 'Leveling System' });
-
-            return message.reply({ embeds: [rankEmbed] });
+            return message.reply({
+                content: `📊 **${target.username}'s Rank Status**\n• **Level:** \`${userRecord.level}\`\n• **Progress:** \`${userRecord.messages} / ${requiredForNext}\` msgs\n• **Multiplier:** \`+${data.messagesPerLevel} msgs/lvl\``
+            });
         }
 
         // D. Instant XP Tracker (No cooldown)
@@ -193,16 +212,14 @@ module.exports = (client) => {
             });
             formattedMsg = formattedMsg.replace(/{level}/g, `${userRecord.level}`);
 
-            const levelEmbed = new EmbedBuilder()
-                .setColor('#2ECC71')
-                .setDescription(formattedMsg);
+            // 1. Current Chat Alert (Direct Plain Message with Avatar)
+            await sendNonEmbedNotification(message.channel, message.author, formattedMsg);
 
-            await message.channel.send({ embeds: [levelEmbed] }).catch(() => {});
-
+            // 2. Configured Log Channel Alert (agar alag set ho)
             if (data.channelId && data.channelId !== message.channel.id) {
                 const targetChannel = message.guild.channels.cache.get(data.channelId);
                 if (targetChannel && targetChannel.isTextBased()) {
-                    await targetChannel.send({ embeds: [levelEmbed] }).catch(() => {});
+                    await sendNonEmbedNotification(targetChannel, message.author, formattedMsg);
                 }
             }
         }
@@ -210,6 +227,5 @@ module.exports = (client) => {
         await data.save();
     });
 
-    console.log('✔ Leveling System handler loaded.');
+    console.log('✔ Non-Embed Leveling System handler loaded.');
 };
-                    
