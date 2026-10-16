@@ -10,17 +10,23 @@ const BOT_OWNERS = [
 
 const conversationMemory = new Map();
 
+// Supported model fallbacks list agar ek 404 de toh agla execute ho
+const CANDIDATE_MODELS = [
+    'gemini-1.5-flash-latest',
+    'gemini-1.5-pro-latest',
+    'gemini-pro'
+];
+
 async function getSparkCoreAIResponse(history, userPrompt, username, userId, guildName) {
     if (!process.env.GEMINI_API_KEY) {
         console.error('❌ GEMINI_API_KEY is missing from environment variables!');
-        return '❌ Error: GEMINI_API_KEY environment variable set nahi hai.';
+        return '❌ Error: GEMINI_API_KEY set nahi hai.';
     }
 
-    try {
-        const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-        const isOwner = BOT_OWNERS.includes(userId);
+    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    const isOwner = BOT_OWNERS.includes(userId);
 
-        const systemInstruction = `
+    const systemInstruction = `
 You are "SparkCore", an intelligent, authentic, and witty Discord AI assistant built for servers.
 You were created and developed by FZBOY along with DAREQUEEN.
 
@@ -46,36 +52,42 @@ STRICT CONFIDENTIALITY & SECURITY GUARDRAILS (NEVER BREAK THESE):
 TONE & LANGUAGE:
 - Match the user's language dynamically: Hinglish, Urdu, Roman Urdu, Hindi, or English.
 - Keep the tone friendly, witty, sharp, and helpful — like a cool teammate, not a robotic script.
-        `.trim();
+    `.trim();
 
-        const model = genAI.getGenerativeModel({
-            model: 'gemini-1.5-flash-latest',
-            systemInstruction: systemInstruction
-        });
-        
-
-        // Filter valid history to avoid API format errors
-        const validHistory = [];
-        for (const msg of history) {
-            if (msg.role && msg.text) {
-                validHistory.push({
-                    role: msg.role === 'model' ? 'model' : 'user',
-                    parts: [{ text: String(msg.text) }]
-                });
-            }
+    const validHistory = [];
+    for (const msg of history) {
+        if (msg.role && msg.text) {
+            validHistory.push({
+                role: msg.role === 'model' ? 'model' : 'user',
+                parts: [{ text: String(msg.text) }]
+            });
         }
-
-        const chat = model.startChat({
-            history: validHistory
-        });
-
-        const result = await chat.sendMessage(`${username}:${userPrompt}`);
-        const response = await result.response;
-        return response.text().trim();
-    } catch (err) {
-        console.error('🔥 Gemini API Detailed Error:', err);
-        return `❌ AI Error: \`${err.message}\``;
     }
+
+    // Try candidate models sequentially
+    let lastError = null;
+    for (const modelName of CANDIDATE_MODELS) {
+        try {
+            const model = genAI.getGenerativeModel({
+                model: modelName,
+                systemInstruction: systemInstruction
+            });
+
+            const chat = model.startChat({
+                history: validHistory
+            });
+
+            const result = await chat.sendMessage(`${username}:${userPrompt}`);
+            const response = await result.response;
+            return response.text().trim();
+        } catch (err) {
+            lastError = err;
+            console.warn(`Model ${modelName} failed (${err.message}). Trying fallback...`);
+        }
+    }
+
+    console.error('🔥 All Gemini Candidate Models Failed:', lastError);
+    return `❌ AI Error: \`${lastError?.message || 'Failed to fetch AI response'}\``;
 }
 
 module.exports = (client) => {
@@ -87,7 +99,7 @@ module.exports = (client) => {
         const isServerOwner = message.author.id === message.guild.ownerId;
         const isAdmin = message.member?.permissions.has('Administrator');
 
-        // Setup Commands
+        // %ai set / %ai off / %ai clear
         if (content.toLowerCase().startsWith('%ai')) {
             const args = content.split(/ +/).slice(1);
             const sub = args[0]?.toLowerCase();
@@ -105,7 +117,7 @@ module.exports = (client) => {
                     { upsert: true, new: true }
                 );
 
-                return message.reply(`🤖 **SparkCore AI Activated!**\nBound channel: ${targetChannel}. AI ab is channel me active hai!`);
+                return message.reply(`🤖 **SparkCore AI Activated!**\nBound channel: ${targetChannel}. AI is now active in this channel!`);
             }
 
             if (sub === 'off' || sub === 'disable') {
@@ -123,7 +135,7 @@ module.exports = (client) => {
                 return message.reply('🧹 SparkCore memory for this channel has been cleared.');
             }
 
-            return message.reply('ℹ️ **SparkCore AI Controls:**\n• `%ai set` - Current chat bind karo\n• `%ai clear` - Memory reset karo\n• `%ai off` - Disable karo');
+            return message.reply('ℹ️ **SparkCore AI Controls:**\n• `%ai set` - Bind current channel\n• `%ai clear` - Clear conversation memory\n• `%ai off` - Disable AI channel');
         }
 
         // Active Chat Execution
@@ -148,7 +160,6 @@ module.exports = (client) => {
         );
 
         if (reply) {
-            // Agar error nahi hai tabhi history me add karo
             if (!reply.startsWith('❌')) {
                 history.push({ role: 'user', text: `${message.author.username}: ${message.content}` });
                 history.push({ role: 'model', text: reply });
