@@ -16,10 +16,12 @@ const BOT_OWNERS = [
     '1474216218792558735'  // DAREQUEEN
 ];
 
-// Helper: Bina Embed ke Avatar ke sath direct message bhejna
-async function sendNonEmbedNotification(channel, user, contentText) {
+// Helper: Bina Embed ke Avatar + Server Display Name ke sath plain message bhejna
+async function sendNonEmbedNotification(channel, member, contentText) {
     try {
-        // Tareeqa 1: Webhook use karke user avatar aur direct text
+        const displayName = member.displayName || member.user.globalName || member.user.username;
+        const avatar = member.displayAvatarURL({ dynamic: true });
+
         if (channel.guild.members.me?.permissionsIn(channel).has(PermissionsBitField.Flags.ManageWebhooks)) {
             const webhooks = await channel.fetchWebhooks().catch(() => null);
             let hook = webhooks?.find(w => w.name === 'SparkCore Level Alerts');
@@ -34,16 +36,16 @@ async function sendNonEmbedNotification(channel, user, contentText) {
             if (hook) {
                 await hook.send({
                     content: contentText,
-                    username: user.username,
-                    avatarURL: user.displayAvatarURL({ dynamic: true })
+                    username: displayName,
+                    avatarURL: avatar
                 });
                 return;
             }
         }
     } catch (_) {}
 
-    // Tareeqa 2: Fallback agar webhook permission na ho (Direct text + Avatar attachment)
-    const avatarAttach = new AttachmentBuilder(user.displayAvatarURL({ extension: 'png', size: 128 }), { name: 'avatar.png' });
+    // Fallback agar webhook permissions na hon
+    const avatarAttach = new AttachmentBuilder(member.displayAvatarURL({ extension: 'png', size: 128 }), { name: 'avatar.png' });
     await channel.send({
         content: contentText,
         files: [avatarAttach]
@@ -116,7 +118,7 @@ module.exports = (client) => {
         }
     });
 
-    // 3. Message Counter & Dual Notifications
+    // 3. Message Counter, Commands & Dual Notifications
     client.on('messageCreate', async (message) => {
         if (!message.guild || message.author.bot) return;
 
@@ -147,7 +149,7 @@ module.exports = (client) => {
         if (content.toLowerCase() === '%lvls lb' || content.toLowerCase() === '%lvl lb') {
             const data = await LevelingConfig.findOne({ guildId: message.guild.id });
             if (!data || !data.users || data.users.length === 0) {
-                return message.reply('ℹ️ Abhi is server me koi leveling data record nahi hua hai.');
+                return message.reply('ℹ️ Abhi is server me koi leveling data record hua nahi hai.');
             }
 
             const topUsers = [...data.users]
@@ -183,7 +185,7 @@ module.exports = (client) => {
             });
         }
 
-        // D. Instant XP Tracker (No cooldown)
+        // D. Instant XP Tracker (Bina Cooldown ke)
         const enabled = await isFeatureEnabled(message.guild.id, 'leveling', message.author.id);
         if (!enabled) return;
 
@@ -212,14 +214,14 @@ module.exports = (client) => {
             });
             formattedMsg = formattedMsg.replace(/{level}/g, `${userRecord.level}`);
 
-            // 1. Current Chat Alert (Direct Plain Message with Avatar)
-            await sendNonEmbedNotification(message.channel, message.author, formattedMsg);
+            // 1. Current Chat Alert (Server Display Name aur Avatar ke sath)
+            await sendNonEmbedNotification(message.channel, message.member, formattedMsg);
 
-            // 2. Configured Log Channel Alert (agar alag set ho)
+            // 2. Configured Channel Alert (agar alag channel set ho)
             if (data.channelId && data.channelId !== message.channel.id) {
                 const targetChannel = message.guild.channels.cache.get(data.channelId);
                 if (targetChannel && targetChannel.isTextBased()) {
-                    await sendNonEmbedNotification(targetChannel, message.author, formattedMsg);
+                    await sendNonEmbedNotification(targetChannel, message.member, formattedMsg);
                 }
             }
         }
