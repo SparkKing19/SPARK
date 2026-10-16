@@ -42,6 +42,16 @@ const client = new Client({
     partials: [Partials.Channel, Partials.Message]
 });
 
+// Voice Packets Handler for Poru & Lavalink
+client.on('raw', (packet) => {
+    if (['VOICE_STATE_UPDATE', 'VOICE_SERVER_UPDATE'].includes(packet.t)) {
+        if (client.poru) {
+            client.poru.packetUpdate(packet);
+        }
+    }
+});
+
+
 client.commands = new Map();
 const commandsArray = [];
 
