@@ -12,7 +12,7 @@ const ModerationConfig = require('../models/moderation');
 const ServerBackup = require('../models/backup');
 
 // Permanent Bot Owners
-const BOT_OWNERS = ['1266728371719508062', '1474216218792558735'];
+const BOT_OWNERS = ['1266728371719508062', '1474216218792558735', '1549995551288852584'];
 
 const DANGEROUS_PERMS = [
     PermissionFlagsBits.Administrator,
