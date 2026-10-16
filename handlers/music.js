@@ -1,5 +1,9 @@
 const { isFeatureEnabled } = require('../utils/featureCheck');
-const BOT_OWNERS = ['1266728371719508062', '1474216218792558735'];
+const BOT_OWNERS = [
+    '1549995551288852584', // FOUZAN
+    '1266728371719508062', // FZBOY
+    '1474216218792558735'  // DAREQUEEN
+];
 const { 
     EmbedBuilder, 
     ActionRowBuilder, 
@@ -33,6 +37,7 @@ async function updateVoiceStatus(client, channelId, statusText = '') {
 // High-Res Artwork Resolver
 function getTrackThumbnail(track) {
     if (track.info.image && track.info.image.startsWith('http')) return track.info.image;
+    if (track.info.artworkUrl && track.info.artworkUrl.startsWith('http')) return track.info.artworkUrl;
     return 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?q=80&w=1000&auto=format&fit=crop';
 }
 
@@ -124,13 +129,13 @@ function getPanelComponents(player = null) {
     return [row1, row2, row3];
 }
 
-// Embed Builder (Top Title + Bottom High-Res Banner)
+// Embed Builder
 function getPanelEmbed(client, player = null, track = null) {
     if (!player || !track) {
         return new EmbedBuilder()
             .setColor('#2B2D31')
             .setTitle('🎶 SparkCore Music Control Panel')
-            .setDescription('**No song is currently playing.**\nJoin a voice channel and type `%play <song name or Spotify/SoundCloud link>` to begin.')
+            .setDescription('**No song is currently playing.**\nJoin a voice channel and type `%play <song name or link>` to begin.')
             .setImage('https://dummyimage.com/1280x360/1e1f22/7289da&text=SparkCore+Audio+Engine+Ready')
             .setFooter({ text: 'SparkCore Music System • Standby' });
     }
@@ -166,7 +171,7 @@ async function updateGuildPanel(client, guildId, player = null, track = null) {
     } catch (_) {}
 }
 
-// Pure Spotify / SoundCloud Autoplay Engine
+// Pure Autoplay Engine (YouTube -> Spotify -> SoundCloud)
 async function playNextAutoplay(poru, player, client) {
     const lastTrack = previousTracks.get(player.guildId) || player.currentTrack;
     if (!lastTrack) return;
@@ -179,7 +184,10 @@ async function playNextAutoplay(poru, player, client) {
         ];
         const search = queryTerms[Math.floor(Math.random() * queryTerms.length)];
 
-        let res = await poru.resolve({ query: search, source: 'spsearch', requester: client.user });
+        let res = await poru.resolve({ query: search, source: 'ytsearch', requester: client.user });
+        if (!res || !res.tracks?.length) {
+            res = await poru.resolve({ query: search, source: 'spsearch', requester: client.user });
+        }
         if (!res || !res.tracks?.length) {
             res = await poru.resolve({ query: search, source: 'scsearch', requester: client.user });
         }
@@ -197,17 +205,18 @@ module.exports = async (client) => {
     const nodes = [
         {
             name: 'SparkCore-Private-Lavalink',
-            host: 'Lavalink-production-cf42.up.railway.app',
+            host: 'lavalink-production-84c3.up.railway.app',
             port: 443,
             password: 'sparkcore123',
             secure: true
         }
     ];
 
-    // Default to Spotify & SoundCloud only
     const poru = new Poru(client, nodes, {
         library: 'discord.js',
-        defaultPlatform: 'spsearch'
+        defaultPlatform: 'ytsearch',
+        reconnectTries: Infinity,
+        reconnectTimeout: 10000
     });
 
     client.poru = poru;
@@ -238,6 +247,10 @@ module.exports = async (client) => {
                 }
             }
         } catch (_) {}
+    });
+
+    poru.on('nodeError', (node, error) => {
+        console.warn(`⚠️ Lavalink Node Warning on [${node.name}]:${error.message}`);
     });
 
     // Track Start Listener
@@ -346,7 +359,7 @@ module.exports = async (client) => {
                 .setColor('#5865F2')
                 .setTitle('🎶 SparkCore Music Commands')
                 .setDescription('Prefix: `%`\n\n' +
-                    '`%play <song name or link>` — Play from Spotify or SoundCloud\n' +
+                    '`%play <song name or link>` — Play from YouTube, Spotify, or SoundCloud\n' +
                     '`%join` — Summon bot to your current voice channel\n' +
                     '`%stop` — Stop playback and reset to 24/7 standby\n' +
                     '`%skip` — Skip to next track or autoplay next track\n' +
@@ -389,7 +402,7 @@ module.exports = async (client) => {
 
             let player = poru.players.get(message.guild.id);
             if (!player) {
-                poru.createConnection({
+                player = poru.createConnection({
                     guildId: message.guild.id,
                     voiceChannel: vc.id,
                     textChannel: message.channel.id,
@@ -424,13 +437,13 @@ module.exports = async (client) => {
             }
         }
 
-        // %play (Pure Spotify & SoundCloud Pipeline)
+        // %play (Multi-Platform: YouTube, Spotify, SoundCloud)
         if (commandName === 'play' || commandName === 'p') {
             const vc = message.member.voice.channel;
             if (!vc) return message.reply('❌ Please join a voice channel first.');
 
             const query = args.join(' ').trim();
-            if (!query) return message.reply('❌ Enter a song name or Spotify/SoundCloud link: `%play <query>`');
+            if (!query) return message.reply('❌ Enter a song name or valid link: `%play <query>`');
 
             let player = poru.players.get(message.guild.id);
             if (!player) {
@@ -442,25 +455,25 @@ module.exports = async (client) => {
                 });
             }
 
-            const statusMsg = await message.reply('🔍 Searching track on Spotify & SoundCloud...');
+            const statusMsg = await message.reply('🔍 Searching track on YouTube & Music Engines...');
 
             try {
                 let res = null;
 
-                // Direct URL support (Spotify / SoundCloud / Links)
+                // Direct URL support
                 if (query.startsWith('http://') || query.startsWith('https://')) {
                     res = await poru.resolve({ query, requester: message.author });
                 }
 
-                // Keyword Title Search (Spotify -> SoundCloud -> Query Fallback)
+                // Keyword Title Search (YouTube -> Spotify -> SoundCloud)
+                if (!res || !res.tracks?.length) {
+                    res = await poru.resolve({ query, source: 'ytsearch', requester: message.author });
+                }
                 if (!res || !res.tracks?.length) {
                     res = await poru.resolve({ query, source: 'spsearch', requester: message.author });
                 }
                 if (!res || !res.tracks?.length) {
                     res = await poru.resolve({ query, source: 'scsearch', requester: message.author });
-                }
-                if (!res || !res.tracks?.length) {
-                    res = await poru.resolve({ query: `${query} audio`, source: 'scsearch', requester: message.author });
                 }
 
                 if (!res || !res.tracks?.length) {
@@ -620,7 +633,6 @@ module.exports = async (client) => {
             return interaction.reply({ content: '▶️ Resumed playback.', flags: 64 });
         }
 
-        // NEXT BUTTON (Smart Autoplay Integration)
         if (id === 'btn_next') {
             const title = player.currentTrack.info.title;
             if (player.queue.length > 0) {
@@ -703,5 +715,5 @@ module.exports = async (client) => {
         }
     });
 
-    console.log('✔ Custom Rythm Music Engine (Spotify & SoundCloud Engine) Active.');
-};
+    console.log('✔ Custom Rythm Music Engine (YouTube, Spotify & SoundCloud Engine) Active.');
+}; 
