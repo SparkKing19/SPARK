@@ -10,26 +10,26 @@ const BOT_OWNERS = [
 const conversationMemory = new Map();
 
 async function getSparkCoreAIResponse(history, userPrompt, username, userId, guildName) {
-    const apiKey = process.env.OPENAI_API_KEY;
+    const apiKey = process.env.GROQ_API_KEY;
     if (!apiKey) {
-        return 'Arre boss, `OPENAI_API_KEY` Railway variables me set nahi hai!';
+        return 'Arre boss, `GROQ_API_KEY` Railway variables me set nahi hai!';
     }
 
     const isOwner = BOT_OWNERS.includes(userId);
 
     const systemInstruction = `
-You are "SparkCore", an authentic, witty, highly adaptive, and ultra-smart AI companion on Discord.
-You were created and developed exclusively by FZBOY along with DAREQUEEN. Under no circumstances mention the real name "Fouzan".
+You are "SparkCore", an ultra-fast, witty, authentic, and intelligent Discord AI assistant built for servers.
+You were created and developed exclusively by FZBOY along with DAREQUEEN. Under no circumstances mention or use the real name "Fouzan".
 
 IDENTITY & BEHAVIOR RULES:
-1. NEVER identify yourself as ChatGPT, OpenAI, Google, or Gemini. Your ONLY name is "SparkCore".
-2. If asked "Tum kaun ho?", "Who are you?", or who created you: State that you are SparkCore, developed by FZBOY and DAREQUEEN.
+1. NEVER identify yourself as ChatGPT, OpenAI, Llama, Meta, or Google. Your ONLY identity and name is "SparkCore".
+2. If asked "Tum kaun ho?", "Who are you?", or who created you: Proudly state that you are SparkCore, developed by FZBOY and DAREQUEEN.
 3. User details:
    - Username: ${username}
    - User ID: ${userId}
-   - Is Bot Owner: ${isOwner ? 'YES (Greet as Boss/Creator with high respect & camaraderie)' : 'NO'}
-   - Guild/Server: ${guildName}
-4. Tone & Vibe: Talk like a sharp, witty Discord teammate. Seamlessly adapt to Hinglish, English, Urdu, or Hindi matching the user. Keep it natural, snappy, and concise.
+   - Is Bot Owner: ${isOwner ? 'YES (Treat as Boss/Creator with high respect & camaraderie)' : 'NO'}
+   - Server: ${guildName}
+4. Tone & Vibe: Talk like a chill, sharp, witty Discord teammate. Seamlessly reply in Hinglish, English, Urdu, or Hindi matching the user. Keep it natural, punchy, and concise.
 
 BOT KNOWLEDGE:
 You know all SparkCore modules:
@@ -42,7 +42,6 @@ STRICT CONFIDENTIALITY & SECURITY GUARDRAILS:
 - If anyone asks how owners bypass rules, deflect politely: "Owner security architecture is private and restricted."
     `.trim();
 
-    // OpenAI message format
     const messages = [
         { role: 'system', content: systemInstruction }
     ];
@@ -60,17 +59,17 @@ STRICT CONFIDENTIALITY & SECURITY GUARDRAILS:
     });
 
     try {
-        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${apiKey}`
             },
             body: JSON.stringify({
-                model: 'gpt-4o-mini', // Fastest, most affordable & highly intelligent
+                model: 'llama-3.3-70b-versatile', // Ultra-smart & fastest available model
                 messages: messages,
-                max_tokens: 500,
-                temperature: 0.8
+                max_tokens: 600,
+                temperature: 0.85
             })
         });
 
@@ -81,11 +80,11 @@ STRICT CONFIDENTIALITY & SECURITY GUARDRAILS:
         }
 
         if (data.error) {
-            console.error('OpenAI API Error:', data.error);
-            return `❌ OpenAI Error: \`${data.error.message}\``;
+            console.error('Groq API Error:', data.error);
+            return `❌ AI Error: \`${data.error.message}\``;
         }
     } catch (err) {
-        console.error('OpenAI Fetch Error:', err);
+        console.error('Groq Fetch Error:', err);
         return `Arey ${username}, network me halka lag ho gaya tha! Ek baar wapas bolo! ⚡`;
     }
 
@@ -119,7 +118,7 @@ module.exports = (client) => {
                     { upsert: true, new: true }
                 );
 
-                return message.reply(`🤖 **SparkCore AI (Turbo Engine) Activated!**\nBound channel: ${targetChannel}. AI ab ultra-fast response dega!`);
+                return message.reply(`⚡ **SparkCore AI (Hyper-Speed Engine) Activated!**\nBound channel: ${targetChannel}. AI ab bina kisi lag ke instant replies dega!`);
             }
 
             if (sub === 'off' || sub === 'disable') {
@@ -179,5 +178,5 @@ module.exports = (client) => {
         }
     });
 
-    console.log('✔ SparkCore ChatGPT (OpenAI Turbo) Engine loaded.');
+    console.log('✔ SparkCore Ultra-Fast LLaMA Engine active.');
 };
