@@ -1,4 +1,4 @@
-const { GoogleGenAI } = require('@google/genai');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const AIConfig = require('../models/aiConfig');
 const { isFeatureEnabled } = require('../utils/featureCheck');
 
@@ -10,8 +10,8 @@ const BOT_OWNERS = [
 
 const conversationMemory = new Map();
 
-// Initialize Google GenAI
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
+// Initialize Google Generative AI
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
 async function getSparkCoreAIResponse(history, userPrompt, username, userId, guildName) {
     try {
@@ -48,33 +48,24 @@ TONE & LANGUAGE:
 - Keep standard answers proportional and clean with Discord formatting (**bold**, bullet points, codeblocks).
         `.trim();
 
-        const contents = [];
-
-        // Include recent history
-        for (const msg of history) {
-            contents.push({
-                role: msg.role,
-                parts: [{ text: msg.text }]
-            });
-        }
-
-        // Current message
-        contents.push({
-            role: 'user',
-            parts: [{ text: `${username}: ${userPrompt}` }]
+        const model = genAI.getGenerativeModel({
+            model: 'gemini-1.5-flash',
+            systemInstruction: systemInstruction
         });
 
-        const response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
-            contents: contents,
-            config: {
-                systemInstruction: systemInstruction,
-                temperature: 0.8,
-                maxOutputTokens: 800
-            }
+        // Format chat history for Google Generative AI
+        const formattedHistory = history.map(msg => ({
+            role: msg.role === 'model' ? 'model' : 'user',
+            parts: [{ text: msg.text }]
+        }));
+
+        const chat = model.startChat({
+            history: formattedHistory
         });
 
-        return response.text.trim();
+        const result = await chat.sendMessage(`${username}: ${userPrompt}`);
+        const response = await result.response;
+        return response.text().trim();
     } catch (err) {
         console.error('SparkCore AI Error:', err);
         return null;
@@ -82,7 +73,6 @@ TONE & LANGUAGE:
 }
 
 module.exports = (client) => {
-
     client.on('messageCreate', async (message) => {
         if (!message.guild || message.author.bot) return;
 
@@ -91,9 +81,7 @@ module.exports = (client) => {
         const isServerOwner = message.author.id === message.guild.ownerId;
         const isAdmin = message.member?.permissions.has('Administrator');
 
-        // ==========================================
-        // 1. SETUP COMMAND: %ai set / %ai off / %ai clear
-        // ==========================================
+        // %ai set / %ai off / %ai clear
         if (content.toLowerCase().startsWith('%ai')) {
             const args = content.split(/ +/).slice(1);
             const sub = args[0]?.toLowerCase();
@@ -132,19 +120,14 @@ module.exports = (client) => {
             return message.reply('ℹ️ **SparkCore AI Controls:**\n• `%ai set` - Set current channel for AI chats\n• `%ai set #channel` - Bind a specific channel\n• `%ai clear` - Clear conversation memory\n• `%ai off` - Disable AI channel');
         }
 
-        // ==========================================
-        // 2. LIVE CHAT ENGINE
-        // ==========================================
+        // Live Chat Handler
         const aiData = await AIConfig.findOne({ guildId: message.guild.id });
         if (!aiData || !aiData.enabled || !aiData.channelId) return;
-
         if (message.channel.id !== aiData.channelId) return;
 
-        // Check if feature is enabled via %manage
         const featureEnabled = await isFeatureEnabled(message.guild.id, 'ai', message.author.id);
         if (!featureEnabled) return;
 
-        // Show typing indicator
         await message.channel.sendTyping().catch(() => {});
 
         const memKey = `${message.guild.id}_${message.channel.id}`;
@@ -167,7 +150,6 @@ module.exports = (client) => {
             }
             conversationMemory.set(memKey, history);
 
-            // Handle Discord 2000 character limit cleanly
             const chunks = reply.match(/[\s\S]{1,1990}/g) || [reply];
             for (const chunk of chunks) {
                 await message.reply({ content: chunk }).catch(() => {});
