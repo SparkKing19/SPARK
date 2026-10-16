@@ -18,7 +18,7 @@ const CustomPlaylist = require('../models/customPlaylist');
 
 const autoplayMap = new Map();
 const previousTracks = new Map();
-const errorCounter = new Map(); // Loop spam preventer
+const errorCounter = new Map();
 
 // Voice Channel Subtitle Status (Set & Clear)
 async function updateVoiceStatus(client, channelId, statusText = '') {
@@ -129,7 +129,7 @@ async function updateGuildPanel(client, guildId, player = null, track = null) {
     } catch (_) {}
 }
 
-// Autoplay Engine (SoundCloud Priority to Prevent YouTube 403 blocks)
+// Autoplay Engine
 async function playNextAutoplay(poru, player, client) {
     const lastTrack = previousTracks.get(player.guildId) || player.currentTrack;
     if (!lastTrack) return;
@@ -164,7 +164,7 @@ module.exports = async (client) => {
 
     const poru = new Poru(client, nodes, {
         library: 'discord.js',
-        defaultPlatform: 'scsearch', // SoundCloud plays immediately without bot-check/blocks
+        defaultPlatform: 'scsearch',
         reconnectTries: Infinity,
         reconnectTimeout: 10000
     });
@@ -205,7 +205,7 @@ module.exports = async (client) => {
 
     // Track Start Listener
     poru.on('trackStart', async (player, track) => {
-        errorCounter.set(player.guildId, 0); // Reset error count on successful playback
+        errorCounter.set(player.guildId, 0);
 
         if (player.currentTrack) {
             previousTracks.set(player.guildId, player.currentTrack);
@@ -238,13 +238,12 @@ module.exports = async (client) => {
         await updateGuildPanel(client, player.guildId, player, track);
     });
 
-    // Track Error Listener (STOPS SKIP SPAM)
+    // Track Error Listener
     poru.on('trackError', async (player, track, error) => {
         console.error(`⚠️ Playback Failed for [${track.info.title}]:`, error);
         const count = (errorCounter.get(player.guildId) || 0) + 1;
         errorCounter.set(player.guildId, count);
 
-        // Agar 2 baar continuous error aaye, toh loop stop kar do
         if (count >= 2) {
             player.queue.clear();
             const textChan = client.channels.cache.get(player.textChannel);
@@ -382,7 +381,7 @@ module.exports = async (client) => {
             return message.reply(`🔊 Connected to <#${vc.id}>.`);
         }
 
-        // %play (Fast Multi-Source with Auto-Fallback)
+        // %play
         if (commandName === 'play' || commandName === 'p') {
             const vc = message.member.voice.channel;
             if (!vc) return message.reply('❌ Please join a voice channel first.');
@@ -427,7 +426,7 @@ module.exports = async (client) => {
                     return statusMsg.edit(`❌ Audio not found for: **${query}**`);
                 }
 
-                / Agar new connection hai toh voice handshake ke liye wait karein
+                // Agar new connection hai toh voice handshake ke liye wait karein
                 if (isNew) await new Promise(r => setTimeout(r, 600));
 
                 if (res.loadType === 'PLAYLIST_LOADED') {
