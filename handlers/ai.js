@@ -1,4 +1,3 @@
-const { GoogleGenerativeAI } = require('@google/generative-ai');
 const AIConfig = require('../models/aiConfig');
 const { isFeatureEnabled } = require('../utils/featureCheck');
 
@@ -10,20 +9,12 @@ const BOT_OWNERS = [
 
 const conversationMemory = new Map();
 
-// Supported model fallbacks list agar ek 404 de toh agla execute ho
-const CANDIDATE_MODELS = [
-    'gemini-1.5-flash-latest',
-    'gemini-1.5-pro-latest',
-    'gemini-pro'
-];
-
 async function getSparkCoreAIResponse(history, userPrompt, username, userId, guildName) {
-    if (!process.env.GEMINI_API_KEY) {
-        console.error('❌ GEMINI_API_KEY is missing from environment variables!');
-        return '❌ Error: GEMINI_API_KEY set nahi hai.';
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+        return '❌ Error: `GEMINI_API_KEY` Railway variables me set nahi hai.';
     }
 
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
     const isOwner = BOT_OWNERS.includes(userId);
 
     const systemInstruction = `
@@ -54,40 +45,62 @@ TONE & LANGUAGE:
 - Keep the tone friendly, witty, sharp, and helpful — like a cool teammate, not a robotic script.
     `.trim();
 
-    const validHistory = [];
+    // Prepare contents payload
+    const contents = [];
+
+    // History format
     for (const msg of history) {
-        if (msg.role && msg.text) {
-            validHistory.push({
-                role: msg.role === 'model' ? 'model' : 'user',
-                parts: [{ text: String(msg.text) }]
-            });
-        }
+        contents.push({
+            role: msg.role === 'model' ? 'model' : 'user',
+            parts: [{ text: String(msg.text) }]
+        });
     }
 
-    // Try candidate models sequentially
+    // Current Prompt
+    contents.push({
+        role: 'user',
+        parts: [{ text: `${username}:${userPrompt}` }]
+    });
+
+    const payload = {
+        contents: contents,
+        systemInstruction: {
+            parts: [{ text: systemInstruction }]
+        },
+        generationConfig: {
+            temperature: 0.85,
+            maxOutputTokens: 800
+        }
+    };
+
+    // Google API ke working models sequentially try karega
+    const models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
     let lastError = null;
-    for (const modelName of CANDIDATE_MODELS) {
+
+    for (const model of models) {
         try {
-            const model = genAI.getGenerativeModel({
-                model: modelName,
-                systemInstruction: systemInstruction
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
             });
 
-            const chat = model.startChat({
-                history: validHistory
-            });
+            const data = await res.json();
 
-            const result = await chat.sendMessage(`${username}:${userPrompt}`);
-            const response = await result.response;
-            return response.text().trim();
+            if (res.ok && data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
+                return data.candidates[0].content.parts[0].text.trim();
+            }
+
+            if (data.error) {
+                lastError = data.error.message;
+            }
         } catch (err) {
-            lastError = err;
-            console.warn(`Model ${modelName} failed (${err.message}). Trying fallback...`);
+            lastError = err.message;
         }
     }
 
-    console.error('🔥 All Gemini Candidate Models Failed:', lastError);
-    return `❌ AI Error: \`${lastError?.message || 'Failed to fetch AI response'}\``;
+    return `❌ AI Error: \`${lastError || 'Failed to generate response'}\``;
 }
 
 module.exports = (client) => {
@@ -99,7 +112,7 @@ module.exports = (client) => {
         const isServerOwner = message.author.id === message.guild.ownerId;
         const isAdmin = message.member?.permissions.has('Administrator');
 
-        // %ai set / %ai off / %ai clear
+        // %ai Commands
         if (content.toLowerCase().startsWith('%ai')) {
             const args = content.split(/ +/).slice(1);
             const sub = args[0]?.toLowerCase();
@@ -117,7 +130,7 @@ module.exports = (client) => {
                     { upsert: true, new: true }
                 );
 
-                return message.reply(`🤖 **SparkCore AI Activated!**\nBound channel: ${targetChannel}. AI is now active in this channel!`);
+                return message.reply(`🤖 **SparkCore AI Activated!**\nBound channel: ${targetChannel}. AI is now active here!`);
             }
 
             if (sub === 'off' || sub === 'disable') {
@@ -138,7 +151,7 @@ module.exports = (client) => {
             return message.reply('ℹ️ **SparkCore AI Controls:**\n• `%ai set` - Bind current channel\n• `%ai clear` - Clear conversation memory\n• `%ai off` - Disable AI channel');
         }
 
-        // Active Chat Execution
+        // Live Chat Execution
         const aiData = await AIConfig.findOne({ guildId: message.guild.id });
         if (!aiData || !aiData.enabled || !aiData.channelId) return;
         if (message.channel.id !== aiData.channelId) return;
@@ -177,5 +190,5 @@ module.exports = (client) => {
         }
     });
 
-    console.log('✔ SparkCore AI Personality Engine active.');
+    console.log('✔ SparkCore Direct REST AI Engine active.');
 };
