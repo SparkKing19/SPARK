@@ -437,7 +437,7 @@ module.exports = async (client) => {
             }
         }
 
-        // %play (Multi-Platform: YouTube, Spotify, SoundCloud)
+                // %play (Multi-Platform: YouTube, Spotify, SoundCloud)
         if (commandName === 'play' || commandName === 'p') {
             const vc = message.member.voice.channel;
             if (!vc) return message.reply('❌ Please join a voice channel first.');
@@ -446,6 +446,8 @@ module.exports = async (client) => {
             if (!query) return message.reply('❌ Enter a song name or valid link: `%play <query>`');
 
             let player = poru.players.get(message.guild.id);
+            let isNewConnection = false;
+
             if (!player) {
                 player = poru.createConnection({
                     guildId: message.guild.id,
@@ -453,6 +455,7 @@ module.exports = async (client) => {
                     textChannel: message.channel.id,
                     deaf: true
                 });
+                isNewConnection = true;
             }
 
             const statusMsg = await message.reply('🔍 Searching track on YouTube & Music Engines...');
@@ -478,6 +481,11 @@ module.exports = async (client) => {
 
                 if (!res || !res.tracks?.length) {
                     return statusMsg.edit(`❌ Audio not found for: **${query}**`);
+                }
+
+                // Agar nayi connection bani hai, toh voice server handshake ke liye 500ms ka wait zaroori hai
+                if (isNewConnection) {
+                    await new Promise(r => setTimeout(r, 600));
                 }
 
                 if (res.loadType === 'PLAYLIST_LOADED') {
