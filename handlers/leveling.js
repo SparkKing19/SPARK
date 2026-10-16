@@ -1,176 +1,181 @@
-const { 
-    ModalBuilder, 
-    TextInputBuilder, 
-    TextInputStyle, 
-    ActionRowBuilder, 
-    EmbedBuilder 
-} = require('discord.js');
-const LevelingConfig = require('../models/leveling');
-const { parseVariables } = require('../utils/variables');
+const { EmbedBuilder, PermissionsBitField } = require('discord.js');
+const UserLevel = require('../models/level');
+const LevelConfig = require('../models/levelConfig');
 const { isFeatureEnabled } = require('../utils/featureCheck');
 
-const cooldowns = new Set(); // 2-second anti-spam per user
+const BOT_OWNERS = [
+    '1549995551288852584',
+    '1266728371719508062', // FZBOY
+    '1474216218792558735'  // DAREQUEEN
+];
+
+// Anti-spam cooldown cache (2 seconds per user)
+const cooldowns = new Set();
 
 module.exports = (client) => {
 
-    // 1. Setup Modal Trigger via /panel (Book 3 Page 13)
-    client.on('interactionCreate', async (interaction) => {
-        if (interaction.isButton() && interaction.customId === 'open_leveling_modal') {
-            const data = await LevelingConfig.findOne({ guildId: interaction.guild.id }) || {};
-
-            const modal = new ModalBuilder()
-                .setCustomId('leveling_config_modal')
-                .setTitle('Leveling System Configuration');
-
-            const stepInput = new TextInputBuilder()
-                .setCustomId('lvl_messages_step')
-                .setLabel('Messages Per Level (Base Step)')
-                .setPlaceholder('e.g. 25 (Lvl 1: 25, Lvl 2: 50, Lvl 3: 75)')
-                .setStyle(TextInputStyle.Short)
-                .setValue(data.messagesPerLevel ? `${data.messagesPerLevel}` : '25')
-                .setRequired(true);
-
-            const channelInput = new TextInputBuilder()
-                .setCustomId('lvl_channel_id')
-                .setLabel('Level Notification Channel ID (Optional)')
-                .setPlaceholder('Leave blank to notify in the current chat')
-                .setStyle(TextInputStyle.Short)
-                .setValue(data.channelId || '')
-                .setRequired(false);
-
-            const msgInput = new TextInputBuilder()
-                .setCustomId('lvl_message')
-                .setLabel('Level Up Message')
-                .setPlaceholder('Congratulations {user}! You reached Level {level}!')
-                .setStyle(TextInputStyle.Paragraph)
-                .setValue(data.levelUpMessage || 'Congratulations {user}! You leveled up to **Level {level}**!')
-                .setRequired(true);
-
-            modal.addComponents(
-                new ActionRowBuilder().addComponents(stepInput),
-                new ActionRowBuilder().addComponents(channelInput),
-                new ActionRowBuilder().addComponents(msgInput)
-            );
-
-            await interaction.showModal(modal);
-        }
-
-        // 2. Save Modal Configuration
-        if (interaction.isModalSubmit() && interaction.customId === 'leveling_config_modal') {
-            await interaction.deferReply({ ephemeral: true });
-
-            const rawStep = interaction.fields.getTextInputValue('lvl_messages_step').trim();
-            const channelId = interaction.fields.getTextInputValue('lvl_channel_id').trim() || null;
-            const levelUpMessage = interaction.fields.getTextInputValue('lvl_message').trim();
-
-            const messagesPerLevel = Math.max(1, parseInt(rawStep, 10) || 25);
-
-            await LevelingConfig.findOneAndUpdate(
-                { guildId: interaction.guild.id },
-                { messagesPerLevel, channelId, levelUpMessage },
-                { upsert: true, new: true }
-            );
-
-            return interaction.editReply({ 
-                content: `✅ Leveling system configured!\n• **Step:** \`${messagesPerLevel}\` msgs/level (Lvl 1: ${messagesPerLevel}, Lvl 2: ${messagesPerLevel * 2}, Lvl 3:${messagesPerLevel * 3})\n• **Notification Channel:** ${channelId ? `<#${channelId}>` : '`Current Chat`'}`
-            });
-        }
-    });
-
-    // 3. Message Counter & Dynamic Level Up Trigger
     client.on('messageCreate', async (message) => {
         if (!message.guild || message.author.bot) return;
 
-        // Check if feature is enabled via %manage
-        const enabled = await isFeatureEnabled(message.guild.id, 'leveling', message.author.id);
-        if (!enabled) return;
+        const content = message.content.trim();
+        const isBotOwner = BOT_OWNERS.includes(message.author.id);
+        const isServerOwner = message.author.id === message.guild.ownerId;
+        const isAdmin = message.member?.permissions.has(PermissionsBitField.Flags.Administrator);
 
-        // 2-second cooldown to prevent spamming
-        const cdKey = `${message.guild.id}_${message.author.id}`;
-        if (cooldowns.has(cdKey)) return;
-        cooldowns.add(cdKey);
-        setTimeout(() => cooldowns.delete(cdKey), 2000);
+        // ==========================================
+        // 1. COMMAND: %lvl reset (Reset Whole Server)
+        // ==========================================
+        if (content.toLowerCase() === '%lvl reset') {
+            if (!isBotOwner && !isServerOwner && !isAdmin) {
+                return message.reply('❌ You do not have permission to reset server levels.');
+            }
 
-        let data = await LevelingConfig.findOne({ guildId: message.guild.id });
-        if (!data) return;
-
-        let userRecord = data.users.find(u => u.userId === message.author.id);
-        if (!userRecord) {
-            userRecord = { userId: message.author.id, messages: 0, level: 0 };
-            data.users.push(userRecord);
-        }
-
-        userRecord.messages += 1;
-
-        // Required messages for next level = (Current Level + 1) * messagesPerLevel
-        // Level 1: 1 * 25 = 25
-        // Level 2: 2 * 25 = 50
-        // Level 3: 3 * 25 = 75
-        const nextLevel = userRecord.level + 1;
-        const requiredForNext = nextLevel * data.messagesPerLevel;
-
-        if (userRecord.messages >= requiredForNext) {
-            userRecord.level = nextLevel;
-            userRecord.messages = 0; // Reset message progress for next level tier
-
-            // Format message using Universal Variables Engine
-            let formattedMsg = parseVariables(data.levelUpMessage, {
-                member: message.member,
-                user: message.author,
-                guild: message.guild
-            });
-            formattedMsg = formattedMsg.replace(/{level}/g, `${userRecord.level}`);
-
-            // Clean Avatar Author Embed Style (Similar to Invite Tracker joined/left style)
-            const levelEmbed = new EmbedBuilder()
-                .setColor('#2ECC71')
-                .setAuthor({
-                    name: `${message.author.username} leveled up to Level${userRecord.level}!`,
-                    iconURL: message.author.displayAvatarURL()
-                })
-                .setDescription(formattedMsg)
-                .setTimestamp();
-
-            // Destination channel determination
-            const targetChannel = (data.channelId && message.guild.channels.cache.get(data.channelId)) 
-                ? message.guild.channels.cache.get(data.channelId) 
-                : message.channel;
-
-            if (targetChannel) {
-                await targetChannel.send({ embeds: [levelEmbed] }).catch(() => {});
+            try {
+                const deleted = await UserLevel.deleteMany({ guildId: message.guild.id });
+                return message.reply(`✅ **Server Levels Reset!** Cleared all level and message data for **${deleted.deletedCount}** members.`);
+            } catch (err) {
+                console.error('Level Reset Error:', err);
+                return message.reply(`❌ Failed to reset levels: \`${err.message}\``;
             }
         }
 
-        await data.save();
-    });
+        // ==========================================
+        // 2. COMMAND: %lvls lb / %lvl lb (Leaderboard Top 10)
+        // ==========================================
+        if (content.toLowerCase() === '%lvls lb' || content.toLowerCase() === '%lvl lb') {
+            try {
+                // Top 10 members sorted by level descending, then totalMessages descending
+                const topUsers = await UserLevel.find({ guildId: message.guild.id })
+                    .sort({ level: -1, totalMessages: -1 })
+                    .limit(10);
 
-    // 4. Rank Preview Command: &rank
-    client.on('messageCreate', async (message) => {
-        if (!message.guild || message.author.bot) return;
+                if (!topUsers.length) {
+                    return message.reply('ℹ️ Abhi is server me koi leveling data record nahi hua hai.');
+                }
 
-        if (message.content.trim().startsWith('&rank')) {
-            const target = message.mentions.users.first() || message.author;
-            const data = await LevelingConfig.findOne({ guildId: message.guild.id });
+                const medals = ['🥇', '🥈', '🥉'];
+                const lbRows = [];
 
-            if (!data) return message.reply('⚠️ Leveling is not configured for this server yet.');
+                for (let i = 0; i < topUsers.length; i++) {
+                    const entry = topUsers[i];
+                    const rankBadge = medals[i] || `**#${i + 1}**`;
+                    lbRows.push(`${rankBadge} <@${entry.userId}> • **Level ${entry.level}** (${entry.totalMessages} total msgs)`);
+                }
 
-            const userRecord = data.users.find(u => u.userId === target.id) || { level: 0, messages: 0 };
-            const requiredForNext = (userRecord.level + 1) * data.messagesPerLevel;
+                const lbEmbed = new EmbedBuilder()
+                    .setColor('#5865F2')
+                    .setAuthor({ 
+                        name: `${message.guild.name} — Top 10 Level Leaderboard`, 
+                        iconURL: message.guild.iconURL({ dynamic: true }) 
+                    })
+                    .setDescription(lbRows.join('\n'))
+                    .setFooter({ text: `Requested by ${message.author.username}`, iconURL: message.author.displayAvatarURL() })
+                    .setTimestamp();
+
+                return message.reply({ embeds: [lbEmbed] });
+            } catch (err) {
+                console.error('Leaderboard Fetch Error:', err);
+                return message.reply(`❌ Could not load leaderboard: \`${err.message}\``;
+            }
+        }
+
+        // ==========================================
+        // 3. COMMAND: &rank (Check individual progress)
+        // ==========================================
+        if (content.toLowerCase().startsWith('&rank')) {
+            const targetUser = message.mentions.users.first() || message.author;
+            const userData = await UserLevel.findOne({ guildId: message.guild.id, userId: targetUser.id }) || { level: 0, messages: 0, totalMessages: 0 };
+            const config = await LevelConfig.findOne({ guildId: message.guild.id }) || { baseStep: 25 };
+
+            const targetMsgs = (userData.level + 1) * config.baseStep;
 
             const rankEmbed = new EmbedBuilder()
-                .setColor('#F1C40F')
-                .setAuthor({ name: `${target.username}'s Rank Card`, iconURL: target.displayAvatarURL() })
-                .addFields(
-                    { name: '🏆 Level', value: `\`Level ${userRecord.level}\``, inline: true },
-                    { name: '💬 Progress', value: `\`${userRecord.messages} / ${requiredForNext} msgs\``, inline: true },
-                    { name: '⚡ Rate', value: `\`+${data.messagesPerLevel} msgs/lvl\``, inline: true }
+                .setColor('#2B2D31')
+                .setAuthor({ name: `${targetUser.username}'s Rank Status`, iconURL: targetUser.displayAvatarURL({ dynamic: true }) })
+                .setDescription(
+                    `• **Current Level:** \`${userData.level}\`\n` +
+                    `• **Progress:** \`${userData.messages} / ${targetMsgs}\` messages\n` +
+                    `• **Total Server Messages:** \`${userData.totalMessages}\``
                 )
-                .setFooter({ text: 'Leveling System' })
                 .setTimestamp();
 
             return message.reply({ embeds: [rankEmbed] });
         }
+
+        // ==========================================
+        // 4. GLOBAL MESSAGE XP ENGINE & DUAL NOTIFICATION
+        // ==========================================
+        // Check if leveling feature is enabled via %manage
+        const featureEnabled = await isFeatureEnabled(message.guild.id, 'leveling', message.author.id);
+        if (!featureEnabled) return;
+
+        // Anti-spam cooldown check
+        const cooldownKey = `${message.guild.id}_${message.author.id}`;
+        if (cooldowns.has(cooldownKey)) return;
+
+        cooldowns.add(cooldownKey);
+        setTimeout(() => cooldowns.delete(cooldownKey), 2000);
+
+        // Fetch server leveling config
+        const config = await LevelConfig.findOne({ guildId: message.guild.id }) || { 
+            baseStep: 25, 
+            channelId: null, 
+            messageTemplate: 'Congratulations {user}! You leveled up to **Level {level}**!' 
+        };
+
+        let userRecord = await UserLevel.findOne({ guildId: message.guild.id, userId: message.author.id });
+        if (!userRecord) {
+            userRecord = new UserLevel({
+                guildId: message.guild.id,
+                userId: message.author.id,
+                level: 0,
+                messages: 1,
+                totalMessages: 1
+            });
+        } else {
+            userRecord.messages += 1;
+            userRecord.totalMessages += 1;
+        }
+
+        // Formula: (Current Level + 1) * BaseStep
+        const requiredMsgs = (userRecord.level + 1) * config.baseStep;
+
+        // Check for Level Up
+        if (userRecord.messages >= requiredMsgs) {
+            userRecord.level += 1;
+            userRecord.messages = 0; // Reset progress for the next tier
+            await userRecord.save();
+
+            // Format custom alert message (Sirf aapka custom description)
+            const template = config.messageTemplate || 'Congratulations {user}! You leveled up to **Level {level}**!';
+            const alertText = template
+                .replace(/{user}/g, `<@${message.author.id}>`)
+                .replace(/{level}/g, userRecord.level);
+
+            // Clean embed WITHOUT ANY TITLE
+            const levelEmbed = new EmbedBuilder()
+                .setColor('#FEE75C')
+                .setAuthor({ 
+                    name: `${message.author.username} leveled up!`, 
+                    iconURL: message.author.displayAvatarURL({ dynamic: true }) 
+                })
+                .setDescription(alertText)
+                .setTimestamp();
+
+            // 1. Alert in the current chat where the level-up message was typed
+            await message.channel.send({ embeds: [levelEmbed] }).catch(() => {});
+
+            // 2. Alert in the designated channel (agar configured ho aur current chat se alag ho)
+            if (config.channelId && config.channelId !== message.channel.id) {
+                const targetChannel = message.guild.channels.cache.get(config.channelId);
+                if (targetChannel && targetChannel.isTextBased()) {
+                    await targetChannel.send({ embeds: [levelEmbed] }).catch(() => {});
+                }
+            }
+        } else {
+            await userRecord.save();
+        }
     });
 
-    console.log('✔ Leveling System handler loaded.');
+    console.log('✔ Enhanced Dual-Alert Leveling System with Leaderboard loaded.');
 };
