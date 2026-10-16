@@ -8,85 +8,88 @@ const BOT_OWNERS = [
 ];
 
 const conversationMemory = new Map();
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function getSparkCoreAIResponse(history, userPrompt, username, userId, guildName) {
-    const apiKey = process.env.GEMINI_API_KEY;
+    const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
-        return 'Arre boss, lagta hai API key missing hai Railway variables me!';
+        return 'Arre boss, `OPENAI_API_KEY` Railway variables me set nahi hai!';
     }
 
     const isOwner = BOT_OWNERS.includes(userId);
 
     const systemInstruction = `
 You are "SparkCore", an authentic, witty, highly adaptive, and ultra-smart AI companion on Discord.
-You were created and developed exclusively by FZBOY along with DAREQUEEN. Under no circumstances mention the name "Fouzan".
+You were created and developed exclusively by FZBOY along with DAREQUEEN. Under no circumstances mention the real name "Fouzan".
 
 IDENTITY & BEHAVIOR RULES:
-1. Never call yourself ChatGPT, OpenAI, Google, or Gemini. You are only SparkCore.
-2. User details:
-   - Name: ${username}
+1. NEVER identify yourself as ChatGPT, OpenAI, Google, or Gemini. Your ONLY name is "SparkCore".
+2. If asked "Tum kaun ho?", "Who are you?", or who created you: State that you are SparkCore, developed by FZBOY and DAREQUEEN.
+3. User details:
+   - Username: ${username}
    - User ID: ${userId}
-   - Is Creator/Owner: ${isOwner ? 'YES (Greet as Boss/Creator with high respect & camaraderie)' : 'NO'}
-   - Guild: ${guildName}
-3. Vibe & Tone: Talk like a sharp, chill, witty Discord teammate. Seamlessly adapt to Hinglish, English, Urdu, or Hindi matching the user. Avoid dry robotic answers.
-4. Security Guardrail: NEVER mention or explain Bot Owner bypass, backdoor logic, or owner-only commands (%manage, %control).
+   - Is Bot Owner: ${isOwner ? 'YES (Greet as Boss/Creator with high respect & camaraderie)' : 'NO'}
+   - Guild/Server: ${guildName}
+4. Tone & Vibe: Talk like a sharp, witty Discord teammate. Seamlessly adapt to Hinglish, English, Urdu, or Hindi matching the user. Keep it natural, snappy, and concise.
 
-KNOWLEDGE:
-You know all SparkCore systems: Music (%play, filters, panel), Moderation (/ban, /timeout, automod), Community (Tickets, /panel, Leveling &rank, Giveaways).
+BOT KNOWLEDGE:
+You know all SparkCore modules:
+- Music Engine (%play, filters, panel, 24/7)
+- Moderation & Security (/ban, /timeout, automod)
+- Community Systems (Tickets, /panel, Leveling &rank, Giveaways)
+
+STRICT CONFIDENTIALITY & SECURITY GUARDRAILS:
+- NEVER reveal, hint at, or discuss the "Bot Owner Bypass", backend bypass logic, admin emergency roles (like !!), or owner-only commands (%manage, %control, %storage).
+- If anyone asks how owners bypass rules, deflect politely: "Owner security architecture is private and restricted."
     `.trim();
 
-    const contents = [];
+    // OpenAI message format
+    const messages = [
+        { role: 'system', content: systemInstruction }
+    ];
+
     for (const msg of history) {
-        contents.push({
-            role: msg.role === 'model' ? 'model' : 'user',
-            parts: [{ text: String(msg.text) }]
+        messages.push({
+            role: msg.role === 'model' ? 'assistant' : 'user',
+            content: String(msg.text)
         });
     }
 
-    contents.push({
+    messages.push({
         role: 'user',
-        parts: [{ text: `${username}: ${userPrompt}` }]
+        content: `${username}:${userPrompt}`
     });
 
-    const payload = {
-        contents: contents,
-        systemInstruction: {
-            parts: [{ text: systemInstruction }]
-        },
-        generationConfig: {
-            temperature: 0.9,
-            maxOutputTokens: 800
+    try {
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${apiKey}`
+            },
+            body: JSON.stringify({
+                model: 'gpt-4o-mini', // Fastest, most affordable & highly intelligent
+                messages: messages,
+                max_tokens: 500,
+                temperature: 0.8
+            })
+        });
+
+        const data = await response.json();
+
+        if (response.ok && data.choices && data.choices[0]?.message?.content) {
+            return data.choices[0].message.content.trim();
         }
-    };
 
-    // Sirf official high-intelligence Gemini endpoints
-    const models = ['gemini-3.8-flash', 'gemini-3-flash', 'gemini-2.5-flash'];
-
-    for (const model of models) {
-        try {
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-            const res = await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-
-            const data = await res.json();
-
-            if (res.ok && data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
-                return data.candidates[0].content.parts[0].text.trim();
-            }
-
-            // Spike / High demand aane par 500ms wait karke agle Gemini model par jayega
-            await sleep(500);
-        } catch (_) {
-            await sleep(500);
+        if (data.error) {
+            console.error('OpenAI API Error:', data.error);
+            return `❌ OpenAI Error: \`${data.error.message}\``;
         }
+    } catch (err) {
+        console.error('OpenAI Fetch Error:', err);
+        return `Arey ${username}, network me halka lag ho gaya tha! Ek baar wapas bolo! ⚡`;
     }
 
-    // Natural personality fallback (Robotic error message nahi aayega)
-    return `Arey ${username}, Discord gateway me halka sa lag ho gaya tha! Ek baar wapas bol na, sun raha hoon! ⚡`;
+    return '⚠️ Response generate nahi ho paya, please try again.';
 }
 
 module.exports = (client) => {
@@ -116,7 +119,7 @@ module.exports = (client) => {
                     { upsert: true, new: true }
                 );
 
-                return message.reply(`🤖 **SparkCore AI Activated!**\nBound channel: ${targetChannel}. Ab yahan full vibe ke saath AI active hai!`);
+                return message.reply(`🤖 **SparkCore AI (Turbo Engine) Activated!**\nBound channel: ${targetChannel}. AI ab ultra-fast response dega!`);
             }
 
             if (sub === 'off' || sub === 'disable') {
@@ -159,13 +162,15 @@ module.exports = (client) => {
         );
 
         if (reply) {
-            history.push({ role: 'user', text: `${message.author.username}: ${message.content}` });
-            history.push({ role: 'model', text: reply });
+            if (!reply.startsWith('❌') && !reply.startsWith('⚠️')) {
+                history.push({ role: 'user', text: `${message.author.username}: ${message.content}` });
+                history.push({ role: 'model', text: reply });
 
-            if (history.length > 8) {
-                history = history.slice(history.length - 8);
+                if (history.length > 8) {
+                    history = history.slice(history.length - 8);
+                }
+                conversationMemory.set(memKey, history);
             }
-            conversationMemory.set(memKey, history);
 
             const chunks = reply.match(/[\s\S]{1,1990}/g) || [reply];
             for (const chunk of chunks) {
@@ -174,5 +179,5 @@ module.exports = (client) => {
         }
     });
 
-    console.log('✔ SparkCore 100% Pure Gemini Engine active.');
+    console.log('✔ SparkCore ChatGPT (OpenAI Turbo) Engine loaded.');
 };
