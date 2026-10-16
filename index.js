@@ -162,7 +162,7 @@ client.on('guildCreate', async (guild) => {
 });
 
 // 4. Ready Event & Owner Direct Startup Notification
-client.once('ready', async () => {
+client.once('clientReady', async () => {
     console.log(`🚀 Bot is Online: ${client.user.tag}`);
 
     const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
