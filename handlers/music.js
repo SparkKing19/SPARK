@@ -381,7 +381,7 @@ module.exports = async (client) => {
             return message.reply(`🔊 Connected to <#${vc.id}>.`);
         }
 
-        // %play (100% Working Audio Stream Engine)
+        // %play (Clean Multi-Platform Resolver)
         if (commandName === 'play' || commandName === 'p') {
             const vc = message.member.voice.channel;
             if (!vc) return message.reply('❌ Please join a voice channel first.');
@@ -406,17 +406,23 @@ module.exports = async (client) => {
             try {
                 let res = null;
 
-                // 1. Direct Links (SoundCloud / Spotify / HTTP)
-                if (query.startsWith('http://') || query.startsWith('https://')) {
-                    res = await poru.resolve({ query, requester: message.author });
+                // 1. Direct URL check
+                if (/^https?:\/\//i.test(query)) {
+                    res = await poru.resolve({ query, requester: message.author }).catch(() => null);
                 }
 
-                // 2. Search Keyword: YouTube block bypass karne ke liye Force SCSEARCH (SoundCloud)
+                // 2. Multi-Engine Cascading Search
                 if (!res || !res.tracks?.length) {
-                    res = await poru.resolve({ query: `scsearch:${query}`, requester: message.author });
+                    res = await poru.resolve({ query, source: 'scsearch', requester: message.author }).catch(() => null);
                 }
                 if (!res || !res.tracks?.length) {
-                    res = await poru.resolve({ query: `scsearch:${query} audio`, requester: message.author });
+                    res = await poru.resolve({ query, source: 'spsearch', requester: message.author }).catch(() => null);
+                }
+                if (!res || !res.tracks?.length) {
+                    res = await poru.resolve({ query, source: 'ytmsearch', requester: message.author }).catch(() => null);
+                }
+                if (!res || !res.tracks?.length) {
+                    res = await poru.resolve({ query, source: 'ytsearch', requester: message.author }).catch(() => null);
                 }
 
                 if (!res || !res.tracks?.length) {
@@ -428,7 +434,7 @@ module.exports = async (client) => {
                 if (res.loadType === 'PLAYLIST_LOADED') {
                     for (const t of res.tracks) player.queue.add(t);
                     if (!player.isPlaying && !player.isPaused) player.play();
-                    return statusMsg.edit(`🎶 Added playlist **${res.playlistInfo.name}** (\`${res.tracks.length}\` tracks) to queue.`);
+                    return statusMsg.edit(`🎶 Added playlist **${res.playlistInfo?.name || 'Playlist'}** (\`${res.tracks.length}\` tracks) to queue.`);
                 }
 
                 const track = res.tracks[0];
