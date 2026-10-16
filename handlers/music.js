@@ -141,25 +141,25 @@ async function updateGuildPanel(client, guildId, player = null, track = null) {
     } catch (_) {}
 }
 
-// Cascading Multi-Source Resolver
-async function resolveAudioTrack(poru, query, requester) {
-    const isUrl = /^https?:\/\//i.test(query);
+// Robust Audio Resolver (Auto-Fallback)
+async function resolveAudioTrack(poru, rawQuery, requester) {
+    const isUrl = /^https?:\/\//i.test(rawQuery.trim());
     if (isUrl) {
-        return await poru.resolve({ query, requester }).catch(() => null);
+        return await poru.resolve({ query: rawQuery.trim(), requester }).catch(() => null);
     }
 
-    // Clean Cascading Pipelines without double prefixes
-    const searchPipelines = [
+    const query = rawQuery.trim();
+    // Search priority across platforms
+    const attempts = [
         `scsearch:${query}`,
         `ytmsearch:${query}`,
         `ytsearch:${query}`,
-        `spsearch:${query}`,
         query
     ];
 
-    for (const searchQuery of searchPipelines) {
+    for (const attempt of attempts) {
         try {
-            const res = await poru.resolve({ query: searchQuery, requester });
+            const res = await poru.resolve({ query: attempt, requester });
             if (res && res.tracks && res.tracks.length > 0) {
                 return res;
             }
@@ -177,8 +177,7 @@ async function playNextAutoplay(poru, player, client) {
     try {
         const queries = [
             `scsearch:${lastTrack.info.author} audio`,
-            `scsearch:${lastTrack.info.author}`,
-            `scsearch:nasheed audio`
+            `scsearch:${lastTrack.info.author}`
         ];
         const search = queries[Math.floor(Math.random() * queries.length)];
         const res = await poru.resolve({ query: search, requester: client.user });
@@ -193,6 +192,7 @@ async function playNextAutoplay(poru, player, client) {
 }
 
 module.exports = async (client) => {
+    // Multi-Node Failover Cluster
     const nodes = [
         {
             name: 'SparkCore-Primary-Private',
@@ -223,7 +223,7 @@ module.exports = async (client) => {
     client.getPanelComponents = getPanelComponents;
     client.updateGuildPanel = updateGuildPanel;
 
-    // Node Connect & 24/7 Handshake
+    // Node Connect & 24/7 Monitoring
     poru.on('nodeConnect', async (node) => {
         console.log(`✔ Lavalink Node Online: ${node.name}`);
         try {
@@ -338,7 +338,9 @@ module.exports = async (client) => {
         poru.init(client);
     });
 
-    // Commands Engine (%...)
+    // ==========================================
+    // PREFIX COMMANDS (%...)
+    // ==========================================
     client.on('messageCreate', async (message) => {
         if (message.author.bot || !message.guild) return;
 
@@ -348,13 +350,32 @@ module.exports = async (client) => {
         const args = message.content.slice(PREFIX.length).trim().split(/ +/);
         const commandName = args.shift().toLowerCase();
 
+        // %join
+        if (commandName === 'join' || commandName === 'connect') {
+            const vc = message.member.voice.channel;
+            if (!vc) return message.reply('❌ You must join a voice channel first.');
+
+            let player = poru.players.get(message.guild.id);
+            if (!player) {
+                player = poru.createConnection({
+                    guildId: message.guild.id,
+                    voiceChannel: vc.id,
+                    textChannel: message.channel.id,
+                    deaf: true
+                });
+            } else {
+                player.setVoiceChannel(vc.id);
+            }
+            return message.reply(`🔊 Joined <#${vc.id}>!`);
+        }
+
         // %play
         if (commandName === 'play' || commandName === 'p') {
             const vc = message.member.voice.channel;
             if (!vc) return message.reply('❌ Please join a voice channel first.');
 
             const query = args.join(' ').trim();
-            if (!query) return message.reply('❌ Enter song name or URL: `%play <query>`');
+            if (!query) return message.reply('❌ Enter a song name or valid URL: `%play <query>`');
 
             let player = poru.players.get(message.guild.id);
             if (!player) {
@@ -372,7 +393,7 @@ module.exports = async (client) => {
                 const res = await resolveAudioTrack(poru, query, message.author);
 
                 if (!res || !res.tracks || !res.tracks.length) {
-                    return statusMsg.edit(`❌ Audio not found for: **${query}**`);
+                    return statusMsg.edit(`❌ Audio not found on any source for: **${query}**`);
                 }
 
                 const platformBadge = getPlatformBadge(res.tracks[0].info.sourceName, res.tracks[0].info.uri);
@@ -428,6 +449,29 @@ module.exports = async (client) => {
             return message.reply('⏭️ Track skipped.');
         }
 
+        // %24/7
+        if (commandName === '24/7' || commandName === '247') {
+            const isOwner = message.guild.ownerId === message.author.id;
+            const isAdmin = message.member.permissions.has('Administrator');
+            if (!isOwner && !isAdmin) return message.reply('❌ Only Server Owner or Admins can configure 24/7 mode.');
+
+            const vc = message.member.voice.channel;
+            if (!vc) return message.reply('❌ Join the voice channel you want as 24/7 home.');
+
+            const existing = await Music247.findOne({ guildId: message.guild.id, enabled: true });
+            if (existing) {
+                await Music247.findOneAndUpdate({ guildId: message.guild.id }, { enabled: false });
+                return message.reply('🔓 **24/7 Mode Disabled!**');
+            } else {
+                await Music247.findOneAndUpdate(
+                    { guildId: message.guild.id },
+                    { voiceChannelId: vc.id, textChannelId: message.channel.id, enabled: true },
+                    { upsert: true }
+                );
+                return message.reply(`🔒 **24/7 Mode Active!** Home: <#${vc.id}>.`);
+            }
+        }
+
         // %setup / %music panel
         if (commandName === 'setup' || (commandName === 'music' && args[0]?.toLowerCase() === 'panel')) {
             const isOwner = message.guild.ownerId === message.author.id;
@@ -448,7 +492,7 @@ module.exports = async (client) => {
         }
     });
 
-    // Control Panel Buttons
+    // Control Panel Interaction Buttons
     client.on('interactionCreate', async (interaction) => {
         if (!interaction.isButton() && !interaction.isStringSelectMenu()) return;
         if (!interaction.customId.startsWith('btn_') && interaction.customId !== 'menu_filters') return;
