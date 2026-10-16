@@ -16,11 +16,9 @@ const BOT_OWNERS = [
     '1474216218792558735'  // DAREQUEEN
 ];
 
-const cooldowns = new Set(); // 2-second anti-spam per user
-
 module.exports = (client) => {
 
-    // 1. Setup Modal Trigger via /panel (Book 3 Page 13)
+    // 1. Setup Modal Trigger via /panel
     client.on('interactionCreate', async (interaction) => {
         if (interaction.isButton() && interaction.customId === 'open_leveling_modal') {
             const data = await LevelingConfig.findOne({ guildId: interaction.guild.id }) || {};
@@ -64,7 +62,7 @@ module.exports = (client) => {
 
         // 2. Save Modal Configuration
         if (interaction.isModalSubmit() && interaction.customId === 'leveling_config_modal') {
-            await interaction.deferReply({ flags: 64 }); // Discord ephemeral safe
+            await interaction.deferReply({ flags: 64 });
 
             const rawStep = interaction.fields.getTextInputValue('lvl_messages_step').trim();
             const channelId = interaction.fields.getTextInputValue('lvl_channel_id').trim() || null;
@@ -84,7 +82,7 @@ module.exports = (client) => {
         }
     });
 
-    // 3. Message Counter, Commands & Dynamic Dual Level-Up Engine
+    // 3. Message Counter, Commands & Dynamic Dual Level-Up Engine (No Cooldown)
     client.on('messageCreate', async (message) => {
         if (!message.guild || message.author.bot) return;
 
@@ -93,7 +91,7 @@ module.exports = (client) => {
         const isServerOwner = message.author.id === message.guild.ownerId;
         const isAdmin = message.member?.permissions.has(PermissionsBitField.Flags.Administrator);
 
-        // A. COMMAND: %lvl reset (Wipe entire server levels)
+        // A. COMMAND: %lvl reset
         if (content.toLowerCase() === '%lvl reset') {
             if (!isBotOwner && !isServerOwner && !isAdmin) {
                 return message.reply('❌ You do not have permission to reset server levels.');
@@ -111,14 +109,13 @@ module.exports = (client) => {
             return message.reply(`✅ **Server Levels Reset!** Cleared all level and message data for **${clearedCount}** members.`);
         }
 
-        // B. COMMAND: %lvls lb / %lvl lb (Top 10 Leaderboard)
+        // B. COMMAND: %lvls lb / %lvl lb
         if (content.toLowerCase() === '%lvls lb' || content.toLowerCase() === '%lvl lb') {
             const data = await LevelingConfig.findOne({ guildId: message.guild.id });
             if (!data || !data.users || data.users.length === 0) {
                 return message.reply('ℹ️ Abhi is server me koi leveling data record nahi hua hai.');
             }
 
-            // Sort by level descending, then messages descending
             const topUsers = [...data.users]
                 .sort((a, b) => b.level - a.level || b.messages - a.messages)
                 .slice(0, 10);
@@ -139,13 +136,12 @@ module.exports = (client) => {
                     iconURL: message.guild.iconURL({ dynamic: true }) 
                 })
                 .setDescription(lbRows.join('\n'))
-                .setFooter({ text: `Requested by ${message.author.username}`, iconURL: message.author.displayAvatarURL() })
-                .setTimestamp();
+                .setFooter({ text: `Requested by ${message.author.username}`, iconURL: message.author.displayAvatarURL() });
 
             return message.reply({ embeds: [lbEmbed] });
         }
 
-        // C. COMMAND: &rank (Check Progress)
+        // C. COMMAND: &rank
         if (content.toLowerCase().startsWith('&rank')) {
             const target = message.mentions.users.first() || message.author;
             const data = await LevelingConfig.findOne({ guildId: message.guild.id });
@@ -163,20 +159,14 @@ module.exports = (client) => {
                     { name: '💬 Progress', value: `\`${userRecord.messages} / ${requiredForNext} msgs\``, inline: true },
                     { name: '⚡ Rate', value: `\`+${data.messagesPerLevel} msgs/lvl\``, inline: true }
                 )
-                .setFooter({ text: 'Leveling System' })
-                .setTimestamp();
+                .setFooter({ text: 'Leveling System' });
 
             return message.reply({ embeds: [rankEmbed] });
         }
 
-        // D. Message Counter & Dual Alert Notification
+        // D. Instant XP Tracker (No cooldown)
         const enabled = await isFeatureEnabled(message.guild.id, 'leveling', message.author.id);
         if (!enabled) return;
-
-        const cdKey = `${message.guild.id}_${message.author.id}`;
-        if (cooldowns.has(cdKey)) return;
-        cooldowns.add(cdKey);
-        setTimeout(() => cooldowns.delete(cdKey), 2000);
 
         let data = await LevelingConfig.findOne({ guildId: message.guild.id });
         if (!data) return;
@@ -194,9 +184,8 @@ module.exports = (client) => {
 
         if (userRecord.messages >= requiredForNext) {
             userRecord.level = nextLevel;
-            userRecord.messages = 0; // Next tier progress reset
+            userRecord.messages = 0;
 
-            // Custom Message Formatter
             let formattedMsg = parseVariables(data.levelUpMessage, {
                 member: message.member,
                 user: message.author,
@@ -204,20 +193,12 @@ module.exports = (client) => {
             });
             formattedMsg = formattedMsg.replace(/{level}/g, `${userRecord.level}`);
 
-            // Embed WITHOUT Title (Sirf custom message description me aayega)
             const levelEmbed = new EmbedBuilder()
                 .setColor('#2ECC71')
-                .setAuthor({
-                    name: `${message.author.username} leveled up!`,
-                    iconURL: message.author.displayAvatarURL()
-                })
-                .setDescription(formattedMsg)
-                .setTimestamp();
+                .setDescription(formattedMsg);
 
-            // 1. Current Chat Alert (Jahan level up message type hua)
             await message.channel.send({ embeds: [levelEmbed] }).catch(() => {});
 
-            // 2. Configured Channel Alert (Agar set hai aur current chat se alag hai)
             if (data.channelId && data.channelId !== message.channel.id) {
                 const targetChannel = message.guild.channels.cache.get(data.channelId);
                 if (targetChannel && targetChannel.isTextBased()) {
@@ -231,3 +212,4 @@ module.exports = (client) => {
 
     console.log('✔ Leveling System handler loaded.');
 };
+                    
