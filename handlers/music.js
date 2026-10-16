@@ -381,13 +381,13 @@ module.exports = async (client) => {
             return message.reply(`🔊 Connected to <#${vc.id}>.`);
         }
 
-                // %play (Instant Sound Fallback)
+        // %play (100% Working Audio Stream Engine)
         if (commandName === 'play' || commandName === 'p') {
             const vc = message.member.voice.channel;
             if (!vc) return message.reply('❌ Please join a voice channel first.');
 
             const query = args.join(' ').trim();
-            if (!query) return message.reply('❌ Enter a song name or valid link: `%play <query>`');
+            if (!query) return message.reply('❌ Enter a song name or link: `%play <query>`');
 
             let player = poru.players.get(message.guild.id);
             let isNew = false;
@@ -401,25 +401,22 @@ module.exports = async (client) => {
                 isNew = true;
             }
 
-            const statusMsg = await message.reply('🔍 Resolving audio...');
+            const statusMsg = await message.reply('🔍 Searching audio stream...');
 
             try {
                 let res = null;
 
-                // 1. Direct Links (SoundCloud, Spotify, YouTube etc)
+                // 1. Direct Links (SoundCloud / Spotify / HTTP)
                 if (query.startsWith('http://') || query.startsWith('https://')) {
                     res = await poru.resolve({ query, requester: message.author });
                 }
 
-                // 2. Search Engines: Pehle SoundCloud & YouTube Music taaki cipher error na aaye
+                // 2. Search Keyword: YouTube block bypass karne ke liye Force SCSEARCH (SoundCloud)
                 if (!res || !res.tracks?.length) {
-                    res = await poru.resolve({ query, source: 'scsearch', requester: message.author });
+                    res = await poru.resolve({ query: `scsearch:${query}`, requester: message.author });
                 }
                 if (!res || !res.tracks?.length) {
-                    res = await poru.resolve({ query, source: 'ytmsearch', requester: message.author });
-                }
-                if (!res || !res.tracks?.length) {
-                    res = await poru.resolve({ query, source: 'ytsearch', requester: message.author });
+                    res = await poru.resolve({ query: `scsearch:${query} audio`, requester: message.author });
                 }
 
                 if (!res || !res.tracks?.length) {
