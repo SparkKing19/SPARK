@@ -129,17 +129,17 @@ async function updateGuildPanel(client, guildId, player = null, track = null) {
     } catch (_) {}
 }
 
-// Autoplay Engine
+// Autoplay Engine (SoundCloud Priority)
 async function playNextAutoplay(poru, player, client) {
     const lastTrack = previousTracks.get(player.guildId) || player.currentTrack;
     if (!lastTrack) return;
 
     try {
         const query = `${lastTrack.info.author} audio`;
-        let res = await poru.resolve({ query, source: 'scsearch', requester: client.user });
+        let res = await poru.resolve({ query, source: 'scsearch', requester: client.user }).catch(() => null);
 
         if (!res || !res.tracks?.length) {
-            res = await poru.resolve({ query: `${lastTrack.info.title}`, source: 'scsearch', requester: client.user });
+            res = await poru.resolve({ query: `${lastTrack.info.title}`, source: 'scsearch', requester: client.user }).catch(() => null);
         }
 
         if (res?.tracks?.length) {
@@ -248,7 +248,7 @@ module.exports = async (client) => {
             player.queue.clear();
             const textChan = client.channels.cache.get(player.textChannel);
             if (textChan) {
-                textChan.send(`⚠️ Stream Error on \`${track.info.title}\`. Autoplay stopped to prevent skipping spam.`).catch(() => {});
+                textChan.send(`⚠️ Stream Error on \`${track.info.title}\`. Stopping loop.`).catch(() => {});
             }
             errorCounter.set(player.guildId, 0);
             return player.destroy();
@@ -381,13 +381,13 @@ module.exports = async (client) => {
             return message.reply(`🔊 Connected to <#${vc.id}>.`);
         }
 
-        // %play (Clean Multi-Platform Resolver)
+        // %play (Pure SoundCloud & Spotify Direct Streams)
         if (commandName === 'play' || commandName === 'p') {
             const vc = message.member.voice.channel;
             if (!vc) return message.reply('❌ Please join a voice channel first.');
 
             const query = args.join(' ').trim();
-            if (!query) return message.reply('❌ Enter a song name or link: `%play <query>`');
+            if (!query) return message.reply('❌ Enter a song name or valid link: `%play <query>`');
 
             let player = poru.players.get(message.guild.id);
             let isNew = false;
@@ -401,28 +401,22 @@ module.exports = async (client) => {
                 isNew = true;
             }
 
-            const statusMsg = await message.reply('🔍 Searching audio stream...');
+            const statusMsg = await message.reply('🔍 Resolving audio...');
 
             try {
                 let res = null;
 
-                // 1. Direct URL check
-                if (/^https?:\/\//i.test(query)) {
+                // 1. Direct Links (SoundCloud / Spotify / HTTP)
+                if (query.startsWith('http://') || query.startsWith('https://')) {
                     res = await poru.resolve({ query, requester: message.author }).catch(() => null);
                 }
 
-                // 2. Multi-Engine Cascading Search
+                // 2. Direct SoundCloud & Spotify search (YouTube Block Bypassed)
                 if (!res || !res.tracks?.length) {
                     res = await poru.resolve({ query, source: 'scsearch', requester: message.author }).catch(() => null);
                 }
                 if (!res || !res.tracks?.length) {
                     res = await poru.resolve({ query, source: 'spsearch', requester: message.author }).catch(() => null);
-                }
-                if (!res || !res.tracks?.length) {
-                    res = await poru.resolve({ query, source: 'ytmsearch', requester: message.author }).catch(() => null);
-                }
-                if (!res || !res.tracks?.length) {
-                    res = await poru.resolve({ query, source: 'ytsearch', requester: message.author }).catch(() => null);
                 }
 
                 if (!res || !res.tracks?.length) {
@@ -610,5 +604,5 @@ module.exports = async (client) => {
         }
     });
 
-    console.log('✔ Custom Rythm Music Engine (Anti-Spam Stream Guard Active).');
+    console.log('✔ Custom Rythm Music Engine (Pure Stream Active).');
 };
