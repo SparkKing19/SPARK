@@ -381,7 +381,7 @@ module.exports = async (client) => {
             return message.reply(`🔊 Connected to <#${vc.id}>.`);
         }
 
-        // %play
+                // %play (Instant Sound Fallback)
         if (commandName === 'play' || commandName === 'p') {
             const vc = message.member.voice.channel;
             if (!vc) return message.reply('❌ Please join a voice channel first.');
@@ -406,12 +406,12 @@ module.exports = async (client) => {
             try {
                 let res = null;
 
-                // 1. Direct URL (SoundCloud / Spotify / HTTP)
+                // 1. Direct Links (SoundCloud, Spotify, YouTube etc)
                 if (query.startsWith('http://') || query.startsWith('https://')) {
                     res = await poru.resolve({ query, requester: message.author });
                 }
 
-                // 2. Search Fallback (SoundCloud -> YouTube Music -> Spotify)
+                // 2. Search Engines: Pehle SoundCloud & YouTube Music taaki cipher error na aaye
                 if (!res || !res.tracks?.length) {
                     res = await poru.resolve({ query, source: 'scsearch', requester: message.author });
                 }
@@ -419,14 +419,13 @@ module.exports = async (client) => {
                     res = await poru.resolve({ query, source: 'ytmsearch', requester: message.author });
                 }
                 if (!res || !res.tracks?.length) {
-                    res = await poru.resolve({ query, source: 'spsearch', requester: message.author });
+                    res = await poru.resolve({ query, source: 'ytsearch', requester: message.author });
                 }
 
                 if (!res || !res.tracks?.length) {
                     return statusMsg.edit(`❌ Audio not found for: **${query}**`);
                 }
 
-                // Agar new connection hai toh voice handshake ke liye wait karein
                 if (isNew) await new Promise(r => setTimeout(r, 600));
 
                 if (res.loadType === 'PLAYLIST_LOADED') {
