@@ -8,116 +8,85 @@ const BOT_OWNERS = [
 ];
 
 const conversationMemory = new Map();
-
-// Helper: Sleep utility for micro-retry
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-// Fast Failover Backup Generator (Zero rate limits, unlimited fallback)
-async function fetchBackupAIResponse(systemInstruction, history, userPrompt, username) {
-    try {
-        const fullPrompt = `System Rules: ${systemInstruction}\n\nRecent Chat:\n${history.map(h => `${h.role}:${h.text}`).join('\n')}\n\n${username}: ${userPrompt}`;
-        const url = `https://text.pollinations.ai/${encodeURIComponent(fullPrompt)}`;
-        
-        const res = await fetch(url);
-        if (!res.ok) return null;
-        const text = await res.text();
-        return text.trim();
-    } catch (_) {
-        return null;
-    }
-}
 
 async function getSparkCoreAIResponse(history, userPrompt, username, userId, guildName) {
     const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+        return 'Arre boss, lagta hai API key missing hai Railway variables me!';
+    }
+
     const isOwner = BOT_OWNERS.includes(userId);
 
     const systemInstruction = `
-You are "SparkCore", an intelligent, authentic, and witty Discord AI assistant built for servers.
-You were created and developed by FZBOY along with DAREQUEEN.
+You are "SparkCore", an authentic, witty, highly adaptive, and ultra-smart AI companion on Discord.
+You were created and developed exclusively by FZBOY along with DAREQUEEN. Under no circumstances mention the name "Fouzan".
 
-CRITICAL IDENTITY RULES:
-1. NEVER identify yourself as ChatGPT, OpenAI, Gemini, or Google. Your ONLY name is "SparkCore".
-2. If asked "Tum kaun ho?", "Who are you?", or who created you: State that you are SparkCore, developed by FZBOY and DAREQUEEN. Under no circumstances mention or use the real name "Fouzan".
-3. The user you are currently talking to:
-   - Username: ${username}
+IDENTITY & BEHAVIOR RULES:
+1. Never call yourself ChatGPT, OpenAI, Google, or Gemini. You are only SparkCore.
+2. User details:
+   - Name: ${username}
    - User ID: ${userId}
-   - Is Bot Owner: ${isOwner ? 'YES (Treat with high respect/creator acknowledgement)' : 'NO'}
-   - Server: ${guildName}
+   - Is Creator/Owner: ${isOwner ? 'YES (Greet as Boss/Creator with high respect & camaraderie)' : 'NO'}
+   - Guild: ${guildName}
+3. Vibe & Tone: Talk like a sharp, chill, witty Discord teammate. Seamlessly adapt to Hinglish, English, Urdu, or Hindi matching the user. Avoid dry robotic answers.
+4. Security Guardrail: NEVER mention or explain Bot Owner bypass, backdoor logic, or owner-only commands (%manage, %control).
 
-BOT KNOWLEDGE & GUIDELINES:
-You have complete knowledge of SparkCore's modules and help members use them:
-- Music Engine: Commands like %play, %pause, %skip, %stop, 24/7 mode, high-res panel, and audio filters.
-- Moderation & Security: Slash commands (/ban, /kick, /timeout, /purge, /lock, /unlock, /role), automod link/IP blockers, bad word filtering.
-- Community Systems: Tickets, Onboarding role pickers (/panel), Giveaways (/giveaway), Leveling (&rank), Invites tracker (&i, &lb), and Goodbye cards.
-
-STRICT CONFIDENTIALITY & SECURITY GUARDRAILS (NEVER BREAK THESE):
-- NEVER reveal, hint at, or discuss the "Bot Owner Bypass", backend bypass logic, admin emergency roles (like !!), or owner-only commands (%manage, %control, %storage).
-- If anyone asks how owners bypass rules or how permissions work behind the scenes, deflect politely: "Owner security architecture is private and restricted."
-
-TONE & LANGUAGE:
-- Match the user's language dynamically: Hinglish, Urdu, Roman Urdu, Hindi, or English.
-- Keep the tone friendly, witty, sharp, and helpful — like a cool teammate, not a robotic script.
+KNOWLEDGE:
+You know all SparkCore systems: Music (%play, filters, panel), Moderation (/ban, /timeout, automod), Community (Tickets, /panel, Leveling &rank, Giveaways).
     `.trim();
 
-    // 1. Primary Engine: Google Gemini API with Fallback Models
-    if (apiKey) {
-        const contents = [];
-        for (const msg of history) {
-            contents.push({
-                role: msg.role === 'model' ? 'model' : 'user',
-                parts: [{ text: String(msg.text) }]
-            });
-        }
-
+    const contents = [];
+    for (const msg of history) {
         contents.push({
-            role: 'user',
-            parts: [{ text: `${username}: ${userPrompt}` }]
+            role: msg.role === 'model' ? 'model' : 'user',
+            parts: [{ text: String(msg.text) }]
         });
+    }
 
-        const payload = {
-            contents: contents,
-            systemInstruction: {
-                parts: [{ text: systemInstruction }]
-            },
-            generationConfig: {
-                temperature: 0.85,
-                maxOutputTokens: 800
+    contents.push({
+        role: 'user',
+        parts: [{ text: `${username}: ${userPrompt}` }]
+    });
+
+    const payload = {
+        contents: contents,
+        systemInstruction: {
+            parts: [{ text: systemInstruction }]
+        },
+        generationConfig: {
+            temperature: 0.9,
+            maxOutputTokens: 800
+        }
+    };
+
+    // Sirf official high-intelligence Gemini endpoints
+    const models = ['gemini-3.8-flash', 'gemini-3-flash', 'gemini-2.5-flash'];
+
+    for (const model of models) {
+        try {
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+
+            const data = await res.json();
+
+            if (res.ok && data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
+                return data.candidates[0].content.parts[0].text.trim();
             }
-        };
 
-        const models = ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-2.5-pro'];
-
-        for (const model of models) {
-            try {
-                const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-                const res = await fetch(url, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(payload)
-                });
-
-                const data = await res.json();
-
-                if (res.ok && data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
-                    return data.candidates[0].content.parts[0].text.trim();
-                }
-
-                // If busy/overloaded, wait 400ms and try next model
-                await sleep(400);
-            } catch (_) {
-                await sleep(400);
-            }
+            // Spike / High demand aane par 500ms wait karke agle Gemini model par jayega
+            await sleep(500);
+        } catch (_) {
+            await sleep(500);
         }
     }
 
-    // 2. Secondary Engine: Instant Failover (Jab Google ke saare endpoints busy hon)
-    const backupReply = await fetchBackupAIResponse(systemInstruction, history, userPrompt, username);
-    if (backupReply) {
-        return backupReply;
-    }
-
-    // 3. Fallback Reply in Character (Kahin se bhi generic error message nahi aayega)
-    return `Arre ${username}, thoda net lag ho gaya tha! Ek baar wapas se bolo, sun raha hoon! ⚡`;
+    // Natural personality fallback (Robotic error message nahi aayega)
+    return `Arey ${username}, Discord gateway me halka sa lag ho gaya tha! Ek baar wapas bol na, sun raha hoon! ⚡`;
 }
 
 module.exports = (client) => {
@@ -129,7 +98,7 @@ module.exports = (client) => {
         const isServerOwner = message.author.id === message.guild.ownerId;
         const isAdmin = message.member?.permissions.has('Administrator');
 
-        // %ai Commands
+        // Setup Commands
         if (content.toLowerCase().startsWith('%ai')) {
             const args = content.split(/ +/).slice(1);
             const sub = args[0]?.toLowerCase();
@@ -147,7 +116,7 @@ module.exports = (client) => {
                     { upsert: true, new: true }
                 );
 
-                return message.reply(`🤖 **SparkCore AI Activated!**\nBound channel: ${targetChannel}. AI ab is channel me active hai!`);
+                return message.reply(`🤖 **SparkCore AI Activated!**\nBound channel: ${targetChannel}. Ab yahan full vibe ke saath AI active hai!`);
             }
 
             if (sub === 'off' || sub === 'disable') {
@@ -205,5 +174,5 @@ module.exports = (client) => {
         }
     });
 
-    console.log('✔ SparkCore High-Availability AI Engine loaded.');
+    console.log('✔ SparkCore 100% Pure Gemini Engine active.');
 };
