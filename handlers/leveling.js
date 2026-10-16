@@ -1,5 +1,6 @@
 const { EmbedBuilder, PermissionsBitField } = require('discord.js');
-const { UserLevel, LevelConfig } = require('../models/level');
+const UserLevel = require('../models/leveling');
+const LevelConfig = UserLevel.LevelConfig;
 const { isFeatureEnabled } = require('../utils/featureCheck');
 
 const BOT_OWNERS = [
@@ -20,7 +21,7 @@ module.exports = (client) => {
         const isServerOwner = message.author.id === message.guild.ownerId;
         const isAdmin = message.member?.permissions.has(PermissionsBitField.Flags.Administrator);
 
-        // 1. %lvl reset (Pure Server Ka Level Data Wipe)
+        // 1. %lvl reset (Pure server ka leveling data wipe karna)
         if (content.toLowerCase() === '%lvl reset') {
             if (!isBotOwner && !isServerOwner && !isAdmin) {
                 return message.reply('❌ You do not have permission to reset server levels.');
@@ -72,7 +73,7 @@ module.exports = (client) => {
             }
         }
 
-        // 3. &rank (Individual Progress)
+        // 3. &rank (Check individual status)
         if (content.toLowerCase().startsWith('&rank')) {
             const targetUser = message.mentions.users.first() || message.author;
             const userData = await UserLevel.findOne({ guildId: message.guild.id, userId: targetUser.id }) || { level: 0, messages: 0, totalMessages: 0 };
@@ -93,7 +94,7 @@ module.exports = (client) => {
             return message.reply({ embeds: [rankEmbed] });
         }
 
-        // 4. Global Message Tracking & Dual Alert Engine
+        // 4. Global Message Tracking & Dual Alerts
         const featureEnabled = await isFeatureEnabled(message.guild.id, 'leveling', message.author.id);
         if (!featureEnabled) return;
 
@@ -145,10 +146,10 @@ module.exports = (client) => {
                 .setDescription(alertText)
                 .setTimestamp();
 
-            // 1. Current chat me alert
+            // Alert 1: Current Chat (jahan aakhri message kiya gaya)
             await message.channel.send({ embeds: [levelEmbed] }).catch(() => {});
 
-            // 2. Dedicated channel me alert agar set hai aur alag hai
+            // Alert 2: Configured Channel (agar set hai aur current chat se alag hai)
             if (config.channelId && config.channelId !== message.channel.id) {
                 const targetChannel = message.guild.channels.cache.get(config.channelId);
                 if (targetChannel && targetChannel.isTextBased()) {
@@ -160,5 +161,5 @@ module.exports = (client) => {
         }
     });
 
-    console.log('✔ Enhanced Dual-Alert Leveling System loaded (Single Model).');
+    console.log('✔ Leveling System handler loaded.');
 };
