@@ -66,7 +66,7 @@ STRICT CONFIDENTIALITY & SECURITY GUARDRAILS:
                 'Authorization': `Bearer ${apiKey}`
             },
             body: JSON.stringify({
-                model: 'llama-3.3-70b-versatile', // Ultra-smart & fastest available model
+                model: 'llama-3.1-70b-versatile', // Ultra-smart & fastest available model
                 messages: messages,
                 max_tokens: 600,
                 temperature: 0.85
