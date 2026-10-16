@@ -154,12 +154,13 @@ function getPanelEmbed(client, player = null, track = null) {
     const isAutoplay = (autoplayMap.get(player.guildId) ?? true) ? 'Enabled' : 'Disabled';
     const thumbnail = getTrackThumbnail(track);
     const sourceBadge = getPlatformBadge(track.info.sourceName);
+    const requesterName = track.info.requester?.username || 'System';
 
     return new EmbedBuilder()
         .setColor('#5865F2')
         .setDescription(`## <a:play_rec:1559415361290641429> Now Playing...\n\n[**${track.info.title}**](${track.info.uri})\n\n> **Author:** \`${track.info.author}\`\n> **Source Platform:** \`${sourceBadge}\`\n> **Duration:** \`${duration}\` • **Volume:** \`${player.volume}%\`\n> **Autoplay:** \`${isAutoplay}\` • **Loop:** \`${player.loop}\`\n> **Voice Channel:** <#${player.voiceChannel}>`)
         .setImage(thumbnail)
-        .setFooter({ text: `Requested by ${track.info.requester?.username \vert{}\vert{} 'System'} • Source: ${sourceBadge}` });
+        .setFooter({ text: `Requested by ${requesterName} • Source: ${sourceBadge}` });
 }
 
 // Live Panel Refresh
@@ -188,7 +189,7 @@ async function resolveAudioTrack(poru, query, requester) {
         return await poru.resolve({ query, requester }).catch(() => null);
     }
 
-    // 1. Direct Search Pipeline (Multi-Source Fallback)
+    // Direct Search Pipeline (Multi-Source Fallback)
     const searchEngines = [
         { query: `scsearch:${query}`, source: 'scsearch' },
         { query: `ytsearch:${query}`, source: 'ytsearch' },
