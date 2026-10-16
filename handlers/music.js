@@ -13,7 +13,7 @@ const CustomPlaylist = require('../models/customPlaylist');
 const autoplayMap = new Map();
 const previousTracks = new Map();
 
-// Helper: Voice Channel Subtitle Status (Set & Clear)
+// Helper: Voice Channel Subtitle Status
 async function updateVoiceStatus(client, channelId, statusText = '') {
     if (!channelId) return;
     try {
@@ -34,6 +34,18 @@ function getTrackThumbnail(track) {
     return 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?q=80&w=1000&auto=format&fit=crop';
 }
 
+// Helper: Platform Source Badge
+function getPlatformBadge(sourceName) {
+    const src = String(sourceName || '').toLowerCase();
+    if (src.includes('spotify')) return '🟢 SPOTIFY';
+    if (src.includes('soundcloud')) return '🟠 SOUNDCLOUD';
+    if (src.includes('youtube')) return '🔴 YOUTUBE';
+    if (src.includes('apple')) return '🟣 APPLE MUSIC';
+    if (src.includes('bandcamp')) return '🔵 BANDCAMP';
+    if (src.includes('deezer')) return '🟡 DEEZER';
+    return `🌐 ${src.toUpperCase() || 'DIRECT STREAM'}`;
+}
+
 // Helper: Safe Track Skip/Stop
 function safeSkipTrack(player) {
     if (!player) return;
@@ -42,7 +54,7 @@ function safeSkipTrack(player) {
     else player.destroy();
 }
 
-// Controller Components (Row 1: ⏸️ ⏮️ 🛑 ⏯️ ▶️ | Row 2: ♾️ 🔉 🔁 🔊 💾)
+// Controller Components
 function getPanelComponents(player = null) {
     const isLoop = player ? player.loop === 'TRACK' : false;
     const isAutoplay = player ? (autoplayMap.get(player.guildId) ?? true) : true;
@@ -127,27 +139,27 @@ function getPanelComponents(player = null) {
     return [row1, row2, row3];
 }
 
-// Embed Builder (Top Title + Bottom High-Res Artwork)
+// Embed Builder (Source Tag Highlighted)
 function getPanelEmbed(client, player = null, track = null) {
     if (!player || !track) {
         return new EmbedBuilder()
             .setColor('#2B2D31')
-            .setTitle('🎶 SparkCore Music Control Panel')
-            .setDescription('**No song is currently playing.**\nJoin a voice channel and type `%play <song name or link>` to begin.')
+            .setTitle('🎶 SparkCore Multi-Source Music Panel')
+            .setDescription('**No song is currently playing.**\nJoin a voice channel and type `%play <song name or link>` to begin.\n\n*Supported Platforms: Spotify, SoundCloud, YouTube, Apple Music, Bandcamp & Web Streams.*')
             .setImage('https://dummyimage.com/1280x360/1e1f22/7289da&text=SparkCore+Audio+Engine+Ready')
-            .setFooter({ text: 'SparkCore Music System • Standby' });
+            .setFooter({ text: 'SparkCore Music System • Multi-Node Standby' });
     }
 
     const duration = track.info.isStream ? 'LIVE' : new Date(track.info.length).toISOString().substr(14, 5);
     const isAutoplay = (autoplayMap.get(player.guildId) ?? true) ? 'Enabled' : 'Disabled';
     const thumbnail = getTrackThumbnail(track);
-    const source = (track.info.sourceName || 'Audio').toUpperCase();
+    const sourceBadge = getPlatformBadge(track.info.sourceName);
 
     return new EmbedBuilder()
         .setColor('#5865F2')
-        .setDescription(`## <a:play_rec:1559415361290641429> Now Playing...\n\n[**${track.info.title}**](${track.info.uri})\n\n> **Author:** \`${track.info.author}\` • **Source:** \`${source}\`\n> **Duration:** \`${duration}\` • **Volume:** \`${player.volume}%\`\n> **Autoplay:** \`${isAutoplay}\` • **Loop:** \`${player.loop}\`\n> **Voice Channel:** <#${player.voiceChannel}>`)
+        .setDescription(`## <a:play_rec:1559415361290641429> Now Playing...\n\n[**${track.info.title}**](${track.info.uri})\n\n> **Author:** \`${track.info.author}\`\n> **Source Platform:** \`${sourceBadge}\`\n> **Duration:** \`${duration}\` • **Volume:** \`${player.volume}%\`\n> **Autoplay:** \`${isAutoplay}\` • **Loop:** \`${player.loop}\`\n> **Voice Channel:** <#${player.voiceChannel}>`)
         .setImage(thumbnail)
-        .setFooter({ text: `Requested by ${track.info.requester?.username || 'System'}` });
+        .setFooter({ text: `Requested by ${track.info.requester?.username \vert{}\vert{} 'System'} • Source: ${sourceBadge}` });
 }
 
 // Live Panel Refresh
@@ -169,27 +181,26 @@ async function updateGuildPanel(client, guildId, player = null, track = null) {
     } catch (_) {}
 }
 
-// Direct Multi-Attempt SoundCloud Resolver
+// High-Resilience Multi-Platform Audio Resolver (Cascading Search)
 async function resolveAudioTrack(poru, query, requester) {
     const isUrl = query.startsWith('http://') || query.startsWith('https://');
     if (isUrl) {
         return await poru.resolve({ query, requester }).catch(() => null);
     }
 
-    // Pipeline: Multiple variations taaki empty array bypass ho sake
-    const searchPipelines = [
-        { query: `scsearch:${query}`, source: null },
-        { query: query, source: 'scsearch' },
-        { query: `${query} nasheed`, source: 'scsearch' },
-        { query: `${query} audio`, source: 'scsearch' },
-        { query: query.replace(/[^a-zA-Z0-9 ]/g, ' ').trim(), source: 'scsearch' },
+    // 1. Direct Search Pipeline (Multi-Source Fallback)
+    const searchEngines = [
+        { query: `scsearch:${query}`, source: 'scsearch' },
+        { query: `ytsearch:${query}`, source: 'ytsearch' },
+        { query: `spsearch:${query}`, source: 'spotify' },
+        { query: `amsearch:${query}`, source: 'applemusic' },
         { query: query, source: null }
     ];
 
-    for (const pipeline of searchPipelines) {
+    for (const engine of searchEngines) {
         try {
-            const opts = { query: pipeline.query, requester };
-            if (pipeline.source) opts.source = pipeline.source;
+            const opts = { query: engine.query, requester };
+            if (engine.source) opts.source = engine.source;
             const res = await poru.resolve(opts);
             if (res && res.tracks && res.tracks.length > 0) {
                 return res;
@@ -200,7 +211,7 @@ async function resolveAudioTrack(poru, query, requester) {
     return null;
 }
 
-// Autoplay recommendation engine
+// Autoplay Recommendation
 async function playNextAutoplay(poru, player, client) {
     const lastTrack = previousTracks.get(player.guildId) || player.currentTrack;
     if (!lastTrack) return;
@@ -224,12 +235,27 @@ async function playNextAutoplay(poru, player, client) {
 }
 
 module.exports = async (client) => {
+    // Multi-Node Failover Cluster
     const nodes = [
         {
-            name: 'SparkCore-Private-Lavalink',
+            name: 'SparkCore-Primary-Private',
             host: 'Lavalink-production-cf42.up.railway.app',
             port: 443,
             password: 'sparkcore123',
+            secure: true
+        },
+        {
+            name: 'SparkCore-Backup-Node-1',
+            host: 'lavalink-v4.ajieblogs.eu.org',
+            port: 443,
+            password: 'https://dsc.gg/ajielavalink',
+            secure: true
+        },
+        {
+            name: 'SparkCore-Backup-Node-2',
+            host: 'lava-v4.ajieblogs.eu.org',
+            port: 443,
+            password: 'https://dsc.gg/ajielavalink',
             secure: true
         }
     ];
@@ -245,9 +271,9 @@ module.exports = async (client) => {
     client.getPanelComponents = getPanelComponents;
     client.updateGuildPanel = updateGuildPanel;
 
-    // Node Connect & 24/7 Auto-Join
+    // Node Connect & Failover Monitoring
     poru.on('nodeConnect', async (node) => {
-        console.log(`✔ Private Lavalink Online: ${node.name}`);
+        console.log(`✔ Lavalink Node Online: ${node.name}`);
         try {
             const records = await Music247.find({ enabled: true });
             for (const rec of records) {
@@ -267,6 +293,10 @@ module.exports = async (client) => {
                 }
             }
         } catch (_) {}
+    });
+
+    poru.on('nodeDisconnect', (node, reason) => {
+        console.warn(`⚠️ Lavalink Node Disconnected: ${node.name} | Auto-switching to backup node...`);
     });
 
     // Track Start
@@ -302,7 +332,7 @@ module.exports = async (client) => {
         await updateGuildPanel(client, player.guildId, player, track);
     });
 
-    // Queue End -> Autoplay Or Reset
+    // Queue End
     poru.on('queueEnd', async (player) => {
         const isAutoplay = autoplayMap.get(player.guildId) ?? true;
         if (isAutoplay) {
@@ -350,7 +380,6 @@ module.exports = async (client) => {
         }
     });
 
-    // Initialize Poru
     client.once('ready', () => {
         poru.init(client);
     });
@@ -371,17 +400,18 @@ module.exports = async (client) => {
         if (commandName === 'music' && (!args[0] || args[0].toLowerCase() !== 'panel')) {
             const helpEmbed = new EmbedBuilder()
                 .setColor('#5865F2')
-                .setTitle('🎶 SparkCore Music Commands')
+                .setTitle('🎶 SparkCore Multi-Platform Music Engine')
                 .setDescription('Prefix: `%`\n\n' +
-                    '`%play <song name or link>` — Play track or audio link\n' +
-                    '`%join` — Summon bot to your current voice channel\n' +
-                    '`%stop` — Stop playback and reset\n' +
-                    '`%skip` — Skip track\n' +
-                    '`%24/7` — Set persistent 24/7 channel home\n' +
-                    '`%music panel` or `%setup` — Create interactive live music panel\n' +
-                    '`%playlist create <name>` — Record next 10 songs into playlist\n' +
+                    '`%play <song name or link>` — Play from Spotify, SoundCloud, YouTube, etc.\n' +
+                    '`%join` — Summon bot to your voice channel\n' +
+                    '`%stop` — Stop playback and clear queue\n' +
+                    '`%skip` — Skip current track\n' +
+                    '`%24/7` — Toggle 24/7 persistent voice channel\n' +
+                    '`%music panel` or `%setup` — Deploy interactive music control panel\n' +
+                    '`%playlist create <name>` — Create recorded playlist\n' +
                     '`%playlist <name>` — Load saved playlist'
-                );
+                )
+                .setFooter({ text: 'Multi-Node Cluster • Auto-Failover Active' });
             return message.reply({ embeds: [helpEmbed] });
         }
 
@@ -406,7 +436,7 @@ module.exports = async (client) => {
                 { upsert: true }
             );
 
-            return message.reply(`✅ Control Panel successfully deployed in <#${message.channel.id}>!`);
+            return message.reply(`✅ Multi-Platform Control Panel successfully deployed in <#${message.channel.id}>!`);
         }
 
         // %join
@@ -435,7 +465,7 @@ module.exports = async (client) => {
             if (!isOwner && !isAdmin) return message.reply('❌ Only Server Owners or Admins can configure 24/7 mode.');
 
             const vc = message.member.voice.channel;
-            if (!vc) return message.reply('❌ Join the specific voice channel you want as 24/7 home.');
+            if (!vc) return message.reply('❌ Join the voice channel you want as 24/7 home.');
 
             const existing = await Music247.findOne({ guildId: message.guild.id, enabled: true });
             if (existing) {
@@ -469,19 +499,21 @@ module.exports = async (client) => {
                 });
             }
 
-            const statusMsg = await message.reply('🔍 Resolving audio track...');
+            const statusMsg = await message.reply('🔍 Searching across multi-platform sources...');
 
             try {
                 const res = await resolveAudioTrack(poru, query, message.author);
 
                 if (!res || !res.tracks || !res.tracks.length) {
-                    return statusMsg.edit(`❌ Audio not found for: **${query}**`);
+                    return statusMsg.edit(`❌ Audio not found on any platform for: **${query}**`);
                 }
+
+                const platformBadge = getPlatformBadge(res.tracks[0].info.sourceName);
 
                 if (res.loadType === 'PLAYLIST_LOADED') {
                     for (const t of res.tracks) player.queue.add(t);
                     if (!player.isPlaying && !player.isPaused) player.play();
-                    return statusMsg.edit(`🎶 Added playlist **${res.playlistInfo.name}** (\`${res.tracks.length}\` tracks) to queue.`);
+                    return statusMsg.edit(`🎶 Added playlist **${res.playlistInfo.name}** (\`${res.tracks.length}\` tracks) via **${platformBadge}**.`);
                 }
 
                 const track = res.tracks[0];
@@ -489,9 +521,9 @@ module.exports = async (client) => {
 
                 if (!player.isPlaying && !player.isPaused) {
                     player.play();
-                    return statusMsg.edit(`🎶 Now playing: **${track.info.title}**`);
+                    return statusMsg.edit(`🎶 Now playing: **${track.info.title}** [${platformBadge}]`);
                 } else {
-                    return statusMsg.edit(`✅ Added to queue: **${track.info.title}**`);
+                    return statusMsg.edit(`✅ Added to queue: **${track.info.title}** [${platformBadge}]`);
                 }
             } catch (err) {
                 return statusMsg.edit(`❌ Playback error: \`${err.message}\``);
@@ -710,5 +742,5 @@ module.exports = async (client) => {
         }
     });
 
-    console.log('✔ Custom Rythm Music Engine (Multi-Attempt SoundCloud Pipeline) Active.');
+    console.log('✔ Multi-Node & Multi-Platform Music Engine Active.');
 };
