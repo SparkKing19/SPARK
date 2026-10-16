@@ -9,6 +9,14 @@ const BOT_OWNERS = [
 
 const conversationMemory = new Map();
 
+// High demand aane par ek ke baad ek try hone wale active models
+const ACTIVE_MODELS = [
+    'gemini-3.8-flash',
+    'gemini-3-flash',
+    'gemini-2.5-flash',
+    'gemini-2.5-pro'
+];
+
 async function getSparkCoreAIResponse(history, userPrompt, username, userId, guildName) {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
@@ -56,7 +64,7 @@ TONE & LANGUAGE:
 
     contents.push({
         role: 'user',
-        parts: [{ text: `${username}:${userPrompt}` }]
+        parts: [{ text: `${username}: ${userPrompt}` }]
     });
 
     const payload = {
@@ -70,28 +78,32 @@ TONE & LANGUAGE:
         }
     };
 
-    try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey}`;
-        const res = await fetch(url, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
-        });
+    // Auto-Fallback Loop: Agar ek model busy/overloaded ho, turant doosre se fetch karega
+    for (const model of ACTIVE_MODELS) {
+        try {
+            const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+            const res = await fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
 
-        const data = await res.json();
+            const data = await res.json();
 
-        if (res.ok && data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
-            return data.candidates[0].content.parts[0].text.trim();
+            if (res.ok && data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
+                return data.candidates[0].content.parts[0].text.trim();
+            }
+
+            // Agar High Demand ya Rate Limit ho toh break nahi karega, agle model par jayega
+            if (data.error) {
+                console.warn(`[${model}] Error: ${data.error.message}. Switching to fallback model...`);
+            }
+        } catch (err) {
+            console.warn(`[${model}] Network error: ${err.message}. Switching to fallback model...`);
         }
-
-        if (data.error) {
-            return `❌ AI Error: \`${data.error.message}\``;
-        }
-    } catch (err) {
-        return `❌ AI Error: \`${err.message}\``;
     }
 
-    return '❌ AI Error: Failed to generate response from model.';
+    return '⚠️ Server load abhi thoda high hai, please 2 second baad dobara message karein!';
 }
 
 module.exports = (client) => {
@@ -164,7 +176,7 @@ module.exports = (client) => {
         );
 
         if (reply) {
-            if (!reply.startsWith('❌')) {
+            if (!reply.startsWith('⚠️') && !reply.startsWith('❌')) {
                 history.push({ role: 'user', text: `${message.author.username}: ${message.content}` });
                 history.push({ role: 'model', text: reply });
 
