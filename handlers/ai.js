@@ -9,20 +9,26 @@ const BOT_OWNERS = [
 
 const conversationMemory = new Map();
 
-// High demand aane par ek ke baad ek try hone wale active models
-const ACTIVE_MODELS = [
-    'gemini-3.8-flash',
-    'gemini-3-flash',
-    'gemini-2.5-flash',
-    'gemini-2.5-pro'
-];
+// Helper: Sleep utility for micro-retry
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// Fast Failover Backup Generator (Zero rate limits, unlimited fallback)
+async function fetchBackupAIResponse(systemInstruction, history, userPrompt, username) {
+    try {
+        const fullPrompt = `System Rules: ${systemInstruction}\n\nRecent Chat:\n${history.map(h => `${h.role}:${h.text}`).join('\n')}\n\n${username}: ${userPrompt}`;
+        const url = `https://text.pollinations.ai/${encodeURIComponent(fullPrompt)}`;
+        
+        const res = await fetch(url);
+        if (!res.ok) return null;
+        const text = await res.text();
+        return text.trim();
+    } catch (_) {
+        return null;
+    }
+}
 
 async function getSparkCoreAIResponse(history, userPrompt, username, userId, guildName) {
     const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-        return '❌ Error: `GEMINI_API_KEY` Railway variables me set nahi hai.';
-    }
-
     const isOwner = BOT_OWNERS.includes(userId);
 
     const systemInstruction = `
@@ -53,57 +59,65 @@ TONE & LANGUAGE:
 - Keep the tone friendly, witty, sharp, and helpful — like a cool teammate, not a robotic script.
     `.trim();
 
-    const contents = [];
-
-    for (const msg of history) {
-        contents.push({
-            role: msg.role === 'model' ? 'model' : 'user',
-            parts: [{ text: String(msg.text) }]
-        });
-    }
-
-    contents.push({
-        role: 'user',
-        parts: [{ text: `${username}: ${userPrompt}` }]
-    });
-
-    const payload = {
-        contents: contents,
-        systemInstruction: {
-            parts: [{ text: systemInstruction }]
-        },
-        generationConfig: {
-            temperature: 0.85,
-            maxOutputTokens: 800
-        }
-    };
-
-    // Auto-Fallback Loop: Agar ek model busy/overloaded ho, turant doosre se fetch karega
-    for (const model of ACTIVE_MODELS) {
-        try {
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-            const res = await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
+    // 1. Primary Engine: Google Gemini API with Fallback Models
+    if (apiKey) {
+        const contents = [];
+        for (const msg of history) {
+            contents.push({
+                role: msg.role === 'model' ? 'model' : 'user',
+                parts: [{ text: String(msg.text) }]
             });
+        }
 
-            const data = await res.json();
+        contents.push({
+            role: 'user',
+            parts: [{ text: `${username}: ${userPrompt}` }]
+        });
 
-            if (res.ok && data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
-                return data.candidates[0].content.parts[0].text.trim();
+        const payload = {
+            contents: contents,
+            systemInstruction: {
+                parts: [{ text: systemInstruction }]
+            },
+            generationConfig: {
+                temperature: 0.85,
+                maxOutputTokens: 800
             }
+        };
 
-            // Agar High Demand ya Rate Limit ho toh break nahi karega, agle model par jayega
-            if (data.error) {
-                console.warn(`[${model}] Error: ${data.error.message}. Switching to fallback model...`);
+        const models = ['gemini-3.8-flash', 'gemini-2.5-flash', 'gemini-2.5-pro'];
+
+        for (const model of models) {
+            try {
+                const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+                const res = await fetch(url, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await res.json();
+
+                if (res.ok && data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
+                    return data.candidates[0].content.parts[0].text.trim();
+                }
+
+                // If busy/overloaded, wait 400ms and try next model
+                await sleep(400);
+            } catch (_) {
+                await sleep(400);
             }
-        } catch (err) {
-            console.warn(`[${model}] Network error: ${err.message}. Switching to fallback model...`);
         }
     }
 
-    return '⚠️ Server load abhi thoda high hai, please 2 second baad dobara message karein!';
+    // 2. Secondary Engine: Instant Failover (Jab Google ke saare endpoints busy hon)
+    const backupReply = await fetchBackupAIResponse(systemInstruction, history, userPrompt, username);
+    if (backupReply) {
+        return backupReply;
+    }
+
+    // 3. Fallback Reply in Character (Kahin se bhi generic error message nahi aayega)
+    return `Arre ${username}, thoda net lag ho gaya tha! Ek baar wapas se bolo, sun raha hoon! ⚡`;
 }
 
 module.exports = (client) => {
@@ -176,15 +190,13 @@ module.exports = (client) => {
         );
 
         if (reply) {
-            if (!reply.startsWith('⚠️') && !reply.startsWith('❌')) {
-                history.push({ role: 'user', text: `${message.author.username}: ${message.content}` });
-                history.push({ role: 'model', text: reply });
+            history.push({ role: 'user', text: `${message.author.username}: ${message.content}` });
+            history.push({ role: 'model', text: reply });
 
-                if (history.length > 8) {
-                    history = history.slice(history.length - 8);
-                }
-                conversationMemory.set(memKey, history);
+            if (history.length > 8) {
+                history = history.slice(history.length - 8);
             }
+            conversationMemory.set(memKey, history);
 
             const chunks = reply.match(/[\s\S]{1,1990}/g) || [reply];
             for (const chunk of chunks) {
@@ -193,5 +205,5 @@ module.exports = (client) => {
         }
     });
 
-    console.log('✔ SparkCore Direct REST AI Engine active.');
+    console.log('✔ SparkCore High-Availability AI Engine loaded.');
 };
