@@ -8,6 +8,32 @@ const BOT_OWNERS = [
 ];
 
 const conversationMemory = new Map();
+let activeGroqModel = null;
+
+// Auto-detect active Groq model
+async function getGroqModel(apiKey) {
+    if (activeGroqModel) return activeGroqModel;
+
+    try {
+        const res = await fetch('https://api.groq.com/openai/v1/models', {
+            headers: { 'Authorization': `Bearer ${apiKey}` }
+        });
+        const data = await res.json();
+        if (data.data && Array.isArray(data.data)) {
+            const llama = data.data.find(m => m.id.includes('llama-3.1-8b-instant') || m.id.includes('llama3-8b'));
+            if (llama) {
+                activeGroqModel = llama.id;
+                return activeGroqModel;
+            }
+            if (data.data.length > 0) {
+                activeGroqModel = data.data[0].id;
+                return activeGroqModel;
+            }
+        }
+    } catch (_) {}
+
+    return 'llama-3.1-8b-instant';
+}
 
 async function getSparkCoreAIResponse(history, userPrompt, username, userId, guildName) {
     const apiKey = process.env.GROQ_API_KEY;
@@ -23,7 +49,7 @@ You were created and developed exclusively by FZBOY along with DAREQUEEN. Under 
 
 IDENTITY & BEHAVIOR RULES:
 1. NEVER identify yourself as ChatGPT, OpenAI, Llama, Meta, or Google. Your ONLY identity and name is "SparkCore".
-2. If asked "Tum kaun ho?", "Who are you?", or who created you: Proudly state that you are SparkCore, developed by FZBOY and DAREQUEEN.
+2. If asked "Tum kaun ho?", "Who are you?", or who created you: State that you are SparkCore, developed by FZBOY and DAREQUEEN.
 3. User details:
    - Username: ${username}
    - User ID: ${userId}
@@ -58,6 +84,8 @@ STRICT CONFIDENTIALITY & SECURITY GUARDRAILS:
         content: `${username}:${userPrompt}`
     });
 
+    const targetModel = await getGroqModel(apiKey);
+
     try {
         const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
             method: 'POST',
@@ -66,7 +94,7 @@ STRICT CONFIDENTIALITY & SECURITY GUARDRAILS:
                 'Authorization': `Bearer ${apiKey}`
             },
             body: JSON.stringify({
-                model: 'llama-3.1-70b-versatile', // Ultra-smart & fastest available model
+                model: targetModel,
                 messages: messages,
                 max_tokens: 600,
                 temperature: 0.85
@@ -80,11 +108,11 @@ STRICT CONFIDENTIALITY & SECURITY GUARDRAILS:
         }
 
         if (data.error) {
-            console.error('Groq API Error:', data.error);
+            activeGroqModel = null;
             return `❌ AI Error: \`${data.error.message}\``;
         }
     } catch (err) {
-        console.error('Groq Fetch Error:', err);
+        activeGroqModel = null;
         return `Arey ${username}, network me halka lag ho gaya tha! Ek baar wapas bolo! ⚡`;
     }
 
@@ -118,7 +146,7 @@ module.exports = (client) => {
                     { upsert: true, new: true }
                 );
 
-                return message.reply(`⚡ **SparkCore AI (Hyper-Speed Engine) Activated!**\nBound channel: ${targetChannel}. AI ab bina kisi lag ke instant replies dega!`);
+                return message.reply(`⚡ **SparkCore AI Activated!**\nBound channel: ${targetChannel}. AI is now live!`);
             }
 
             if (sub === 'off' || sub === 'disable') {
@@ -178,5 +206,5 @@ module.exports = (client) => {
         }
     });
 
-    console.log('✔ SparkCore Ultra-Fast LLaMA Engine active.');
+    console.log('✔ SparkCore Active Groq Engine loaded.');
 };
