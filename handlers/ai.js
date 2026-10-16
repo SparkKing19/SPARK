@@ -8,44 +8,6 @@ const BOT_OWNERS = [
 ];
 
 const conversationMemory = new Map();
-let cachedWorkingModel = null; // Ek baar milne ke baad cache ho jayega
-
-// Auto-detect valid model from Google API
-async function getAvailableModel(apiKey) {
-    if (cachedWorkingModel) return cachedWorkingModel;
-
-    try {
-        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
-        const data = await res.json();
-
-        if (data.models && Array.isArray(data.models)) {
-            // Find a model that supports generateContent
-            const supported = data.models.filter(m => 
-                m.supportedGenerationMethods && 
-                m.supportedGenerationMethods.includes('generateContent') &&
-                m.name.includes('gemini')
-            );
-
-            // Prefer flash models first
-            const flash = supported.find(m => m.name.includes('flash') && !m.name.includes('vision'));
-            if (flash) {
-                cachedWorkingModel = flash.name.replace('models/', '');
-                console.log(`✔ Auto-detected active Gemini model: ${cachedWorkingModel}`);
-                return cachedWorkingModel;
-            }
-
-            if (supported.length > 0) {
-                cachedWorkingModel = supported[0].name.replace('models/', '');
-                console.log(`✔ Auto-detected active Gemini model: ${cachedWorkingModel}`);
-                return cachedWorkingModel;
-            }
-        }
-    } catch (e) {
-        console.warn('Failed to list models, fallback to default:', e.message);
-    }
-
-    return 'gemini-2.0-flash';
-}
 
 async function getSparkCoreAIResponse(history, userPrompt, username, userId, guildName) {
     const apiKey = process.env.GEMINI_API_KEY;
@@ -108,10 +70,8 @@ TONE & LANGUAGE:
         }
     };
 
-    const targetModel = await getAvailableModel(apiKey);
-
     try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${apiKey}`;
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent?key=${apiKey}`;
         const res = await fetch(url, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -125,11 +85,9 @@ TONE & LANGUAGE:
         }
 
         if (data.error) {
-            cachedWorkingModel = null; // Cache invalidate agar fail ho
             return `❌ AI Error: \`${data.error.message}\``;
         }
     } catch (err) {
-        cachedWorkingModel = null;
         return `❌ AI Error: \`${err.message}\``;
     }
 
