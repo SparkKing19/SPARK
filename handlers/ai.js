@@ -8,6 +8,44 @@ const BOT_OWNERS = [
 ];
 
 const conversationMemory = new Map();
+let cachedWorkingModel = null; // Ek baar milne ke baad cache ho jayega
+
+// Auto-detect valid model from Google API
+async function getAvailableModel(apiKey) {
+    if (cachedWorkingModel) return cachedWorkingModel;
+
+    try {
+        const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${apiKey}`);
+        const data = await res.json();
+
+        if (data.models && Array.isArray(data.models)) {
+            // Find a model that supports generateContent
+            const supported = data.models.filter(m => 
+                m.supportedGenerationMethods && 
+                m.supportedGenerationMethods.includes('generateContent') &&
+                m.name.includes('gemini')
+            );
+
+            // Prefer flash models first
+            const flash = supported.find(m => m.name.includes('flash') && !m.name.includes('vision'));
+            if (flash) {
+                cachedWorkingModel = flash.name.replace('models/', '');
+                console.log(`✔ Auto-detected active Gemini model: ${cachedWorkingModel}`);
+                return cachedWorkingModel;
+            }
+
+            if (supported.length > 0) {
+                cachedWorkingModel = supported[0].name.replace('models/', '');
+                console.log(`✔ Auto-detected active Gemini model: ${cachedWorkingModel}`);
+                return cachedWorkingModel;
+            }
+        }
+    } catch (e) {
+        console.warn('Failed to list models, fallback to default:', e.message);
+    }
+
+    return 'gemini-2.0-flash';
+}
 
 async function getSparkCoreAIResponse(history, userPrompt, username, userId, guildName) {
     const apiKey = process.env.GEMINI_API_KEY;
@@ -45,10 +83,8 @@ TONE & LANGUAGE:
 - Keep the tone friendly, witty, sharp, and helpful — like a cool teammate, not a robotic script.
     `.trim();
 
-    // Prepare contents payload
     const contents = [];
 
-    // History format
     for (const msg of history) {
         contents.push({
             role: msg.role === 'model' ? 'model' : 'user',
@@ -56,7 +92,6 @@ TONE & LANGUAGE:
         });
     }
 
-    // Current Prompt
     contents.push({
         role: 'user',
         parts: [{ text: `${username}:${userPrompt}` }]
@@ -73,34 +108,32 @@ TONE & LANGUAGE:
         }
     };
 
-    // Google API ke working models sequentially try karega
-    const models = ['gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash'];
-    let lastError = null;
+    const targetModel = await getAvailableModel(apiKey);
 
-    for (const model of models) {
-        try {
-            const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-            const res = await fetch(url, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
+    try {
+        const url = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${apiKey}`;
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
 
-            const data = await res.json();
+        const data = await res.json();
 
-            if (res.ok && data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
-                return data.candidates[0].content.parts[0].text.trim();
-            }
-
-            if (data.error) {
-                lastError = data.error.message;
-            }
-        } catch (err) {
-            lastError = err.message;
+        if (res.ok && data.candidates && data.candidates[0]?.content?.parts?.[0]?.text) {
+            return data.candidates[0].content.parts[0].text.trim();
         }
+
+        if (data.error) {
+            cachedWorkingModel = null; // Cache invalidate agar fail ho
+            return `❌ AI Error: \`${data.error.message}\``;
+        }
+    } catch (err) {
+        cachedWorkingModel = null;
+        return `❌ AI Error: \`${err.message}\``;
     }
 
-    return `❌ AI Error: \`${lastError || 'Failed to generate response'}\``;
+    return '❌ AI Error: Failed to generate response from model.';
 }
 
 module.exports = (client) => {
@@ -130,7 +163,7 @@ module.exports = (client) => {
                     { upsert: true, new: true }
                 );
 
-                return message.reply(`🤖 **SparkCore AI Activated!**\nBound channel: ${targetChannel}. AI is now active here!`);
+                return message.reply(`🤖 **SparkCore AI Activated!**\nBound channel: ${targetChannel}. AI ab is channel me active hai!`);
             }
 
             if (sub === 'off' || sub === 'disable') {
@@ -148,7 +181,7 @@ module.exports = (client) => {
                 return message.reply('🧹 SparkCore memory for this channel has been cleared.');
             }
 
-            return message.reply('ℹ️ **SparkCore AI Controls:**\n• `%ai set` - Bind current channel\n• `%ai clear` - Clear conversation memory\n• `%ai off` - Disable AI channel');
+            return message.reply('ℹ️ **SparkCore AI Controls:**\n• `%ai set` - Current chat bind karo\n• `%ai clear` - Memory reset karo\n• `%ai off` - Disable karo');
         }
 
         // Live Chat Execution
