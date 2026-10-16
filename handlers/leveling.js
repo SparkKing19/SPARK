@@ -1,6 +1,5 @@
 const { EmbedBuilder, PermissionsBitField } = require('discord.js');
-const UserLevel = require('../models/level');
-const LevelConfig = require('../models/levelConfig');
+const { UserLevel, LevelConfig } = require('../models/level');
 const { isFeatureEnabled } = require('../utils/featureCheck');
 
 const BOT_OWNERS = [
@@ -9,7 +8,6 @@ const BOT_OWNERS = [
     '1474216218792558735'  // DAREQUEEN
 ];
 
-// Anti-spam cooldown cache (2 seconds per user)
 const cooldowns = new Set();
 
 module.exports = (client) => {
@@ -22,9 +20,7 @@ module.exports = (client) => {
         const isServerOwner = message.author.id === message.guild.ownerId;
         const isAdmin = message.member?.permissions.has(PermissionsBitField.Flags.Administrator);
 
-        // ==========================================
-        // 1. COMMAND: %lvl reset (Reset Whole Server)
-        // ==========================================
+        // 1. %lvl reset (Pure Server Ka Level Data Wipe)
         if (content.toLowerCase() === '%lvl reset') {
             if (!isBotOwner && !isServerOwner && !isAdmin) {
                 return message.reply('❌ You do not have permission to reset server levels.');
@@ -35,16 +31,13 @@ module.exports = (client) => {
                 return message.reply(`✅ **Server Levels Reset!** Cleared all level and message data for **${deleted.deletedCount}** members.`);
             } catch (err) {
                 console.error('Level Reset Error:', err);
-                return message.reply(`❌ Failed to reset levels: \`${err.message}\``;
+                return message.reply(`❌ Failed to reset levels: \`${err.message}\``);
             }
         }
 
-        // ==========================================
-        // 2. COMMAND: %lvls lb / %lvl lb (Leaderboard Top 10)
-        // ==========================================
+        // 2. %lvls lb / %lvl lb (Top 10 Leaderboard)
         if (content.toLowerCase() === '%lvls lb' || content.toLowerCase() === '%lvl lb') {
             try {
-                // Top 10 members sorted by level descending, then totalMessages descending
                 const topUsers = await UserLevel.find({ guildId: message.guild.id })
                     .sort({ level: -1, totalMessages: -1 })
                     .limit(10);
@@ -75,13 +68,11 @@ module.exports = (client) => {
                 return message.reply({ embeds: [lbEmbed] });
             } catch (err) {
                 console.error('Leaderboard Fetch Error:', err);
-                return message.reply(`❌ Could not load leaderboard: \`${err.message}\``;
+                return message.reply(`❌ Could not load leaderboard: \`${err.message}\``);
             }
         }
 
-        // ==========================================
-        // 3. COMMAND: &rank (Check individual progress)
-        // ==========================================
+        // 3. &rank (Individual Progress)
         if (content.toLowerCase().startsWith('&rank')) {
             const targetUser = message.mentions.users.first() || message.author;
             const userData = await UserLevel.findOne({ guildId: message.guild.id, userId: targetUser.id }) || { level: 0, messages: 0, totalMessages: 0 };
@@ -102,21 +93,16 @@ module.exports = (client) => {
             return message.reply({ embeds: [rankEmbed] });
         }
 
-        // ==========================================
-        // 4. GLOBAL MESSAGE XP ENGINE & DUAL NOTIFICATION
-        // ==========================================
-        // Check if leveling feature is enabled via %manage
+        // 4. Global Message Tracking & Dual Alert Engine
         const featureEnabled = await isFeatureEnabled(message.guild.id, 'leveling', message.author.id);
         if (!featureEnabled) return;
 
-        // Anti-spam cooldown check
         const cooldownKey = `${message.guild.id}_${message.author.id}`;
         if (cooldowns.has(cooldownKey)) return;
 
         cooldowns.add(cooldownKey);
         setTimeout(() => cooldowns.delete(cooldownKey), 2000);
 
-        // Fetch server leveling config
         const config = await LevelConfig.findOne({ guildId: message.guild.id }) || { 
             baseStep: 25, 
             channelId: null, 
@@ -137,16 +123,13 @@ module.exports = (client) => {
             userRecord.totalMessages += 1;
         }
 
-        // Formula: (Current Level + 1) * BaseStep
         const requiredMsgs = (userRecord.level + 1) * config.baseStep;
 
-        // Check for Level Up
         if (userRecord.messages >= requiredMsgs) {
             userRecord.level += 1;
-            userRecord.messages = 0; // Reset progress for the next tier
+            userRecord.messages = 0;
             await userRecord.save();
 
-            // Format custom alert message (Sirf aapka custom description)
             const template = config.messageTemplate || 'Congratulations {user}! You leveled up to **Level {level}**!';
             const alertText = template
                 .replace(/{user}/g, `<@${message.author.id}>`)
@@ -162,10 +145,10 @@ module.exports = (client) => {
                 .setDescription(alertText)
                 .setTimestamp();
 
-            // 1. Alert in the current chat where the level-up message was typed
+            // 1. Current chat me alert
             await message.channel.send({ embeds: [levelEmbed] }).catch(() => {});
 
-            // 2. Alert in the designated channel (agar configured ho aur current chat se alag ho)
+            // 2. Dedicated channel me alert agar set hai aur alag hai
             if (config.channelId && config.channelId !== message.channel.id) {
                 const targetChannel = message.guild.channels.cache.get(config.channelId);
                 if (targetChannel && targetChannel.isTextBased()) {
@@ -177,5 +160,5 @@ module.exports = (client) => {
         }
     });
 
-    console.log('✔ Enhanced Dual-Alert Leveling System with Leaderboard loaded.');
+    console.log('✔ Enhanced Dual-Alert Leveling System loaded (Single Model).');
 };
