@@ -236,7 +236,7 @@ async function playNextAutoplay(poru, player, client) {
 }
 
 module.exports = async (client) => {
-    // Multi-Node Failover Cluster
+    // Multi-Node Failover Cluster (Crash-Proof)
     const nodes = [
         {
             name: 'SparkCore-Primary-Private',
@@ -246,14 +246,7 @@ module.exports = async (client) => {
             secure: true
         },
         {
-            name: 'SparkCore-Backup-Node-1',
-            host: 'lavalink-v4.ajieblogs.eu.org',
-            port: 443,
-            password: 'https://dsc.gg/ajielavalink',
-            secure: true
-        },
-        {
-            name: 'SparkCore-Backup-Node-2',
+            name: 'SparkCore-Backup-Node',
             host: 'lava-v4.ajieblogs.eu.org',
             port: 443,
             password: 'https://dsc.gg/ajielavalink',
@@ -263,7 +256,9 @@ module.exports = async (client) => {
 
     const poru = new Poru(client, nodes, {
         library: 'discord.js',
-        defaultPlatform: 'scsearch'
+        defaultPlatform: 'scsearch',
+        reconnectTries: Infinity, // Crash hone se rokega
+        reconnectTimeout: 10000
     });
 
     client.poru = poru;
@@ -296,10 +291,15 @@ module.exports = async (client) => {
         } catch (_) {}
     });
 
-    poru.on('nodeDisconnect', (node, reason) => {
-        console.warn(`⚠️ Lavalink Node Disconnected: ${node.name} | Auto-switching to backup node...`);
+    // Error & Disconnect catchers (Bot crash prevention)
+    poru.on('nodeError', (node, error) => {
+        console.warn(`⚠️ Lavalink Node Error on [${node.name}]: ${error.message}`);
     });
 
+    poru.on('nodeDisconnect', (node, reason) => {
+        console.warn(`⚠️ Lavalink Node Disconnected: ${node.name} | Handling failover...`);
+    });
+    
     // Track Start
     poru.on('trackStart', async (player, track) => {
         if (player.currentTrack) {
