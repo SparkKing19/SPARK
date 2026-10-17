@@ -1,6 +1,10 @@
-const Music247 = require('../../models/music247');
-const GuildConfig = require('../../models/guildConfig');
-const CustomPlaylist = require('../../models/customPlaylist');
+let Music247, GuildConfig, CustomPlaylist;
+try { Music247 = require('../../models/music247'); } catch (_) { 
+    try { Music247 = require('../../models/music'); } catch (_) { Music247 = null; }
+}
+try { GuildConfig = require('../../models/guildConfig'); } catch (_) { GuildConfig = null; }
+try { CustomPlaylist = require('../../models/customPlaylist'); } catch (_) { CustomPlaylist = null; }
+
 const { getPanelEmbed, getPanelComponents, updateVoiceStatus } = require('./panel');
 
 class SongDispatcher {
@@ -12,7 +16,7 @@ class SongDispatcher {
         this.queue = [];
         this.current = null;
         this.previous = null;
-        this.loop = 'NONE'; // NONE, TRACK, QUEUE
+        this.loop = 'NONE';
         this.autoplay = true;
 
         this.player.on('start', () => this.onTrackStart());
@@ -41,22 +45,23 @@ class SongDispatcher {
             `<a:play_rec:1559415361290641429> ${this.current.info.title.substring(0, 35)}`
         );
 
-        // Record Custom Playlist
-        try {
-            const activePlaylists = await CustomPlaylist.find({ recording: true });
-            for (const pl of activePlaylists) {
-                if (pl.tracks.length < 10) {
-                    pl.tracks.push({
-                        title: this.current.info.title,
-                        uri: this.current.info.uri,
-                        author: this.current.info.author,
-                        length: this.current.info.length
-                    });
-                    if (pl.tracks.length >= 10) pl.recording = false;
-                    await pl.save();
+        if (CustomPlaylist) {
+            try {
+                const activePlaylists = await CustomPlaylist.find({ recording: true });
+                for (const pl of activePlaylists) {
+                    if (pl.tracks.length < 10) {
+                        pl.tracks.push({
+                            title: this.current.info.title,
+                            uri: this.current.info.uri,
+                            author: this.current.info.author,
+                            length: this.current.info.length
+                        });
+                        if (pl.tracks.length >= 10) pl.recording = false;
+                        await pl.save();
+                    }
                 }
-            }
-        } catch (_) {}
+            } catch (_) {}
+        }
 
         await this.updatePanel();
     }
@@ -97,7 +102,7 @@ class SongDispatcher {
         await updateVoiceStatus(this.client, this.player.connection.channelId, '');
         await this.updatePanel();
 
-        const rec247 = await Music247.findOne({ guildId: this.guildId, enabled: true });
+        const rec247 = Music247 ? await Music247.findOne({ guildId: this.guildId, enabled: true }).catch(() => null) : null;
         if (!rec247) {
             this.destroy();
         }
@@ -121,6 +126,7 @@ class SongDispatcher {
 
     async updatePanel() {
         try {
+            if (!GuildConfig) return;
             const conf = await GuildConfig.findOne({ guildId: this.guildId });
             if (!conf || !conf.panelChannelId || !conf.panelMessageId) return;
 
@@ -180,3 +186,4 @@ class SongDispatcher {
 }
 
 module.exports = SongDispatcher;
+                
