@@ -10,15 +10,16 @@ try { CustomPlaylist = require('../../models/customPlaylist'); } catch (_) { Cus
 const { getPanelEmbed, getPanelComponents, updateVoiceStatus } = require('./panel');
 
 class SongDispatcher {
-    constructor(client, player, textChannel, guildId) {
+    constructor(client, player, textChannel, guildId, voiceChannelId) {
         this.client = client;
         this.player = player;
         this.textChannel = textChannel;
         this.guildId = guildId;
+        this.voiceChannelId = voiceChannelId;
         this.queue = [];
         this.current = null;
         this.previous = null;
-        this.loop = 'NONE'; // NONE, TRACK, QUEUE
+        this.loop = 'NONE';
         this.autoplay = true;
 
         this.player.on('start', () => this.onTrackStart());
@@ -41,15 +42,13 @@ class SongDispatcher {
         if (!this.current) return this.handleQueueEnd();
 
         try {
-            // Lavalink v4 encoded track string resolver
             const trackString = this.current.encoded || this.current.track || (typeof this.current === 'string' ? this.current : null);
 
             if (!trackString) {
-                console.error('Invalid track object in queue:', this.current);
+                console.error('Invalid track string:', this.current);
                 return this.onTrackEnd();
             }
 
-            // Shoukaku v4 standard playback execution
             await this.player.playTrack({ track: { encoded: trackString } });
         } catch (err) {
             console.error('Error executing playTrack:', err);
@@ -61,11 +60,13 @@ class SongDispatcher {
         if (!this.current) return;
         this.previous = this.current;
 
-        await updateVoiceStatus(
-            this.client, 
-            this.player.connection.channelId, 
-            `<a:play_rec:1559415361290641429> ${this.current.info?.title?.substring(0, 35) || 'Audio Stream'}`
-        );
+        if (this.voiceChannelId) {
+            await updateVoiceStatus(
+                this.client, 
+                this.voiceChannelId, 
+                `<a:play_rec:1559415361290641429> ${this.current.info?.title?.substring(0, 35) || 'Audio Stream'}`
+            );
+        }
 
         if (CustomPlaylist) {
             try {
@@ -124,7 +125,9 @@ class SongDispatcher {
         }
 
         this.current = null;
-        await updateVoiceStatus(this.client, this.player.connection?.channelId, '');
+        if (this.voiceChannelId) {
+            await updateVoiceStatus(this.client, this.voiceChannelId, '');
+        }
         await this.updatePanel();
 
         const rec247 = Music247 ? await Music247.findOne({ guildId: this.guildId, enabled: true }).catch(() => null) : null;
@@ -218,3 +221,4 @@ class SongDispatcher {
 }
 
 module.exports = SongDispatcher;
+                   
