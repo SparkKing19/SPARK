@@ -212,7 +212,7 @@ function setupMusic(client) {
                 return true;
             }
 
-            // %play (Pure SoundCloud Engine)
+                        // %play (Encoded Multi-Search Resolver)
             if (cmd === 'play' || cmd === 'p') {
                 const vc = message.member.voice.channel;
                 if (!vc) {
@@ -237,7 +237,7 @@ function setupMusic(client) {
                     return true;
                 }
 
-                const statusMsg = await message.reply('🔍 Searching track on SoundCloud...');
+                const statusMsg = await message.reply('🔍 Searching track...');
 
                 let dispatcher = client.musicQueue.get(message.guild.id);
                 if (!dispatcher) {
@@ -258,21 +258,30 @@ function setupMusic(client) {
                 try {
                     let result = null;
 
+                    // 1. Direct URL check
                     if (/^https?:\/\//i.test(query)) {
                         result = await node.rest.resolve(query);
                     } else {
+                        // 2. Encoded SoundCloud search
                         result = await node.rest.resolve(`scsearch:${query}`);
-                        const tracks = Array.isArray(result?.data) ? result.data : result?.data?.tracks;
-                        if (!tracks || !tracks.length) {
-                            result = await node.rest.resolve(`scsearch:${query} audio`);
+                        
+                        // Check if search returned empty
+                        const hasTracks = result && (
+                            (Array.isArray(result.data) && result.data.length > 0) ||
+                            (result.data?.tracks && result.data.tracks.length > 0)
+                        );
+
+                        if (!hasTracks) {
+                            // Fallback direct search without prefix if node handles default search
+                            result = await node.rest.resolve(`scsearch:${encodeURIComponent(query)}`);
                         }
                     }
 
-                    if (!result || !result.data) {
-                        return statusMsg.edit(`❌ Audio not found on SoundCloud for: **${query}**`);
+                    if (!result || result.loadType === 'empty' || !result.data) {
+                        return statusMsg.edit(`❌ Audio not found for: **${query}**`);
                     }
 
-                    // Playlist Handling
+                    // 1. Playlist
                     if (result.loadType === 'playlist') {
                         const playlistTracks = result.data.tracks || [];
                         if (!playlistTracks.length) {
@@ -286,24 +295,25 @@ function setupMusic(client) {
                         }
 
                         if (!dispatcher.current) dispatcher.play();
-                        const playlistName = result.data.info?.name || 'SoundCloud Playlist';
+                        const playlistName = result.data.info?.name || 'Playlist';
                         return statusMsg.edit(`🎶 Added playlist **${playlistName}** (\`${playlistTracks.length}\` tracks) to queue.`);
                     }
 
-                    // Single Track
-                    let track = null;
+                    // 2. Track or Search List
+                    let tracksList = [];
                     if (Array.isArray(result.data)) {
-                        track = result.data[0];
+                        tracksList = result.data;
                     } else if (result.data.tracks && Array.isArray(result.data.tracks)) {
-                        track = result.data.tracks[0];
-                    } else {
-                        track = result.data;
+                        tracksList = result.data.tracks;
+                    } else if (result.loadType === 'track') {
+                        tracksList = [result.data];
                     }
 
-                    if (!track || (!track.encoded && !track.track)) {
+                    if (!tracksList.length) {
                         return statusMsg.edit(`❌ Audio not found for: **${query}**`);
                     }
 
+                    const track = tracksList[0];
                     if (!track.info) track.info = {};
                     track.info.requester = message.author;
                     dispatcher.queue.push(track);
@@ -319,7 +329,7 @@ function setupMusic(client) {
                     return statusMsg.edit(`❌ Playback error: \`${err.message}\``);
                 }
             }
-
+            
             // %stop
             if (cmd === 'stop') {
                 const dispatcher = client.musicQueue.get(message.guild.id);
