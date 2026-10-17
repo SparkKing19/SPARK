@@ -1,5 +1,7 @@
 let Music247, GuildConfig, CustomPlaylist;
-try { Music247 = require('../../models/music247'); } catch (_) { 
+try { 
+    Music247 = require('../../models/music247'); 
+} catch (_) { 
     try { Music247 = require('../../models/music'); } catch (_) { Music247 = null; }
 }
 try { GuildConfig = require('../../models/guildConfig'); } catch (_) { GuildConfig = null; }
@@ -16,7 +18,7 @@ class SongDispatcher {
         this.queue = [];
         this.current = null;
         this.previous = null;
-        this.loop = 'NONE';
+        this.loop = 'NONE'; // NONE, TRACK, QUEUE
         this.autoplay = true;
 
         this.player.on('start', () => this.onTrackStart());
@@ -27,12 +29,32 @@ class SongDispatcher {
 
     async play() {
         if (!this.player) return;
-        if (!this.queue.length) {
+        
+        if (!this.queue.length && !this.current) {
             return this.handleQueueEnd();
         }
 
-        this.current = this.queue.shift();
-        await this.player.playTrack({ track: { encoded: this.current.encoded } });
+        if (!this.current) {
+            this.current = this.queue.shift();
+        }
+
+        if (!this.current) return this.handleQueueEnd();
+
+        try {
+            // Lavalink v4 encoded track string resolver
+            const trackString = this.current.encoded || this.current.track || (typeof this.current === 'string' ? this.current : null);
+
+            if (!trackString) {
+                console.error('Invalid track object in queue:', this.current);
+                return this.onTrackEnd();
+            }
+
+            // Shoukaku v4 standard playback execution
+            await this.player.playTrack({ track: { encoded: trackString } });
+        } catch (err) {
+            console.error('Error executing playTrack:', err);
+            await this.onTrackException(err);
+        }
     }
 
     async onTrackStart() {
@@ -42,7 +64,7 @@ class SongDispatcher {
         await updateVoiceStatus(
             this.client, 
             this.player.connection.channelId, 
-            `<a:play_rec:1559415361290641429> ${this.current.info.title.substring(0, 35)}`
+            `<a:play_rec:1559415361290641429> ${this.current.info?.title?.substring(0, 35) || 'Audio Stream'}`
         );
 
         if (CustomPlaylist) {
@@ -51,10 +73,10 @@ class SongDispatcher {
                 for (const pl of activePlaylists) {
                     if (pl.tracks.length < 10) {
                         pl.tracks.push({
-                            title: this.current.info.title,
-                            uri: this.current.info.uri,
-                            author: this.current.info.author,
-                            length: this.current.info.length
+                            title: this.current.info?.title || 'Unknown Title',
+                            uri: this.current.info?.uri || '',
+                            author: this.current.info?.author || 'Unknown Artist',
+                            length: this.current.info?.length || 0
                         });
                         if (pl.tracks.length >= 10) pl.recording = false;
                         await pl.save();
@@ -67,11 +89,13 @@ class SongDispatcher {
     }
 
     async onTrackEnd() {
-        if (this.loop === 'TRACK' && this.current) {
-            this.queue.unshift(this.current);
-        } else if (this.loop === 'QUEUE' && this.current) {
-            this.queue.push(this.current);
+        if (this.loop === 'TRACK' && this.previous) {
+            this.queue.unshift(this.previous);
+        } else if (this.loop === 'QUEUE' && this.previous) {
+            this.queue.push(this.previous);
         }
+
+        this.current = null;
 
         if (this.queue.length) {
             return this.play();
@@ -82,6 +106,7 @@ class SongDispatcher {
 
     async onTrackException(err) {
         console.error(`⚠️ Playback Exception in guild ${this.guildId}:`, err);
+        this.current = null;
         if (this.queue.length) {
             await this.play();
         } else {
@@ -99,7 +124,7 @@ class SongDispatcher {
         }
 
         this.current = null;
-        await updateVoiceStatus(this.client, this.player.connection.channelId, '');
+        await updateVoiceStatus(this.client, this.player.connection?.channelId, '');
         await this.updatePanel();
 
         const rec247 = Music247 ? await Music247.findOne({ guildId: this.guildId, enabled: true }).catch(() => null) : null;
@@ -110,15 +135,20 @@ class SongDispatcher {
 
     async resolveAutoplay(lastTrack) {
         try {
-            const node = this.client.shoukaku.getIdealNode();
+            const node = this.client.shoukaku?.getIdealNode();
             if (!node) return null;
 
-            const query = `scsearch:${lastTrack.info.author} audio`;
+            const query = `scsearch:${lastTrack.info?.author || ''} audio`;
             const result = await node.rest.resolve(query);
 
-            if (result?.data?.length) {
-                const filtered = result.data.filter(t => t.info.title !== lastTrack.info.title);
-                return filtered.length ? filtered[Math.floor(Math.random() * Math.min(filtered.length, 5))] : result.data[0];
+            const tracks = Array.isArray(result?.data) ? result.data : result?.data?.tracks;
+            if (tracks?.length) {
+                const filtered = tracks.filter(t => t.info?.title !== lastTrack.info?.title);
+                const chosen = filtered.length ? filtered[Math.floor(Math.random() * Math.min(filtered.length, 5))] : tracks[0];
+                if (chosen) {
+                    chosen.info.requester = this.client.user;
+                    return chosen;
+                }
             }
         } catch (_) {}
         return null;
@@ -180,10 +210,11 @@ class SongDispatcher {
             this.client.musicQueue.delete(this.guildId);
         }
         if (this.player) {
-            this.player.connection.disconnect();
+            try {
+                this.player.connection.disconnect();
+            } catch (_) {}
         }
     }
 }
 
 module.exports = SongDispatcher;
-                
