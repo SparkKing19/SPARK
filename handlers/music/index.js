@@ -25,7 +25,7 @@ const BOT_OWNERS = [
 function setupMusic(client) {
     client.musicQueue = new Map();
 
-    // Interaction Listener for Panel Buttons & Filters
+    // Interaction Listener (Buttons & Filters)
     client.on('interactionCreate', async (interaction) => {
         if (interaction.guild && !(await isFeatureEnabled(interaction.guild.id, 'music'))) return;
         if (!interaction.isButton() && !interaction.isStringSelectMenu()) return;
@@ -36,8 +36,8 @@ function setupMusic(client) {
             return interaction.reply({ content: '❌ No active audio stream.', flags: 64 });
         }
 
-        if (!interaction.member.voice?.channel || interaction.member.voice.channel.id !== dispatcher.player.connection.channelId) {
-            return interaction.reply({ content: `❌ You must be in <#${dispatcher.player.connection.channelId}> to control playback.`, flags: 64 });
+        if (!interaction.member.voice?.channel || interaction.member.voice.channel.id !== dispatcher.voiceChannelId) {
+            return interaction.reply({ content: `❌ You must be in <#${dispatcher.voiceChannelId}> to control playback.`, flags: 64 });
         }
 
         if (interaction.isStringSelectMenu() && interaction.customId === 'menu_filters') {
@@ -120,7 +120,7 @@ function setupMusic(client) {
         const dispatcher = client.musicQueue.get(guildId);
         if (!dispatcher) return;
 
-        const channel = oldState.guild.channels.cache.get(dispatcher.player.connection.channelId);
+        const channel = oldState.guild.channels.cache.get(dispatcher.voiceChannelId);
         if (!channel) return;
 
         const humans = channel.members.filter(m => !m.user.bot);
@@ -186,22 +186,33 @@ function setupMusic(client) {
                     return true;
                 }
 
+                const node = client.shoukaku.getIdealNode();
+                if (!node) {
+                    message.reply('❌ Lavalink node is connecting, please wait 5 seconds.');
+                    return true;
+                }
+
                 let dispatcher = client.musicQueue.get(message.guild.id);
                 if (!dispatcher) {
-                    const player = await client.shoukaku.joinVoiceChannel({
-                        guildId: message.guild.id,
-                        channelId: vc.id,
-                        shardId: 0,
-                        deaf: true
-                    });
-                    dispatcher = new SongDispatcher(client, player, message.channel, message.guild.id);
-                    client.musicQueue.set(message.guild.id, dispatcher);
+                    try {
+                        const player = await client.shoukaku.joinVoiceChannel({
+                            guildId: message.guild.id,
+                            channelId: vc.id,
+                            shardId: 0,
+                            deaf: true
+                        });
+                        dispatcher = new SongDispatcher(client, player, message.channel, message.guild.id, vc.id);
+                        client.musicQueue.set(message.guild.id, dispatcher);
+                    } catch (err) {
+                        message.reply(`❌ Could not connect: \`${err.message}\``);
+                        return true;
+                    }
                 }
                 message.reply(`🔊 Connected to <#${vc.id}>.`);
                 return true;
             }
 
-                        // %play
+            // %play (Pure SoundCloud Engine)
             if (cmd === 'play' || cmd === 'p') {
                 const vc = message.member.voice.channel;
                 if (!vc) {
@@ -222,11 +233,11 @@ function setupMusic(client) {
 
                 const node = client.shoukaku.getIdealNode();
                 if (!node) {
-                    message.reply('❌ Lavalink node is reconnecting. Please wait 5 seconds and retry.');
+                    message.reply('❌ Lavalink node is reconnecting. Please retry in 5 seconds.');
                     return true;
                 }
 
-                const statusMsg = await message.reply('🔍 Searching track...');
+                const statusMsg = await message.reply('🔍 Searching track on SoundCloud...');
 
                 let dispatcher = client.musicQueue.get(message.guild.id);
                 if (!dispatcher) {
@@ -237,7 +248,7 @@ function setupMusic(client) {
                             shardId: 0,
                             deaf: true
                         });
-                        dispatcher = new SongDispatcher(client, player, message.channel, message.guild.id);
+                        dispatcher = new SongDispatcher(client, player, message.channel, message.guild.id, vc.id);
                         client.musicQueue.set(message.guild.id, dispatcher);
                     } catch (err) {
                         return statusMsg.edit(`❌ Unable to join voice channel: \`${err.message}\``);
@@ -246,21 +257,22 @@ function setupMusic(client) {
 
                 try {
                     let result = null;
+
                     if (/^https?:\/\//i.test(query)) {
                         result = await node.rest.resolve(query);
                     } else {
                         result = await node.rest.resolve(`scsearch:${query}`);
                         const tracks = Array.isArray(result?.data) ? result.data : result?.data?.tracks;
                         if (!tracks || !tracks.length) {
-                            result = await node.rest.resolve(`ytmsearch:${query}`);
+                            result = await node.rest.resolve(`scsearch:${query} audio`);
                         }
                     }
 
                     if (!result || !result.data) {
-                        return statusMsg.edit(`❌ Audio not found for: **${query}**`);
+                        return statusMsg.edit(`❌ Audio not found on SoundCloud for: **${query}**`);
                     }
 
-                    // 1. Playlist Handling
+                    // Playlist Handling
                     if (result.loadType === 'playlist') {
                         const playlistTracks = result.data.tracks || [];
                         if (!playlistTracks.length) {
@@ -274,11 +286,11 @@ function setupMusic(client) {
                         }
 
                         if (!dispatcher.current) dispatcher.play();
-                        const playlistName = result.data.info?.name || 'Playlist';
+                        const playlistName = result.data.info?.name || 'SoundCloud Playlist';
                         return statusMsg.edit(`🎶 Added playlist **${playlistName}** (\`${playlistTracks.length}\` tracks) to queue.`);
                     }
 
-                    // 2. Track / Search Result Handling
+                    // Single Track
                     let track = null;
                     if (Array.isArray(result.data)) {
                         track = result.data[0];
@@ -307,7 +319,7 @@ function setupMusic(client) {
                     return statusMsg.edit(`❌ Playback error: \`${err.message}\``);
                 }
             }
-            
+
             // %stop
             if (cmd === 'stop') {
                 const dispatcher = client.musicQueue.get(message.guild.id);
@@ -416,7 +428,7 @@ function setupMusic(client) {
                             shardId: 0,
                             deaf: true
                         });
-                        dispatcher = new SongDispatcher(client, player, message.channel, message.guild.id);
+                        dispatcher = new SongDispatcher(client, player, message.channel, message.guild.id, vc.id);
                         client.musicQueue.set(message.guild.id, dispatcher);
                     }
 
@@ -441,4 +453,3 @@ function setupMusic(client) {
 }
 
 module.exports = { setupMusic };
-                
