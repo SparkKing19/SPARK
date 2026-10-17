@@ -19,7 +19,7 @@ const CustomPlaylist = require('../models/customPlaylist');
 const autoplayMap = new Map();
 const previousTracks = new Map();
 
-// Voice Channel Subtitle Status (Set & Clear)
+// Helper: Voice Subtitle
 async function updateVoiceStatus(client, channelId, statusText = '') {
     if (!channelId) return;
     try {
@@ -34,7 +34,7 @@ async function updateVoiceStatus(client, channelId, statusText = '') {
     } catch (_) {}
 }
 
-// High-Res Artwork Resolver
+// Helper: High-Res Artwork
 function getTrackThumbnail(track) {
     if (track.info?.image?.startsWith('http')) return track.info.image;
     if (track.info?.artworkUrl?.startsWith('http')) return track.info.artworkUrl;
@@ -46,65 +46,22 @@ function getPanelComponents(player = null) {
     const isLoop = player ? player.loop === 'TRACK' : false;
     const isAutoplay = player ? (autoplayMap.get(player.guildId) ?? true) : true;
 
-    // Row 1: ⏸️ ⏮️ 🛑 ⏯️ ▶️
     const row1 = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-            .setCustomId('btn_pause')
-            .setEmoji('⏸️')
-            .setStyle(ButtonStyle.Secondary)
-            .setDisabled(!player || !player.currentTrack),
-        new ButtonBuilder()
-            .setCustomId('btn_previous')
-            .setEmoji('⏮️')
-            .setStyle(ButtonStyle.Secondary)
-            .setDisabled(!player || !player.currentTrack),
-        new ButtonBuilder()
-            .setCustomId('btn_stop')
-            .setEmoji('🛑')
-            .setStyle(ButtonStyle.Danger)
-            .setDisabled(!player || !player.currentTrack),
-        new ButtonBuilder()
-            .setCustomId('btn_next')
-            .setEmoji('⏯️')
-            .setStyle(ButtonStyle.Secondary)
-            .setDisabled(!player || !player.currentTrack),
-        new ButtonBuilder()
-            .setCustomId('btn_resume')
-            .setEmoji('▶️')
-            .setStyle(ButtonStyle.Success)
-            .setDisabled(!player || !player.currentTrack)
+        new ButtonBuilder().setCustomId('btn_pause').setEmoji('⏸️').setStyle(ButtonStyle.Secondary).setDisabled(!player || !player.currentTrack),
+        new ButtonBuilder().setCustomId('btn_previous').setEmoji('⏮️').setStyle(ButtonStyle.Secondary).setDisabled(!player || !player.currentTrack),
+        new ButtonBuilder().setCustomId('btn_stop').setEmoji('🛑').setStyle(ButtonStyle.Danger).setDisabled(!player || !player.currentTrack),
+        new ButtonBuilder().setCustomId('btn_next').setEmoji('⏯️').setStyle(ButtonStyle.Secondary).setDisabled(!player || !player.currentTrack),
+        new ButtonBuilder().setCustomId('btn_resume').setEmoji('▶️').setStyle(ButtonStyle.Success).setDisabled(!player || !player.currentTrack)
     );
 
-    // Row 2: ♾️ 🔉 🔁 🔊 💾
     const row2 = new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-            .setCustomId('btn_loop_track')
-            .setEmoji('♾️')
-            .setStyle(isLoop ? ButtonStyle.Primary : ButtonStyle.Secondary)
-            .setDisabled(!player || !player.currentTrack),
-        new ButtonBuilder()
-            .setCustomId('btn_voldown')
-            .setEmoji('🔉')
-            .setStyle(ButtonStyle.Secondary)
-            .setDisabled(!player || !player.currentTrack),
-        new ButtonBuilder()
-            .setCustomId('btn_autoplay')
-            .setEmoji('🔁')
-            .setStyle(isAutoplay ? ButtonStyle.Primary : ButtonStyle.Secondary)
-            .setDisabled(!player || !player.currentTrack),
-        new ButtonBuilder()
-            .setCustomId('btn_volup')
-            .setEmoji('🔊')
-            .setStyle(ButtonStyle.Secondary)
-            .setDisabled(!player || !player.currentTrack),
-        new ButtonBuilder()
-            .setCustomId('btn_save_playlist')
-            .setEmoji('💾')
-            .setStyle(ButtonStyle.Secondary)
-            .setDisabled(!player || !player.currentTrack)
+        new ButtonBuilder().setCustomId('btn_loop_track').setEmoji('♾️').setStyle(isLoop ? ButtonStyle.Primary : ButtonStyle.Secondary).setDisabled(!player || !player.currentTrack),
+        new ButtonBuilder().setCustomId('btn_voldown').setEmoji('🔉').setStyle(ButtonStyle.Secondary).setDisabled(!player || !player.currentTrack),
+        new ButtonBuilder().setCustomId('btn_autoplay').setEmoji('🔁').setStyle(isAutoplay ? ButtonStyle.Primary : ButtonStyle.Secondary).setDisabled(!player || !player.currentTrack),
+        new ButtonBuilder().setCustomId('btn_volup').setEmoji('🔊').setStyle(ButtonStyle.Secondary).setDisabled(!player || !player.currentTrack),
+        new ButtonBuilder().setCustomId('btn_save_playlist').setEmoji('💾').setStyle(ButtonStyle.Secondary).setDisabled(!player || !player.currentTrack)
     );
 
-    // Row 3: 12 Audio Filters
     const row3 = new ActionRowBuilder().addComponents(
         new StringSelectMenuBuilder()
             .setCustomId('menu_filters')
@@ -117,7 +74,7 @@ function getPanelComponents(player = null) {
                 { label: 'Vaporwave', description: 'Slowed down aesthetic lo-fi', value: 'f_vaporwave', emoji: '🌊' },
                 { label: '8D Audio', description: 'Surround 360 rotating effect', value: 'f_8d', emoji: '🎧' },
                 { label: 'Pop', description: 'Crisp vocal clarity profile', value: 'f_pop', emoji: '🎤' },
-                { label: 'Soft', description: 'Calm and muffled relaxing curve', value: 'f_soft', emoji: '🍃' },
+                { label: 'Soft', description: 'Calm and relaxing curve', value: 'f_soft', emoji: '🍃' },
                 { label: 'Treblebass', description: 'Enhanced highs and lows', value: 'f_treblebass', emoji: '🎚️' },
                 { label: 'Electronic', description: 'Aggressive EDM frequency response', value: 'f_electronic', emoji: '⚡' },
                 { label: 'Karaoke', description: 'Suppress center vocal channel', value: 'f_karaoke', emoji: '🎙️' },
@@ -171,29 +128,72 @@ async function updateGuildPanel(client, guildId, player = null, track = null) {
     } catch (_) {}
 }
 
-// Professional Multi-Engine Resolver (Industry Standard Implementation)
-async function fetchTrack(poru, query, requester) {
-    // 1. Direct Links (SoundCloud, Bandcamp, Direct URL)
-    if (/^https?:\/\//i.test(query.trim())) {
-        const res = await poru.resolve({ query: query.trim(), requester }).catch(() => null);
-        if (res?.tracks?.length) return res;
+// Production Dual-Node REST Resolver (Bypasses library search bugs)
+async function resolveAudioUniversal(poru, query, requester) {
+    const isUrl = /^https?:\/\//i.test(query.trim());
+    const rawQuery = query.trim();
+
+    // 1. Direct Poru URL attempt
+    if (isUrl) {
+        const direct = await poru.resolve({ query: rawQuery, requester }).catch(() => null);
+        if (direct?.tracks?.length) return direct;
     }
 
-    // 2. Explicit prefixed string queries (Poru v4 compatible)
-    const searchAttempts = [
-        `scsearch:${query.trim()}`,
-        `scsearch:${query.trim()} audio`,
-        `ytmsearch:${query.trim()}`
+    // 2. Multi-Node Direct REST search queries
+    const activeNodes = Array.from(poru.nodes.values()).filter(n => n.isConnected);
+    if (!activeNodes.length) {
+        // Fallback to internal Poru resolve
+        return await poru.resolve({ query: `scsearch:${rawQuery}`, requester }).catch(() => null);
+    }
+
+    const identifiers = [
+        `scsearch:${rawQuery}`,
+        `scsearch:${rawQuery} audio`,
+        `ytmsearch:${rawQuery}`,
+        rawQuery
     ];
 
-    for (const search of searchAttempts) {
-        try {
-            const res = await poru.resolve({ query: search, requester });
-            if (res && res.tracks && res.tracks.length > 0) {
-                return res;
-            }
-        } catch (_) {}
+    for (const node of activeNodes) {
+        for (const id of identifiers) {
+            try {
+                const protocol = node.secure ? 'https' : 'http';
+                const endpoint = `${protocol}://${node.host}:${node.port}/v4/loadtracks?identifier=${encodeURIComponent(id)}`;
+
+                const res = await fetch(endpoint, {
+                    headers: { 'Authorization': node.password }
+                });
+
+                if (!res.ok) continue;
+                const data = await res.json();
+
+                if (data.loadType === 'track' && data.data) {
+                    const trackObj = new poru.options.library.Track(data.data, requester);
+                    return { loadType: 'TRACK_LOADED', tracks: [trackObj] };
+                }
+
+                if ((data.loadType === 'search' || data.loadType === 'playlist') && data.data?.length) {
+                    const tracks = data.data.map(t => new (poru.Track || Object.getPrototypeOf(poru).constructor.Track || Object)(t, requester));
+                    // Poru standard track creation
+                    const parsedTracks = [];
+                    for (const rawTrack of data.data) {
+                        try {
+                            const resolvedTrack = await poru.resolve({ query: rawTrack.info.uri, requester });
+                            if (resolvedTrack?.tracks?.[0]) parsedTracks.push(resolvedTrack.tracks[0]);
+                        } catch (_) {}
+                    }
+                    if (parsedTracks.length) {
+                        return { loadType: 'SEARCH_RESULT', tracks: parsedTracks };
+                    }
+                }
+            } catch (_) {}
+        }
     }
+
+    // 3. Last attempt with Poru native search
+    try {
+        const finalTry = await poru.resolve({ query: `scsearch:${rawQuery}`, requester });
+        if (finalTry?.tracks?.length) return finalTry;
+    } catch (_) {}
 
     return null;
 }
@@ -204,7 +204,7 @@ async function playNextAutoplay(poru, player, client) {
     if (!lastTrack) return;
 
     try {
-        const res = await fetchTrack(poru, `${lastTrack.info.author} audio`, client.user);
+        const res = await resolveAudioUniversal(poru, `${lastTrack.info.author} audio`, client.user);
         if (res?.tracks?.length) {
             const filtered = res.tracks.filter(t => t.info.title !== lastTrack.info.title);
             const next = filtered.length ? filtered[0] : res.tracks[0];
@@ -215,7 +215,7 @@ async function playNextAutoplay(poru, player, client) {
 }
 
 module.exports = async (client) => {
-    // Production Dual-Node Cluster: Private Node with Global Fallback
+    // Both Private Node and Backup Node for Zero Downtime
     const nodes = [
         {
             name: 'SparkCore-Private-Lavalink',
@@ -286,6 +286,7 @@ module.exports = async (client) => {
 
         if (player.volume !== 100) player.setVolume(100);
 
+        // Record custom playlist
         try {
             const activePlaylists = await CustomPlaylist.find({ recording: true });
             for (const pl of activePlaylists) {
@@ -374,14 +375,14 @@ module.exports = async (client) => {
                 .setColor('#5865F2')
                 .setTitle('🎶 SparkCore Music Commands')
                 .setDescription('Prefix: `%`\n\n' +
-                    '`%play <song name or link>` — Play any track via Audio Engine\n' +
-                    '`%join` — Summon bot to your current voice channel\n' +
-                    '`%stop` — Stop playback and reset to 24/7 standby\n' +
-                    '`%skip` — Skip to next track or autoplay next track\n' +
-                    '`%24/7` — Set persistent 24/7 channel home\n' +
-                    '`%music panel` or `%setup` — Create interactive live music panel\n' +
-                    '`%playlist create <name>` — Record the next 10 songs into a playlist\n' +
-                    '`%playlist <name>` — Load and queue your saved playlist'
+                    '`%play <song name or link>` — Play track\n' +
+                    '`%join` — Summon bot to your voice channel\n' +
+                    '`%stop` — Stop playback and reset to standby\n' +
+                    '`%skip` — Skip to next track\n' +
+                    '`%24/7` — Toggle 24/7 channel standby\n' +
+                    '`%music panel` or `%setup` — Setup live music controller panel\n' +
+                    '`%playlist create <name>` — Create a new custom playlist\n' +
+                    '`%playlist <name>` — Load saved playlist'
                 );
             return message.reply({ embeds: [helpEmbed] });
         }
@@ -433,10 +434,10 @@ module.exports = async (client) => {
         if (commandName === '24/7' || commandName === '247') {
             const isOwner = message.guild.ownerId === message.author.id;
             const isAdmin = message.member.permissions.has('Administrator');
-            if (!BOT_OWNERS.includes(message.author.id) && !isOwner && !isAdmin) return message.reply('Only the server owner or an administrator can configure 24/7 mode.');
+            if (!BOT_OWNERS.includes(message.author.id) && !isOwner && !isAdmin) return message.reply('Only server owner/admins can toggle 24/7 mode.');
 
             const vc = message.member.voice.channel;
-            if (!vc) return message.reply('❌ Join the specific voice channel you want as 24/7 home.');
+            if (!vc) return message.reply('❌ Join the target 24/7 voice channel first.');
 
             const existing = await Music247.findOne({ guildId: message.guild.id, enabled: true });
             if (existing) {
@@ -452,7 +453,7 @@ module.exports = async (client) => {
             }
         }
 
-        // %play (Verified Robust Pipeline)
+        // %play (Production Dual-Engine Resolver)
         if (commandName === 'play' || commandName === 'p') {
             const vc = message.member.voice.channel;
             if (!vc) return message.reply('❌ Please join a voice channel first.');
@@ -472,10 +473,10 @@ module.exports = async (client) => {
                 isNew = true;
             }
 
-            const statusMsg = await message.reply('🔍 Searching track across engines...');
+            const statusMsg = await message.reply('🔍 Resolving audio track across cluster...');
 
             try {
-                const res = await fetchTrack(poru, query, message.author);
+                const res = await resolveAudioUniversal(poru, query, message.author);
 
                 if (!res || !res.tracks || !res.tracks.length) {
                     return statusMsg.edit(`❌ Audio not found for: **${query}**`);
@@ -510,7 +511,6 @@ module.exports = async (client) => {
 
             previousTracks.delete(message.guild.id);
             player.queue.clear();
-
             await updateVoiceStatus(client, player.voiceChannel, '');
 
             const rec247 = await Music247.findOne({ guildId: message.guild.id, enabled: true });
@@ -569,7 +569,7 @@ module.exports = async (client) => {
                 }
 
                 for (const item of pl.tracks) {
-                    const res = await fetchTrack(poru, item.uri || item.title, message.author);
+                    const res = await resolveAudioUniversal(poru, item.uri || item.title, message.author);
                     if (res?.tracks?.length) player.queue.add(res.tracks[0]);
                 }
 
@@ -579,9 +579,7 @@ module.exports = async (client) => {
         }
     });
 
-    // ==========================================
-    // INTERACTION BUTTONS & FILTERS
-    // ==========================================
+    // Control Panel Buttons
     client.on('interactionCreate', async (interaction) => {
         if (interaction.guild && !(await isFeatureEnabled(interaction.guild.id, 'music'))) return;
         if (!interaction.isButton() && !interaction.isStringSelectMenu()) return;
@@ -596,40 +594,25 @@ module.exports = async (client) => {
             return interaction.reply({ content: `❌ You must be inside <#${player.voiceChannel}> to control playback.`, flags: 64 });
         }
 
-        // Filters
         if (interaction.isStringSelectMenu() && interaction.customId === 'menu_filters') {
             const val = interaction.values[0];
             await interaction.deferUpdate();
 
-            if (val === 'f_bass') {
-                player.filters.setEqualizer([{ band: 0, gain: 0.35 }, { band: 1, gain: 0.25 }, { band: 2, gain: 0.15 }]);
-            } else if (val === 'f_ultrabass') {
-                player.filters.setEqualizer([{ band: 0, gain: 0.60 }, { band: 1, gain: 0.50 }, { band: 2, gain: 0.35 }]);
-            } else if (val === 'f_nightcore') {
-                player.filters.setTimescale({ speed: 1.25, pitch: 1.25, rate: 1.0 });
-            } else if (val === 'f_vaporwave') {
-                player.filters.setTimescale({ speed: 0.85, pitch: 0.80, rate: 1.0 });
-            } else if (val === 'f_8d') {
-                player.filters.setRotation({ rotationHz: 0.2 });
-            } else if (val === 'f_pop') {
-                player.filters.setEqualizer([{ band: 1, gain: 0.2 }, { band: 2, gain: 0.3 }, { band: 3, gain: 0.1 }]);
-            } else if (val === 'f_soft') {
-                player.filters.setLowPass({ smoothing: 20.0 });
-            } else if (val === 'f_treblebass') {
-                player.filters.setEqualizer([{ band: 0, gain: 0.3 }, { band: 12, gain: 0.3 }, { band: 13, gain: 0.35 }]);
-            } else if (val === 'f_electronic') {
-                player.filters.setEqualizer([{ band: 0, gain: 0.35 }, { band: 5, gain: 0.25 }, { band: 13, gain: 0.3 }]);
-            } else if (val === 'f_karaoke') {
-                player.filters.setKaraoke({ level: 1.0, monoLevel: 1.0, filterBand: 220.0, filterWidth: 100.0 });
-            } else if (val === 'f_slowed') {
-                player.filters.setTimescale({ speed: 0.75, pitch: 0.85, rate: 1.0 });
-            } else if (val === 'f_clear') {
-                player.filters.clearFilters();
-            }
+            if (val === 'f_bass') player.filters.setEqualizer([{ band: 0, gain: 0.35 }, { band: 1, gain: 0.25 }, { band: 2, gain: 0.15 }]);
+            else if (val === 'f_ultrabass') player.filters.setEqualizer([{ band: 0, gain: 0.60 }, { band: 1, gain: 0.50 }, { band: 2, gain: 0.35 }]);
+            else if (val === 'f_nightcore') player.filters.setTimescale({ speed: 1.25, pitch: 1.25, rate: 1.0 });
+            else if (val === 'f_vaporwave') player.filters.setTimescale({ speed: 0.85, pitch: 0.80, rate: 1.0 });
+            else if (val === 'f_8d') player.filters.setRotation({ rotationHz: 0.2 });
+            else if (val === 'f_pop') player.filters.setEqualizer([{ band: 1, gain: 0.2 }, { band: 2, gain: 0.3 }, { band: 3, gain: 0.1 }]);
+            else if (val === 'f_soft') player.filters.setLowPass({ smoothing: 20.0 });
+            else if (val === 'f_treblebass') player.filters.setEqualizer([{ band: 0, gain: 0.3 }, { band: 12, gain: 0.3 }, { band: 13, gain: 0.35 }]);
+            else if (val === 'f_electronic') player.filters.setEqualizer([{ band: 0, gain: 0.35 }, { band: 5, gain: 0.25 }, { band: 13, gain: 0.3 }]);
+            else if (val === 'f_karaoke') player.filters.setKaraoke({ level: 1.0, monoLevel: 1.0, filterBand: 220.0, filterWidth: 100.0 });
+            else if (val === 'f_slowed') player.filters.setTimescale({ speed: 0.75, pitch: 0.85, rate: 1.0 });
+            else if (val === 'f_clear') player.filters.clearFilters();
             return;
         }
 
-        // Buttons
         const id = interaction.customId;
 
         if (id === 'btn_pause') {
@@ -637,13 +620,11 @@ module.exports = async (client) => {
             await updateGuildPanel(client, player.guildId, player, player.currentTrack);
             return interaction.reply({ content: '⏸️ Paused playback.', flags: 64 });
         }
-
         if (id === 'btn_resume') {
             player.pause(false);
             await updateGuildPanel(client, player.guildId, player, player.currentTrack);
             return interaction.reply({ content: '▶️ Resumed playback.', flags: 64 });
         }
-
         if (id === 'btn_next') {
             const title = player.currentTrack.info.title;
             if (player.queue.length > 0) {
@@ -653,7 +634,6 @@ module.exports = async (client) => {
             }
             return interaction.reply({ content: `⏭️ Playing next after **${title}**.`, flags: 64 });
         }
-
         if (id === 'btn_previous') {
             const prev = previousTracks.get(interaction.guildId);
             if (!prev) return interaction.reply({ content: '❌ No previous song recorded.', flags: 64 });
@@ -661,7 +641,6 @@ module.exports = async (client) => {
             if (typeof player.skip === 'function') player.skip();
             return interaction.reply({ content: `⏮️ Playing previous: **${prev.info.title}**`, flags: 64 });
         }
-
         if (id === 'btn_stop') {
             previousTracks.delete(interaction.guildId);
             player.queue.clear();
@@ -679,34 +658,29 @@ module.exports = async (client) => {
             await updateGuildPanel(client, player.guildId, null, null);
             return interaction.reply({ content: '🛑 Playback terminated.', flags: 64 });
         }
-
         if (id === 'btn_loop_track') {
             player.setLoop(player.loop === 'TRACK' ? 'NONE' : 'TRACK');
             await updateGuildPanel(client, player.guildId, player, player.currentTrack);
             return interaction.reply({ content: `♾️ Track Repeat: **${player.loop === 'TRACK' ? 'Enabled' : 'Disabled'}**.`, flags: 64 });
         }
-
         if (id === 'btn_autoplay') {
             const current = autoplayMap.get(interaction.guildId) ?? true;
             autoplayMap.set(interaction.guildId, !current);
             await updateGuildPanel(client, player.guildId, player, player.currentTrack);
             return interaction.reply({ content: `🔁 Endless Autoplay: **${!current ? 'Enabled' : 'Disabled'}**.`, flags: 64 });
         }
-
         if (id === 'btn_volup') {
             const newVol = Math.min(player.volume + 10, 150);
             player.setVolume(newVol);
             await updateGuildPanel(client, player.guildId, player, player.currentTrack);
             return interaction.reply({ content: `🔊 Volume: **${newVol}%**`, flags: 64 });
         }
-
         if (id === 'btn_voldown') {
             const newVol = Math.max(player.volume - 10, 10);
             player.setVolume(newVol);
             await updateGuildPanel(client, player.guildId, player, player.currentTrack);
             return interaction.reply({ content: `🔉 Volume: **${newVol}%**`, flags: 64 });
         }
-
         if (id === 'btn_save_playlist') {
             await CustomPlaylist.findOneAndUpdate(
                 { userId: interaction.user.id, name: 'Favorites' },
