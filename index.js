@@ -45,8 +45,6 @@ const client = new Client({
 });
 
 // Music System: Shoukaku v4 + Lavalink v4
-h
-// Music System: Shoukaku v4 + Lavalink v4
 const lavalinkHost = process.env.LAVALINK_HOST || 'lavalink-production-84c3.up.railway.app';
 const rawPort = process.env.LAVALINK_PORT || '443';
 // Typo guard: agar 433 set ho gaya ho toh auto 443 le
