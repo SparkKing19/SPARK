@@ -129,7 +129,7 @@ function getPanelComponents(player = null) {
     return [row1, row2, row3];
 }
 
-// Embed Builder (Top Title + Bottom High-Res Banner)
+// Embed Builder
 function getPanelEmbed(client, player = null, track = null) {
     if (!player || !track) {
         return new EmbedBuilder()
@@ -185,6 +185,9 @@ async function playNextAutoplay(poru, player, client) {
         const search = queryTerms[Math.floor(Math.random() * queryTerms.length)];
 
         let res = await poru.resolve({ query: `scsearch:${search}`, requester: client.user }).catch(() => null);
+        if (!res || !res.tracks?.length) {
+            res = await poru.resolve({ query: `ytmsearch:${search}`, requester: client.user }).catch(() => null);
+        }
 
         if (res?.tracks?.length) {
             const filtered = res.tracks.filter(t => t.info.title !== lastTrack.info.title);
@@ -196,12 +199,30 @@ async function playNextAutoplay(poru, player, client) {
 }
 
 module.exports = async (client) => {
+    // Verified Multi-Node Failover Cluster:
+    // 1. Aapka Railway node
+    // 2. High-speed EU backup node
+    // 3. Fallback US node
     const nodes = [
         {
-            name: 'SparkCore-Private-Lavalink',
+            name: 'SparkCore-Private-Railway',
             host: 'lavalink-production-84c3.up.railway.app',
             port: 443,
             password: 'sparkcore123',
+            secure: true
+        },
+        {
+            name: 'SparkCore-Cluster-EU',
+            host: 'lava-v4.ajieblogs.eu.org',
+            port: 443,
+            password: 'https://dsc.gg/ajielavalink',
+            secure: true
+        },
+        {
+            name: 'SparkCore-Cluster-US',
+            host: 'lavalink.serenetia.com',
+            port: 443,
+            password: 'serenetia.com',
             secure: true
         }
     ];
@@ -210,7 +231,7 @@ module.exports = async (client) => {
         library: 'discord.js',
         defaultPlatform: 'scsearch',
         reconnectTries: Infinity,
-        reconnectTimeout: 10000
+        reconnectTimeout: 5000
     });
 
     client.poru = poru;
@@ -221,7 +242,7 @@ module.exports = async (client) => {
 
     // Node Connect
     poru.on('nodeConnect', async (node) => {
-        console.log(`✔ Private Lavalink Online: ${node.name}`);
+        console.log(`✔ Lavalink Cluster Online: [${node.name}]`);
         try {
             const records = await Music247.find({ enabled: true });
             for (const rec of records) {
@@ -244,7 +265,7 @@ module.exports = async (client) => {
     });
 
     poru.on('nodeError', (node, error) => {
-        console.warn(`⚠️ Lavalink Node Warning on [${node.name}]:${error.message}`);
+        console.warn(`⚠️ Node Warning [${node.name}]:${error.message}`);
     });
 
     // Track Start Listener
@@ -253,7 +274,6 @@ module.exports = async (client) => {
             previousTracks.set(player.guildId, player.currentTrack);
         }
 
-        // Live Voice Channel Subtitle Status
         await updateVoiceStatus(
             client, 
             player.voiceChannel, 
@@ -302,7 +322,7 @@ module.exports = async (client) => {
         }
     });
 
-    // VC Empty -> Return to 24/7 Channel & Clear Status
+    // VC Empty -> Return to 24/7 Channel
     client.on('voiceStateUpdate', async (oldState, newState) => {
         const guildId = oldState.guild.id || newState.guild.id;
         const player = poru.players.get(guildId);
@@ -353,7 +373,7 @@ module.exports = async (client) => {
                 .setColor('#5865F2')
                 .setTitle('🎶 SparkCore Music Commands')
                 .setDescription('Prefix: `%`\n\n' +
-                    '`%play <song name or link>` — Play from Spotify or SoundCloud\n' +
+                    '`%play <song name or link>` — Play track\n' +
                     '`%join` — Summon bot to your current voice channel\n' +
                     '`%stop` — Stop playback and reset to 24/7 standby\n' +
                     '`%skip` — Skip to next track or autoplay next track\n' +
@@ -431,13 +451,13 @@ module.exports = async (client) => {
             }
         }
 
-        // %play (Standard Poru Resolution Pipeline)
+        // %play (Production Multi-Engine Cascading Pipeline)
         if (commandName === 'play' || commandName === 'p') {
             const vc = message.member.voice.channel;
             if (!vc) return message.reply('❌ Please join a voice channel first.');
 
             const query = args.join(' ').trim();
-            if (!query) return message.reply('❌ Enter a song name or Spotify/SoundCloud link: `%play <query>`');
+            if (!query) return message.reply('❌ Enter a song name or link: `%play <query>`');
 
             let player = poru.players.get(message.guild.id);
             let isNewConnection = false;
@@ -451,7 +471,7 @@ module.exports = async (client) => {
                 isNewConnection = true;
             }
 
-            const statusMsg = await message.reply('🔍 Searching track on audio engines...');
+            const statusMsg = await message.reply('🔍 Searching audio cluster...');
 
             try {
                 let res = null;
@@ -461,17 +481,22 @@ module.exports = async (client) => {
                     res = await poru.resolve({ query, requester: message.author }).catch(() => null);
                 }
 
-                // 2. Explicit SoundCloud prefix search (Poru industry standard format)
-                if (!res || !res.tracks?.length) {
-                    res = await poru.resolve({ query: `scsearch:${query}`, requester: message.author }).catch(() => null);
+                // 2. Cascading Search: SoundCloud -> YouTube Music -> Plain Query
+                const searchQueries = [
+                    `scsearch:${query}`,
+                    `ytmsearch:${query}`,
+                    `scsearch:${query} audio`,
+                    query
+                ];
+
+                for (const q of searchQueries) {
+                    try {
+                        res = await poru.resolve({ query: q, requester: message.author });
+                        if (res && res.tracks && res.tracks.length > 0) break;
+                    } catch (_) {}
                 }
 
-                // 3. Fallback: SoundCloud with 'audio' keyword
-                if (!res || !res.tracks?.length) {
-                    res = await poru.resolve({ query: `scsearch:${query} audio`, requester: message.author }).catch(() => null);
-                }
-
-                if (!res || !res.tracks?.length) {
+                if (!res || !res.tracks || !res.tracks.length) {
                     return statusMsg.edit(`❌ Audio not found for: **${query}**`);
                 }
 
@@ -640,7 +665,6 @@ module.exports = async (client) => {
             return interaction.reply({ content: '▶️ Resumed playback.', flags: 64 });
         }
 
-        // NEXT BUTTON (Smart Autoplay Integration)
         if (id === 'btn_next') {
             const title = player.currentTrack.info.title;
             if (player.queue.length > 0) {
@@ -723,5 +747,5 @@ module.exports = async (client) => {
         }
     });
 
-    console.log('✔ Custom Rythm Music Engine (Spotify & SoundCloud Engine) Active.');
+    console.log('✔ Custom Rythm Music Engine (Multi-Cluster Engine) Active.');
 };
