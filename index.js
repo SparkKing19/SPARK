@@ -45,34 +45,49 @@ const client = new Client({
 });
 
 // Music System: Shoukaku v4 + Lavalink v4
-const lavalinkHost = process.env.LAVALINK_HOST;
-const lavalinkPort = process.env.LAVALINK_PORT || '8080';
-const lavalinkPassword = process.env.LAVALINK_PASSWORD;
-const lavalinkSecure = process.env.LAVALINK_SECURE === 'true';
+const lavalinkHost = process.env.LAVALINK_HOST || 'lavalink-production-84c3.up.railway.app';
+const lavalinkPort = process.env.LAVALINK_PORT || '443';
+const lavalinkPassword = process.env.LAVALINK_PASSWORD || 'sparkcore123';
+const lavalinkSecure = process.env.LAVALINK_SECURE !== 'false';
 
-if (lavalinkHost && lavalinkPassword) {
-    client.shoukaku = new Shoukaku(
-        new Connectors.DiscordJS(client),
-        [{
-            name: 'railway-lavalink',
-            url: `${lavalinkHost}:${lavalinkPort}`,
-            auth: lavalinkPassword,
-            secure: lavalinkSecure
-        }]
-    );
+// Multi-Node Cluster Configuration (Private + Verified Public Fallback)
+const lavalinkNodes = [
+    {
+        name: 'railway-lavalink-private',
+        url: `${lavalinkHost}:${lavalinkPort}`,
+        auth: lavalinkPassword,
+        secure: lavalinkSecure
+    },
+    {
+        name: 'cluster-fallback-lavalink',
+        url: 'lava-v4.ajieblogs.eu.org:443',
+        auth: 'https://dsc.gg/ajielavalink',
+        secure: true
+    }
+];
 
-    client.shoukaku.on('ready', (name) => {
-        console.log(`Music: Lavalink node ready: ${name}`);
-    });
+client.shoukaku = new Shoukaku(
+    new Connectors.DiscordJS(client),
+    lavalinkNodes,
+    {
+        moveOnDisconnect: true,
+        resume: true,
+        reconnectTries: Infinity,
+        restTimeout: 10000
+    }
+);
 
-    client.shoukaku.on('error', (name, error) => {
-        console.error(`Lavalink node error (${name}):`, error);
-    });
-} else {
-    console.warn(
-        'Music: Set LAVALINK_HOST and LAVALINK_PASSWORD in Railway Variables.'
-    );
-}
+client.shoukaku.on('ready', (name) => {
+    console.log(`✔ Music: Lavalink node online: [${name}]`);
+});
+
+client.shoukaku.on('error', (name, error) => {
+    console.warn(`⚠️ Lavalink node warning (${name}):`, error.message);
+});
+
+client.shoukaku.on('close', (name, code, reason) => {
+    console.warn(`⚠️ Lavalink node closed (${name}): code ${code}, reason:${reason}`);
+});
 
 const music = setupMusic(client);
 
