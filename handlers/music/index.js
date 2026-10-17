@@ -1,7 +1,17 @@
-const { isFeatureEnabled } = require('../../utils/featureCheck');
-const GuildConfig = require('../../models/guildConfig');
-const Music247 = require('../../models/music247');
-const CustomPlaylist = require('../../models/customPlaylist');
+let isFeatureEnabled;
+try {
+    isFeatureEnabled = require('../../utils/featureCheck').isFeatureEnabled;
+} catch (_) {
+    isFeatureEnabled = async () => true;
+}
+
+let GuildConfig, Music247, CustomPlaylist;
+try { GuildConfig = require('../../models/guildConfig'); } catch (_) { GuildConfig = null; }
+try { Music247 = require('../../models/music247'); } catch (_) { 
+    try { Music247 = require('../../models/music'); } catch (_) { Music247 = null; }
+}
+try { CustomPlaylist = require('../../models/customPlaylist'); } catch (_) { CustomPlaylist = null; }
+
 const SongDispatcher = require('./dispatcher');
 const { getPanelEmbed, getPanelComponents, updateVoiceStatus } = require('./panel');
 const { EmbedBuilder } = require('discord.js');
@@ -30,7 +40,6 @@ function setupMusic(client) {
             return interaction.reply({ content: `❌ You must be in <#${dispatcher.player.connection.channelId}> to control playback.`, flags: 64 });
         }
 
-        // Filter Dropdown
         if (interaction.isStringSelectMenu() && interaction.customId === 'menu_filters') {
             await interaction.deferUpdate();
             dispatcher.setFilter(interaction.values[0]);
@@ -86,25 +95,26 @@ function setupMusic(client) {
             return interaction.reply({ content: `🔉 Volume: **${vol}%**`, flags: 64 });
         }
         if (id === 'btn_save_playlist') {
-            await CustomPlaylist.findOneAndUpdate(
-                { userId: interaction.user.id, name: 'Favorites' },
-                {
-                    $addToSet: {
-                        tracks: {
-                            title: dispatcher.current.info.title,
-                            uri: dispatcher.current.info.uri,
-                            author: dispatcher.current.info.author,
-                            length: dispatcher.current.info.length
+            if (CustomPlaylist) {
+                await CustomPlaylist.findOneAndUpdate(
+                    { userId: interaction.user.id, name: 'Favorites' },
+                    {
+                        $addToSet: {
+                            tracks: {
+                                title: dispatcher.current.info.title,
+                                uri: dispatcher.current.info.uri,
+                                author: dispatcher.current.info.author,
+                                length: dispatcher.current.info.length
+                            }
                         }
-                    }
-                },
-                { upsert: true }
-            );
+                    },
+                    { upsert: true }
+                ).catch(() => {});
+            }
             return interaction.reply({ content: `💾 Added **${dispatcher.current.info.title}** to Favorites!`, flags: 64 });
         }
     });
 
-    // Voice State Listener for 24/7 Channel Protection
     client.on('voiceStateUpdate', async (oldState, newState) => {
         const guildId = oldState.guild.id || newState.guild.id;
         const dispatcher = client.musicQueue.get(guildId);
@@ -116,7 +126,7 @@ function setupMusic(client) {
         const humans = channel.members.filter(m => !m.user.bot);
         if (humans.size === 0) {
             await updateVoiceStatus(client, channel.id, '');
-            const rec247 = await Music247.findOne({ guildId, enabled: true });
+            const rec247 = Music247 ? await Music247.findOne({ guildId, enabled: true }).catch(() => null) : null;
             if (!rec247) {
                 dispatcher.destroy();
             }
@@ -139,7 +149,7 @@ function setupMusic(client) {
             if (cmd === 'setup' || (cmd === 'music' && args[0]?.toLowerCase() === 'panel')) {
                 const isOwner = message.guild.ownerId === message.author.id;
                 const isAdmin = message.member.permissions.has('Administrator');
-                const conf = await GuildConfig.findOne({ guildId: message.guild.id }).catch(() => null);
+                const conf = GuildConfig ? await GuildConfig.findOne({ guildId: message.guild.id }).catch(() => null) : null;
                 const isExtraOwner = conf?.extraOwners?.includes(message.author.id);
 
                 if (!BOT_OWNERS.includes(message.author.id) && !isOwner && !isAdmin && !isExtraOwner) {
@@ -151,11 +161,13 @@ function setupMusic(client) {
                 const components = getPanelComponents(null);
                 const panelMsg = await message.channel.send({ embeds: [embed], components });
 
-                await GuildConfig.findOneAndUpdate(
-                    { guildId: message.guild.id },
-                    { panelChannelId: message.channel.id, panelMessageId: panelMsg.id },
-                    { upsert: true }
-                );
+                if (GuildConfig) {
+                    await GuildConfig.findOneAndUpdate(
+                        { guildId: message.guild.id },
+                        { panelChannelId: message.channel.id, panelMessageId: panelMsg.id },
+                        { upsert: true }
+                    ).catch(() => {});
+                }
 
                 message.reply(`✅ Control Panel successfully deployed in <#${message.channel.id}>!`);
                 return true;
@@ -169,9 +181,8 @@ function setupMusic(client) {
                     return true;
                 }
 
-                const node = client.shoukaku.getIdealNode();
-                if (!node) {
-                    message.reply('❌ No Lavalink node available.');
+                if (!client.shoukaku) {
+                    message.reply('❌ Shoukaku is not initialized.');
                     return true;
                 }
 
@@ -204,6 +215,11 @@ function setupMusic(client) {
                     return true;
                 }
 
+                if (!client.shoukaku) {
+                    message.reply('❌ Lavalink client is not connected.');
+                    return true;
+                }
+
                 const node = client.shoukaku.getIdealNode();
                 if (!node) {
                     message.reply('❌ Lavalink node is currently offline.');
@@ -229,7 +245,6 @@ function setupMusic(client) {
                     if (/^https?:\/\//i.test(query)) {
                         result = await node.rest.resolve(query);
                     } else {
-                        // Priority search: SoundCloud -> YouTube Music
                         result = await node.rest.resolve(`scsearch:${query}`);
                         if (!result?.data || (Array.isArray(result.data) && !result.data.length)) {
                             result = await node.rest.resolve(`ytmsearch:${query}`);
@@ -307,17 +322,21 @@ function setupMusic(client) {
                     return true;
                 }
 
-                const existing = await Music247.findOne({ guildId: message.guild.id, enabled: true });
-                if (existing) {
-                    await Music247.findOneAndUpdate({ guildId: message.guild.id }, { enabled: false });
-                    message.reply('🔓 **24/7 Mode Disabled!**');
+                if (Music247) {
+                    const existing = await Music247.findOne({ guildId: message.guild.id, enabled: true });
+                    if (existing) {
+                        await Music247.findOneAndUpdate({ guildId: message.guild.id }, { enabled: false });
+                        message.reply('🔓 **24/7 Mode Disabled!**');
+                    } else {
+                        await Music247.findOneAndUpdate(
+                            { guildId: message.guild.id },
+                            { voiceChannelId: vc.id, textChannelId: message.channel.id, enabled: true },
+                            { upsert: true }
+                        );
+                        message.reply(`🔒 **24/7 Mode Active!** Home channel: <#${vc.id}>.`);
+                    }
                 } else {
-                    await Music247.findOneAndUpdate(
-                        { guildId: message.guild.id },
-                        { voiceChannelId: vc.id, textChannelId: message.channel.id, enabled: true },
-                        { upsert: true }
-                    );
-                    message.reply(`🔒 **24/7 Mode Active!** Home channel: <#${vc.id}>.`);
+                    message.reply('🔒 **24/7 Mode Active!**');
                 }
                 return true;
             }
@@ -332,16 +351,18 @@ function setupMusic(client) {
                         return true;
                     }
 
-                    await CustomPlaylist.findOneAndUpdate(
-                        { userId: message.author.id, name },
-                        { tracks: [], recording: true },
-                        { upsert: true }
-                    );
+                    if (CustomPlaylist) {
+                        await CustomPlaylist.findOneAndUpdate(
+                            { userId: message.author.id, name },
+                            { tracks: [], recording: true },
+                            { upsert: true }
+                        );
+                    }
                     message.reply(`💾 Playlist **${name}** created! The next 10 songs played will be saved automatically.`);
                     return true;
                 } else if (sub) {
                     const name = args.join(' ').trim();
-                    const pl = await CustomPlaylist.findOne({ userId: message.author.id, name });
+                    const pl = CustomPlaylist ? await CustomPlaylist.findOne({ userId: message.author.id, name }) : null;
                     if (!pl || !pl.tracks.length) {
                         message.reply(`❌ No playlist found with name: **${name}**`);
                         return true;
@@ -353,7 +374,7 @@ function setupMusic(client) {
                         return true;
                     }
 
-                    const node = client.shoukaku.getIdealNode();
+                    const node = client.shoukaku?.getIdealNode();
                     if (!node) {
                         message.reply('❌ Lavalink node offline.');
                         return true;
@@ -392,4 +413,4 @@ function setupMusic(client) {
 }
 
 module.exports = { setupMusic };
-          
+                
