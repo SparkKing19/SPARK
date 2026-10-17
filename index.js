@@ -20,6 +20,8 @@ const fs = require('fs');
 const path = require('path');
 require('dotenv').config();
 
+const { Shoukaku, Connectors } = require('shoukaku');
+const { setupMusic } = require('./handlers/music');
 const ServerSettings = require('./models/serverSettings');
 const ModerationConfig = require('./models/moderation');
 
@@ -42,14 +44,37 @@ const client = new Client({
     partials: [Partials.Channel, Partials.Message]
 });
 
-// Voice Packets Handler for Poru & Lavalink
-client.on('raw', (packet) => {
-    if (['VOICE_STATE_UPDATE', 'VOICE_SERVER_UPDATE'].includes(packet.t)) {
-        if (client.poru) {
-            client.poru.packetUpdate(packet);
-        }
-    }
-});
+// Music System: Shoukaku v4 + Lavalink v4
+const lavalinkHost = process.env.LAVALINK_HOST;
+const lavalinkPort = process.env.LAVALINK_PORT || '8080';
+const lavalinkPassword = process.env.LAVALINK_PASSWORD;
+const lavalinkSecure = process.env.LAVALINK_SECURE === 'true';
+
+if (lavalinkHost && lavalinkPassword) {
+    client.shoukaku = new Shoukaku(
+        new Connectors.DiscordJS(client),
+        [{
+            name: 'railway-lavalink',
+            url: `${lavalinkHost}:${lavalinkPort}`,
+            auth: lavalinkPassword,
+            secure: lavalinkSecure
+        }]
+    );
+
+    client.shoukaku.on('ready', (name) => {
+        console.log(`Music: Lavalink node ready: ${name}`);
+    });
+
+    client.shoukaku.on('error', (name, error) => {
+        console.error(`Lavalink node error (${name}):`, error);
+    });
+} else {
+    console.warn(
+        'Music: Set LAVALINK_HOST and LAVALINK_PASSWORD in Railway Variables.'
+    );
+}
+
+const music = setupMusic(client);
 
 
 client.commands = new Map();
@@ -555,6 +580,11 @@ client.on('messageCreate', async (message) => {
             .setTimestamp();
 
         return message.reply({ embeds: [helpEmbed] });
+    }
+
+    // Music Prefix Commands
+    if (await music.handleMessage(message, process.env.PREFIX || '%')) {
+        return;
     }
 });
 
