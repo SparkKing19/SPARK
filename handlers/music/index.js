@@ -201,7 +201,7 @@ function setupMusic(client) {
                 return true;
             }
 
-            // %play
+                        // %play
             if (cmd === 'play' || cmd === 'p') {
                 const vc = message.member.voice.channel;
                 if (!vc) {
@@ -216,13 +216,13 @@ function setupMusic(client) {
                 }
 
                 if (!client.shoukaku) {
-                    message.reply('❌ Lavalink client is not connected.');
+                    message.reply('❌ Lavalink client is not initialized.');
                     return true;
                 }
 
                 const node = client.shoukaku.getIdealNode();
                 if (!node) {
-                    message.reply('❌ Lavalink node is currently offline.');
+                    message.reply('❌ Lavalink node is reconnecting. Please wait 5 seconds and retry.');
                     return true;
                 }
 
@@ -230,14 +230,18 @@ function setupMusic(client) {
 
                 let dispatcher = client.musicQueue.get(message.guild.id);
                 if (!dispatcher) {
-                    const player = await client.shoukaku.joinVoiceChannel({
-                        guildId: message.guild.id,
-                        channelId: vc.id,
-                        shardId: 0,
-                        deaf: true
-                    });
-                    dispatcher = new SongDispatcher(client, player, message.channel, message.guild.id);
-                    client.musicQueue.set(message.guild.id, dispatcher);
+                    try {
+                        const player = await client.shoukaku.joinVoiceChannel({
+                            guildId: message.guild.id,
+                            channelId: vc.id,
+                            shardId: 0,
+                            deaf: true
+                        });
+                        dispatcher = new SongDispatcher(client, player, message.channel, message.guild.id);
+                        client.musicQueue.set(message.guild.id, dispatcher);
+                    } catch (err) {
+                        return statusMsg.edit(`❌ Unable to join voice channel: \`${err.message}\``);
+                    }
                 }
 
                 try {
@@ -246,40 +250,64 @@ function setupMusic(client) {
                         result = await node.rest.resolve(query);
                     } else {
                         result = await node.rest.resolve(`scsearch:${query}`);
-                        if (!result?.data || (Array.isArray(result.data) && !result.data.length)) {
+                        const tracks = Array.isArray(result?.data) ? result.data : result?.data?.tracks;
+                        if (!tracks || !tracks.length) {
                             result = await node.rest.resolve(`ytmsearch:${query}`);
                         }
                     }
 
-                    if (!result || !result.data || (Array.isArray(result.data) && !result.data.length)) {
+                    if (!result || !result.data) {
                         return statusMsg.edit(`❌ Audio not found for: **${query}**`);
                     }
 
+                    // 1. Playlist Handling
                     if (result.loadType === 'playlist') {
-                        for (const t of result.data.tracks) {
+                        const playlistTracks = result.data.tracks || [];
+                        if (!playlistTracks.length) {
+                            return statusMsg.edit(`❌ Playlist is empty.`);
+                        }
+
+                        for (const t of playlistTracks) {
+                            if (!t.info) t.info = {};
                             t.info.requester = message.author;
                             dispatcher.queue.push(t);
                         }
+
                         if (!dispatcher.current) dispatcher.play();
-                        return statusMsg.edit(`🎶 Added playlist **${result.data.info.name}** (\`${result.data.tracks.length}\` tracks) to queue.`);
+                        const playlistName = result.data.info?.name || 'Playlist';
+                        return statusMsg.edit(`🎶 Added playlist **${playlistName}** (\`${playlistTracks.length}\` tracks) to queue.`);
                     }
 
-                    const track = Array.isArray(result.data) ? result.data[0] : result.data;
+                    // 2. Track / Search Result Handling
+                    let track = null;
+                    if (Array.isArray(result.data)) {
+                        track = result.data[0];
+                    } else if (result.data.tracks && Array.isArray(result.data.tracks)) {
+                        track = result.data.tracks[0];
+                    } else {
+                        track = result.data;
+                    }
+
+                    if (!track || (!track.encoded && !track.track)) {
+                        return statusMsg.edit(`❌ Audio not found for: **${query}**`);
+                    }
+
+                    if (!track.info) track.info = {};
                     track.info.requester = message.author;
                     dispatcher.queue.push(track);
 
                     if (!dispatcher.current) {
                         dispatcher.play();
-                        return statusMsg.edit(`🎶 Now playing: **${track.info.title}**`);
+                        return statusMsg.edit(`🎶 Now playing: **${track.info.title || 'Track'}**`);
                     } else {
-                        return statusMsg.edit(`✅ Added to queue: **${track.info.title}**`);
+                        return statusMsg.edit(`✅ Added to queue: **${track.info.title || 'Track'}**`);
                     }
                 } catch (err) {
                     console.error('Play command error:', err);
                     return statusMsg.edit(`❌ Playback error: \`${err.message}\``);
                 }
             }
-
+            
             // %stop
             if (cmd === 'stop') {
                 const dispatcher = client.musicQueue.get(message.guild.id);
