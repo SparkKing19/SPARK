@@ -1,5 +1,5 @@
 const { isFeatureEnabled } = require('../utils/featureCheck');
-const BOT_OWNERS = ['1266728371719508062', '1474216218792558735'];
+const BOT_OWNERS = ['1266728371719508062', '1549995551288852584', '1474216218792558735'];
 const { 
     EmbedBuilder, 
     ActionRowBuilder, 
@@ -197,7 +197,7 @@ module.exports = async (client) => {
     const nodes = [
         {
             name: 'SparkCore-Private-Lavalink',
-            host: 'Lavalink-production-cf42.up.railway.app',
+            host: 'lavalink-production-84c3.up.railway.app',
             port: 443,
             password: 'sparkcore123',
             secure: true
