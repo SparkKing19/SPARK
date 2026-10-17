@@ -45,12 +45,15 @@ const client = new Client({
 });
 
 // Music System: Shoukaku v4 + Lavalink v4
+h
+// Music System: Shoukaku v4 + Lavalink v4
 const lavalinkHost = process.env.LAVALINK_HOST || 'lavalink-production-84c3.up.railway.app';
-const lavalinkPort = process.env.LAVALINK_PORT || '443';
+const rawPort = process.env.LAVALINK_PORT || '443';
+// Typo guard: agar 433 set ho gaya ho toh auto 443 le
+const lavalinkPort = rawPort === '433' ? '443' : rawPort;
 const lavalinkPassword = process.env.LAVALINK_PASSWORD || 'sparkcore123';
 const lavalinkSecure = process.env.LAVALINK_SECURE !== 'false';
 
-// Multi-Node Cluster Configuration (Private + Verified Public Fallback)
 const lavalinkNodes = [
     {
         name: 'railway-lavalink-private',
@@ -86,11 +89,10 @@ client.shoukaku.on('error', (name, error) => {
 });
 
 client.shoukaku.on('close', (name, code, reason) => {
-    console.warn(`⚠️ Lavalink node closed (${name}): code ${code}, reason:${reason}`);
+    console.warn(`⚠️ Lavalink node closed (${name}): code ${code}, reason: ${reason}`);
 });
 
 const music = setupMusic(client);
-
 
 client.commands = new Map();
 const commandsArray = [];
