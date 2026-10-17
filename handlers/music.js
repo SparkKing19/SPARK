@@ -20,7 +20,7 @@ const autoplayMap = new Map();
 const previousTracks = new Map();
 const errorCounter = new Map();
 
-// Voice Channel Subtitle Status (Set & Clear)
+// Voice Channel Subtitle Status
 async function updateVoiceStatus(client, channelId, statusText = '') {
     if (!channelId) return;
     try {
@@ -35,14 +35,12 @@ async function updateVoiceStatus(client, channelId, statusText = '') {
     } catch (_) {}
 }
 
-// High-Res Artwork Resolver
 function getTrackThumbnail(track) {
     if (track.info?.image?.startsWith('http')) return track.info.image;
     if (track.info?.artworkUrl?.startsWith('http')) return track.info.artworkUrl;
     return 'https://images.unsplash.com/photo-1511671782779-c97d3d27a1d4?q=80&w=1000&auto=format&fit=crop';
 }
 
-// Controller Components
 function getPanelComponents(player = null) {
     const isLoop = player ? player.loop === 'TRACK' : false;
     const isAutoplay = player ? (autoplayMap.get(player.guildId) ?? true) : true;
@@ -75,11 +73,7 @@ function getPanelComponents(player = null) {
                 { label: 'Vaporwave', description: 'Slowed down aesthetic lo-fi', value: 'f_vaporwave', emoji: '🌊' },
                 { label: '8D Audio', description: 'Surround 360 rotating effect', value: 'f_8d', emoji: '🎧' },
                 { label: 'Pop', description: 'Crisp vocal clarity profile', value: 'f_pop', emoji: '🎤' },
-                { label: 'Soft', description: 'Calm and muffled relaxing curve', value: 'f_soft', emoji: '🍃' },
-                { label: 'Treblebass', description: 'Enhanced highs and lows', value: 'f_treblebass', emoji: '🎚️' },
-                { label: 'Electronic', description: 'Aggressive EDM frequency response', value: 'f_electronic', emoji: '⚡' },
-                { label: 'Karaoke', description: 'Suppress center vocal channel', value: 'f_karaoke', emoji: '🎙️' },
-                { label: 'Slowed', description: 'Deep slowed atmospheric playback', value: 'f_slowed', emoji: '⏳' },
+                { label: 'Soft', description: 'Calm and relaxing curve', value: 'f_soft', emoji: '🍃' },
                 { label: 'Clear Filters', description: 'Reset all equalizers & effects', value: 'f_clear', emoji: '❌' }
             ])
     );
@@ -87,7 +81,6 @@ function getPanelComponents(player = null) {
     return [row1, row2, row3];
 }
 
-// Embed Builder
 function getPanelEmbed(client, player = null, track = null) {
     if (!player || !track) {
         return new EmbedBuilder()
@@ -110,7 +103,6 @@ function getPanelEmbed(client, player = null, track = null) {
         .setFooter({ text: `Requested by ${track.info.requester?.username || 'System'}` });
 }
 
-// Live Panel Refresh
 async function updateGuildPanel(client, guildId, player = null, track = null) {
     try {
         const conf = await GuildConfig.findOne({ guildId });
@@ -129,7 +121,6 @@ async function updateGuildPanel(client, guildId, player = null, track = null) {
     } catch (_) {}
 }
 
-// Autoplay Engine (SoundCloud Priority)
 async function playNextAutoplay(poru, player, client) {
     const lastTrack = previousTracks.get(player.guildId) || player.currentTrack;
     if (!lastTrack) return;
@@ -138,13 +129,9 @@ async function playNextAutoplay(poru, player, client) {
         const query = `${lastTrack.info.author} audio`;
         let res = await poru.resolve({ query, source: 'scsearch', requester: client.user }).catch(() => null);
 
-        if (!res || !res.tracks?.length) {
-            res = await poru.resolve({ query: `${lastTrack.info.title}`, source: 'scsearch', requester: client.user }).catch(() => null);
-        }
-
         if (res?.tracks?.length) {
             const filtered = res.tracks.filter(t => t.info.title !== lastTrack.info.title);
-            const next = filtered.length ? filtered[Math.floor(Math.random() * Math.min(filtered.length, 5))] : res.tracks[0];
+            const next = filtered.length ? filtered[0] : res.tracks[0];
             player.queue.add(next);
             return player.play();
         }
@@ -162,9 +149,9 @@ module.exports = async (client) => {
         }
     ];
 
+    // defaultPlatform hata diya hai taaki query corrupt na ho
     const poru = new Poru(client, nodes, {
         library: 'discord.js',
-        defaultPlatform: 'scsearch',
         reconnectTries: Infinity,
         reconnectTimeout: 10000
     });
@@ -175,7 +162,6 @@ module.exports = async (client) => {
     client.getPanelComponents = getPanelComponents;
     client.updateGuildPanel = updateGuildPanel;
 
-    // Node Connect
     poru.on('nodeConnect', async (node) => {
         console.log(`✔ Private Lavalink Online: ${node.name}`);
         try {
@@ -203,7 +189,6 @@ module.exports = async (client) => {
         console.warn(`⚠️ Lavalink Node Warning on [${node.name}]:${error.message}`);
     });
 
-    // Track Start Listener
     poru.on('trackStart', async (player, track) => {
         errorCounter.set(player.guildId, 0);
 
@@ -218,27 +203,9 @@ module.exports = async (client) => {
         );
 
         if (player.volume !== 100) player.setVolume(100);
-
-        try {
-            const activePlaylists = await CustomPlaylist.find({ recording: true });
-            for (const pl of activePlaylists) {
-                if (pl.tracks.length < 10) {
-                    pl.tracks.push({
-                        title: track.info.title,
-                        uri: track.info.uri,
-                        author: track.info.author,
-                        length: track.info.length
-                    });
-                    if (pl.tracks.length >= 10) pl.recording = false;
-                    await pl.save();
-                }
-            }
-        } catch (_) {}
-
         await updateGuildPanel(client, player.guildId, player, track);
     });
 
-    // Track Error Listener
     poru.on('trackError', async (player, track, error) => {
         console.error(`⚠️ Playback Failed for [${track.info.title}]:`, error);
         const count = (errorCounter.get(player.guildId) || 0) + 1;
@@ -246,16 +213,11 @@ module.exports = async (client) => {
 
         if (count >= 2) {
             player.queue.clear();
-            const textChan = client.channels.cache.get(player.textChannel);
-            if (textChan) {
-                textChan.send(`⚠️ Stream Error on \`${track.info.title}\`. Stopping loop.`).catch(() => {});
-            }
             errorCounter.set(player.guildId, 0);
             return player.destroy();
         }
     });
 
-    // Queue End
     poru.on('queueEnd', async (player) => {
         const errs = errorCounter.get(player.guildId) || 0;
         const isAutoplay = autoplayMap.get(player.guildId) ?? true;
@@ -277,7 +239,6 @@ module.exports = async (client) => {
         }
     });
 
-    // VC Empty
     client.on('voiceStateUpdate', async (oldState, newState) => {
         const guildId = oldState.guild.id || newState.guild.id;
         const player = poru.players.get(guildId);
@@ -305,13 +266,11 @@ module.exports = async (client) => {
         }
     });
 
-    client.once('ready', () => {
+    client.once('clientReady', () => {
         poru.init(client);
     });
 
-    // ==========================================
-    // PREFIX COMMANDS (%...)
-    // ==========================================
+    // COMMANDS
     client.on('messageCreate', async (message) => {
         if (message.guild && !(await isFeatureEnabled(message.guild.id, 'music'))) return;
         if (message.author.bot || !message.guild) return;
@@ -321,22 +280,6 @@ module.exports = async (client) => {
 
         const args = message.content.slice(PREFIX.length).trim().split(/ +/);
         const commandName = args.shift().toLowerCase();
-
-        // %music
-        if (commandName === 'music' && (!args[0] || args[0].toLowerCase() !== 'panel')) {
-            const helpEmbed = new EmbedBuilder()
-                .setColor('#5865F2')
-                .setTitle('🎶 SparkCore Music Commands')
-                .setDescription('Prefix: `%`\n\n' +
-                    '`%play <song name or link>` — Play track\n' +
-                    '`%join` — Summon bot to voice\n' +
-                    '`%stop` — Stop playback\n' +
-                    '`%skip` — Skip track\n' +
-                    '`%24/7` — Toggle 24/7 channel standby\n' +
-                    '`%music panel` or `%setup` — Setup live music controller panel'
-                );
-            return message.reply({ embeds: [helpEmbed] });
-        }
 
         // %setup / %music panel
         if (commandName === 'setup' || (commandName === 'music' && args[0]?.toLowerCase() === 'panel')) {
@@ -381,13 +324,13 @@ module.exports = async (client) => {
             return message.reply(`🔊 Connected to <#${vc.id}>.`);
         }
 
-        // %play (Pure SoundCloud & Spotify Direct Streams)
+        // %play (CLEAN RESOLVER - NO CORRUPT PREFIX)
         if (commandName === 'play' || commandName === 'p') {
             const vc = message.member.voice.channel;
             if (!vc) return message.reply('❌ Please join a voice channel first.');
 
             const query = args.join(' ').trim();
-            if (!query) return message.reply('❌ Enter a song name or valid link: `%play <query>`');
+            if (!query) return message.reply('❌ Enter a song name: `%play <song name>`');
 
             let player = poru.players.get(message.guild.id);
             let isNew = false;
@@ -401,29 +344,26 @@ module.exports = async (client) => {
                 isNew = true;
             }
 
-            const statusMsg = await message.reply('🔍 Resolving audio...');
+            const statusMsg = await message.reply('🔍 Resolving audio track...');
 
             try {
                 let res = null;
 
-                // 1. Direct Links (SoundCloud / Spotify / HTTP)
-                if (query.startsWith('http://') || query.startsWith('https://')) {
+                // URL vs Title search (Clean without prefix conflict)
+                if (/^https?:\/\//i.test(query)) {
                     res = await poru.resolve({ query, requester: message.author }).catch(() => null);
-                }
-
-                // 2. Direct SoundCloud & Spotify search (YouTube Block Bypassed)
-                if (!res || !res.tracks?.length) {
+                } else {
                     res = await poru.resolve({ query, source: 'scsearch', requester: message.author }).catch(() => null);
-                }
-                if (!res || !res.tracks?.length) {
-                    res = await poru.resolve({ query, source: 'spsearch', requester: message.author }).catch(() => null);
+                    if (!res || !res.tracks?.length) {
+                        res = await poru.resolve({ query: `${query} audio`, source: 'scsearch', requester: message.author }).catch(() => null);
+                    }
                 }
 
-                if (!res || !res.tracks?.length) {
+                if (!res || !res.tracks || !res.tracks.length) {
                     return statusMsg.edit(`❌ Audio not found for: **${query}**`);
                 }
 
-                if (isNew) await new Promise(r => setTimeout(r, 600));
+                if (isNew) await new Promise(r => setTimeout(r, 700));
 
                 if (res.loadType === 'PLAYLIST_LOADED') {
                     for (const t of res.tracks) player.queue.add(t);
@@ -526,10 +466,6 @@ module.exports = async (client) => {
             else if (val === 'f_8d') player.filters.setRotation({ rotationHz: 0.2 });
             else if (val === 'f_pop') player.filters.setEqualizer([{ band: 1, gain: 0.2 }, { band: 2, gain: 0.3 }, { band: 3, gain: 0.1 }]);
             else if (val === 'f_soft') player.filters.setLowPass({ smoothing: 20.0 });
-            else if (val === 'f_treblebass') player.filters.setEqualizer([{ band: 0, gain: 0.3 }, { band: 12, gain: 0.3 }, { band: 13, gain: 0.35 }]);
-            else if (val === 'f_electronic') player.filters.setEqualizer([{ band: 0, gain: 0.35 }, { band: 5, gain: 0.25 }, { band: 13, gain: 0.3 }]);
-            else if (val === 'f_karaoke') player.filters.setKaraoke({ level: 1.0, monoLevel: 1.0, filterBand: 220.0, filterWidth: 100.0 });
-            else if (val === 'f_slowed') player.filters.setTimescale({ speed: 0.75, pitch: 0.85, rate: 1.0 });
             else if (val === 'f_clear') player.filters.clearFilters();
             return;
         }
@@ -604,5 +540,5 @@ module.exports = async (client) => {
         }
     });
 
-    console.log('✔ Custom Rythm Music Engine (Pure Stream Active).');
+    console.log('✔ Pure Stream Music Engine Active.');
 };
