@@ -82,7 +82,7 @@ function getPanelEmbed(client, dispatcher = null, track = null) {
 
     return new EmbedBuilder()
         .setColor('#5865F2')
-        .setDescription(`## <a:play_rec:1559415361290641429> Now Playing...\n\n[**${track.info.title}**](${track.info.uri})\n\n> **Author:** \`${track.info.author}\` • **Source:** \`${source}\`\n> **Duration:** \`${duration}\`\n> **Autoplay:** \`${isAutoplay}\` • **Loop:** \`${dispatcher.loop}\`\n> **Voice Channel:** <#${dispatcher.player.connection.channelId}>`)
+        .setDescription(`## <a:play_rec:1559415361290641429> Now Playing...\n\n[**${track.info.title}**](${track.info.uri})\n\n> **Author:** \`${track.info.author}\` • **Source:** \`${source}\`\n> **Duration:** \`${duration}\`\n> **Autoplay:** \`${isAutoplay}\` • **Loop:** \`${dispatcher.loop}\`\n> **Voice Channel:** <#${dispatcher.voiceChannelId}>`)
         .setImage(thumbnail)
         .setFooter({ text: `Requested by ${track.info.requester?.username || 'User'}` });
 }
