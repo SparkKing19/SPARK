@@ -3,8 +3,8 @@ const mongoose = require('mongoose');
 
 const serverSettingsSchema = new mongoose.Schema({
     guildId: { type: String, required: true, unique: true },
-    mode: { type: String, enum: ['normal', 'premium'], default: 'premium' },
-    customLogoUrl: { type: String, default: null },
+    mode: { type: String, enum: ['normal', 'premium'], default: 'normal' },
+    normalFeatures: { type: Boolean, default: true }, // Normal features folder ke liye default ON
     features: {
         welcome: { type: Boolean, default: false },
         ticket: { type: Boolean, default: false },
@@ -24,6 +24,6 @@ const serverSettingsSchema = new mongoose.Schema({
         botprofile: { type: Boolean, default: false },
         ai: { type: Boolean, default: false }
     }
-});
+}, { timestamps: true });
 
 module.exports = mongoose.model('ServerSettings', serverSettingsSchema);
