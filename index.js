@@ -105,6 +105,23 @@ for (const file of commandFiles) {
     }
 }
 
+// 3A. Auto-load Normal Features
+const normalFeaturesPath = path.join(__dirname, 'normal_features');
+
+if (fs.existsSync(normalFeaturesPath)) {
+    const normalFeatureFiles = fs.readdirSync(normalFeaturesPath)
+        .filter(file => file.endsWith('.js'));
+
+    for (const file of normalFeatureFiles) {
+        try {
+            require(path.join(normalFeaturesPath, file))(client);
+            console.log(`✔ Normal Feature Loaded: ${file}`);
+        } catch (err) {
+            console.error(`❌ Failed to load ${file}:`, err);
+        }
+    }
+}
+
 // 2. Global Slash Command Execution & Owner Bypass Guard
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
