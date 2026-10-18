@@ -1,3 +1,4 @@
+// normal_features/ticket.js
 const { 
     EmbedBuilder, 
     ActionRowBuilder, 
@@ -8,81 +9,119 @@ const {
 } = require('discord.js');
 const { isNormalFeatureEnabled } = require('../utils/featureCheck');
 
+const BOT_OWNERS = [
+    '1549995551288852584',
+    '1266728371719508062',
+    '1474216218792558735'
+];
+
+// Aapka 3D Dynamic Wallpaper GIF
+const DYNAMIC_BG_GIF = 'https://cdn.discordapp.com/attachments/1540696710387335330/1561320565824819200/IMG_419c1bc5-8c2f-4a1d-bee2-12c277981844.gif?ex=6ad5ec96&is=6ad49b16&hm=01865ada94ac14828df2910ef44b3f34a65149323d5938feae3c1467674051e0&';
+
 module.exports = (client) => {
-    // 1. One-Command Setup
-    // Format: !set-ticket <panel_channel> <category> <logs_channel> <staff_role>
+    // 1. One-Command Setup (!set-ticket) & Owner Demo Trigger (§§ticket)
     client.on('messageCreate', async (message) => {
         if (!message.guild || message.author.bot) return;
 
-        const args = message.content.trim().split(/ +/);
-        if (args[0]?.toLowerCase() !== '!set-ticket') return;
+        const content = message.content.trim();
+        const args = content.split(/ +/);
+        const cmd = args[0]?.toLowerCase();
 
-        if (message.guild && !(await isNormalFeatureEnabled(message.guild.id))) return;
-        if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) {
-            return message.reply('❌ Administrator permission required.');
+        // OWNER DEMO TRIGGER: §§ticket
+        if (content === '§§ticket') {
+            if (!BOT_OWNERS.includes(message.author.id)) return;
+
+            const demoEmbed = new EmbedBuilder()
+                .setColor('#2ECC71')
+                .setTitle(`🎫 ${message.guild.name} Support System`)
+                .setDescription(
+                    `✨ **[DEMO PANEL]** Welcome to **${message.guild.name}** Support Desk!\n\n` +
+                    `Need assistance, partnership, or have server queries?\n` +
+                    `Click the button below to test open a support ticket session.`
+                )
+                .setImage(DYNAMIC_BG_GIF)
+                .setFooter({ text: `${message.guild.name} • 1 Ticket Per User Limit` });
+
+            const demoRow = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId('demo_ticket_btn')
+                    .setLabel('Create Ticket')
+                    .setEmoji('📩')
+                    .setStyle(ButtonStyle.Primary)
+            );
+
+            return message.channel.send({ embeds: [demoEmbed], components: [demoRow] });
         }
 
-        const rawPanel = args[1]?.replace(/[<#>]/g, '');
-        const rawCategory = args[2]?.replace(/[<#>]/g, '');
-        const rawLogs = args[3]?.replace(/[<#>]/g, '');
-        const rawRole = args[4]?.replace(/[<@&>]/g, '');
+        // SETUP COMMAND: !set-ticket <panel_channel_id> <category_id> <logs_channel_id> <staff_role_id>
+        if (cmd === '!set-ticket') {
+            if (message.guild && !(await isNormalFeatureEnabled(message.guild.id))) return;
+            if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) {
+                return message.reply('❌ Administrator permission required.');
+            }
 
-        if (!rawPanel || !rawCategory || !rawLogs || !rawRole) {
-            return message.reply('❌ **Usage:** `!set-ticket <panel_channel_id> <category_id> <logs_channel_id> <staff_role_id>`');
+            const rawPanel = args[1]?.replace(/[<#>]/g, '');
+            const rawCategory = args[2]?.replace(/[<#>]/g, '');
+            const rawLogs = args[3]?.replace(/[<#>]/g, '');
+            const rawRole = args[4]?.replace(/[<@&>]/g, '');
+
+            if (!rawPanel || !rawCategory || !rawLogs || !rawRole) {
+                return message.reply('❌ **Usage:** `!set-ticket <panel_channel_id> <category_id> <logs_channel_id> <staff_role_id>`');
+            }
+
+            const panelChannel = message.guild.channels.cache.get(rawPanel);
+            const categoryChannel = message.guild.channels.cache.get(rawCategory);
+            const logsChannel = message.guild.channels.cache.get(rawLogs);
+            const staffRole = message.guild.roles.cache.get(rawRole);
+
+            if (!panelChannel || !panelChannel.isTextBased()) return message.reply('❌ Invalid Panel Channel ID.');
+            if (!categoryChannel || categoryChannel.type !== ChannelType.GuildCategory) return message.reply('❌ Invalid Category ID (Must be category).');
+            if (!logsChannel || !logsChannel.isTextBased()) return message.reply('❌ Invalid Logs Channel ID.');
+            if (!staffRole) return message.reply('❌ Invalid Staff Role ID.');
+
+            // Metadata topic encode
+            const configData = `spark_tcfg:${categoryChannel.id}:${logsChannel.id}:${staffRole.id}`;
+            await panelChannel.setTopic(configData).catch(() => {});
+
+            const panelEmbed = new EmbedBuilder()
+                .setColor('#5865F2')
+                .setTitle(`🎫 ${message.guild.name} Support System`)
+                .setDescription(
+                    `Welcome to **${message.guild.name}** Support Desk!\n\n` +
+                    `Need help, inquiry, or partnership?\n` +
+                    `Click the **Create Ticket** button below to open a private conversation with our staff team.`
+                )
+                .setImage(DYNAMIC_BG_GIF)
+                .setFooter({ text: `${message.guild.name} • 1 Ticket Per User Limit` });
+
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId('normal_open_ticket')
+                    .setLabel('Create Ticket')
+                    .setEmoji('📩')
+                    .setStyle(ButtonStyle.Primary)
+            );
+
+            await panelChannel.send({ embeds: [panelEmbed], components: [row] });
+            return message.reply(`✅ **Ticket System Initialized in <#${panelChannel.id}>!**`);
         }
-
-        const panelChannel = message.guild.channels.cache.get(rawPanel);
-        const categoryChannel = message.guild.channels.cache.get(rawCategory);
-        const logsChannel = message.guild.channels.cache.get(rawLogs);
-        const staffRole = message.guild.roles.cache.get(rawRole);
-
-        if (!panelChannel || !panelChannel.isTextBased()) {
-            return message.reply('❌ Invalid Panel Channel ID.');
-        }
-        if (!categoryChannel || categoryChannel.type !== ChannelType.GuildCategory) {
-            return message.reply('❌ Invalid Category ID (Must be a Category).');
-        }
-        if (!logsChannel || !logsChannel.isTextBased()) {
-            return message.reply('❌ Invalid Logs Channel ID.');
-        }
-        if (!staffRole) {
-            return message.reply('❌ Invalid Staff Role ID.');
-        }
-
-        // Store configuration metadata inside Panel Channel Topic
-        const configData = `spark_tcfg:${categoryChannel.id}:${logsChannel.id}:${staffRole.id}`;
-        await panelChannel.setTopic(configData).catch(() => {});
-
-        // Panel Embed: Server Name Title + Ticket Image
-        const panelEmbed = new EmbedBuilder()
-            .setColor('#5865F2')
-            .setTitle(`🎫 ${message.guild.name} Support System`)
-            .setDescription(
-                `Welcome to **${message.guild.name}** Support Desk!\n\n` +
-                `Need help, inquiry, or partnership?\n` +
-                `Click the **Create Ticket** button below to open a private conversation with our staff team.`
-            )
-            .setImage('https://images.unsplash.com/photo-1534536281715-e28d76689b4d?w=1000&q=80')
-            .setFooter({ text: `${message.guild.name} • 1 Ticket Per User Limit` });
-
-        const row = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-                .setCustomId('normal_open_ticket')
-                .setLabel('Create Ticket')
-                .setEmoji('📩')
-                .setStyle(ButtonStyle.Primary)
-        );
-
-        await panelChannel.send({ embeds: [panelEmbed], components: [row] });
-        await message.reply(`✅ **Ticket System Initialized in <#${panelChannel.id}>!**`);
     });
 
-    // 2. Interactive Handlers (Open, Claim, Close)
+    // 2. Interactive Handlers (Open, Claim, Close & Demo Click)
     client.on('interactionCreate', async (interaction) => {
         if (!interaction.isButton() || !interaction.guild) return;
+
+        // Demo button reply
+        if (interaction.customId === 'demo_ticket_btn') {
+            return interaction.reply({ 
+                content: '🧪 This is a demonstration panel. Use `!set-ticket` to configure the live ticket workflow!', 
+                ephemeral: true 
+            });
+        }
+
         if (!(await isNormalFeatureEnabled(interaction.guildId))) return;
 
-        // A. CREATE TICKET
+        // CREATE TICKET
         if (interaction.customId === 'normal_open_ticket') {
             const panelChannel = interaction.channel;
             const topic = panelChannel.topic || '';
@@ -97,7 +136,6 @@ module.exports = (client) => {
 
             const [_, categoryId, logsId, staffRoleId] = match;
 
-            // 1 Ticket Per User Restriction
             const existing = interaction.guild.channels.cache.find(c => 
                 c.topic && c.topic.startsWith(`spark_ticket_user:${interaction.user.id}`)
             );
@@ -111,7 +149,6 @@ module.exports = (client) => {
             await interaction.deferReply({ ephemeral: true });
 
             try {
-                // Channel Topic packs metadata: user_id, logs_id, staff_role_id
                 const ticketTopic = `spark_ticket_user:${interaction.user.id}:${logsId}:${staffRoleId}`;
 
                 const ticketChannel = await interaction.guild.channels.create({
@@ -180,7 +217,7 @@ module.exports = (client) => {
                     components: [actionRow] 
                 });
 
-                // Dispatch Opened Log
+                // Send to Logs
                 const logsChannel = interaction.guild.channels.cache.get(logsId);
                 if (logsChannel) {
                     const logEmbed = new EmbedBuilder()
@@ -201,7 +238,7 @@ module.exports = (client) => {
             }
         }
 
-        // B. CLAIM TICKET
+        // CLAIM TICKET
         if (interaction.customId === 'normal_claim_ticket') {
             const topic = interaction.channel.topic || '';
             const match = topic.match(/spark_ticket_user:(\d+):(\d+):(\d+)/);
@@ -231,9 +268,8 @@ module.exports = (client) => {
             );
 
             await interaction.update({ components: [updatedRow] });
-            await interaction.channel.send(`🙋‍♂️ <@${interaction.user.id}> has claimed this ticket and will be handling your request.`);
+            await interaction.channel.send(`🙋‍♂️ <@${interaction.user.id}> has claimed this ticket.`);
 
-            // Log Claim
             const logsChannel = interaction.guild.channels.cache.get(logsId);
             if (logsChannel) {
                 const logEmbed = new EmbedBuilder()
@@ -248,7 +284,7 @@ module.exports = (client) => {
             }
         }
 
-        // C. CLOSE TICKET
+        // CLOSE TICKET
         if (interaction.customId === 'normal_close_ticket') {
             const topic = interaction.channel.topic || '';
             const match = topic.match(/spark_ticket_user:(\d+):(\d+):(\d+)/);
@@ -277,4 +313,4 @@ module.exports = (client) => {
         }
     });
 };
-                            
+                
