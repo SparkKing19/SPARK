@@ -1,44 +1,103 @@
-const { ChannelType, PermissionFlagsBits, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } = require('discord.js');
-const { guild, save } = require('./storage');
-const staffPerms=[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageChannels];
-module.exports = client => {
-  client.on('messageCreate', async msg => {
-    if(!msg.guild || msg.author.bot) return;
-    const cfg=guild(msg.guild.id), isAdmin=msg.member.permissions.has(PermissionFlagsBits.ManageGuild)||msg.member.permissions.has(PermissionFlagsBits.ManageChannels);
-    if(/^!set-ticket$/i.test(msg.content.trim())) {
-      if(!isAdmin) return msg.reply('You need Manage Server or Manage Channels permission.');
-      try {
-        let role=msg.guild.roles.cache.find(r=>r.name==='Ticket Support'); if(!role) role=await msg.guild.roles.create({name:'Ticket Support',reason:'Normal ticket system staff role'});
-        let category=cfg.ticketCategory&&msg.guild.channels.cache.get(cfg.ticketCategory);
-        if(!category) category=await msg.guild.channels.create({name:'Tickets',type:ChannelType.GuildCategory,permissionOverwrites:[{id:msg.guild.id,deny:[PermissionFlagsBits.ViewChannel]},{id:role.id,allow:staffPerms}]});
-        let log=cfg.ticketLog&&msg.guild.channels.cache.get(cfg.ticketLog);
-        if(!log) log=await msg.guild.channels.create({name:'ticket-logs',type:ChannelType.GuildText,permissionOverwrites:[{id:msg.guild.id,deny:[PermissionFlagsBits.ViewChannel]},{id:role.id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory]},{id:msg.guild.members.me.id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory]}]});
-        Object.assign(cfg,{staffRole:role.id,ticketCategory:category.id,ticketLog:log.id}); save();
-        const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId('nf_ticket_open').setLabel('Create Ticket').setStyle(ButtonStyle.Primary).setEmoji('🎫'));
-        await msg.channel.send({embeds:[new EmbedBuilder().setColor(0x5865F2).setTitle('Support Center').setDescription('Press the button below to open a private support ticket.')],components:[row]});
-        return msg.reply(`Ticket system ready. Staff role: ${role}. Logs: ${log}. Assign trusted moderators to the role.`);
-      } catch(e) { console.error('[normal_features/ticket setup]',e); return msg.reply('Ticket setup failed. Check Manage Channels and Manage Roles permissions.'); }
-    }
-    if(/^!ticket$/i.test(msg.content.trim())) return openTicket(msg);
-    if(/^!close$/i.test(msg.content.trim())) {
-      const topic=msg.channel.topic||''; const owner=topic.match(/ticket-owner:(\d+)/)?.[1];
-      if(!owner) return;
-      if(msg.author.id!==owner&&!isTicketStaff(msg.member,cfg)) return msg.reply('Only the ticket owner or Ticket Support staff can close this ticket.');
-      return closeTicket(msg.channel,msg.member,cfg,client,msg.author.tag);
-    }
-  });
-  client.on('interactionCreate', async i => {
-    if(!i.isButton()||!i.guild) return;
-    const cfg=guild(i.guild.id);
-    try {
-      if(i.customId==='nf_ticket_open') { await i.deferReply({ephemeral:true}); const channel=await makeTicket(i.guild,i.user,cfg); return i.editReply(`Your ticket is ready: ${channel}`); }
-      if(i.customId.startsWith('nf_ticket_claim:')) { const id=i.customId.split(':')[1]; if(!isTicketStaff(i.member,cfg)) return i.reply({content:'Only Ticket Support staff can claim tickets.',ephemeral:true}); await i.channel.setTopic(`${i.channel.topic||''}`.replace(/\s*claimed-by:\d+/g,'').trim()+` claimed-by:${i.user.id}`); await i.reply({content:`Ticket claimed by ${i.user}.`}); await logAction(i.guild,cfg,`Ticket claimed: ${i.channel} by ${i.user}`); }
-      if(i.customId.startsWith('nf_ticket_close:')) { const owner=i.channel.topic?.match(/ticket-owner:(\d+)/)?.[1]; if(i.user.id!==owner&&!isTicketStaff(i.member,cfg)) return i.reply({content:'Only the ticket owner or Ticket Support staff can close it.',ephemeral:true}); await i.reply({content:'Closing ticket…',ephemeral:true}); await closeTicket(i.channel,i.member,cfg,client,i.user.tag); }
-    } catch(e) { console.error('[normal_features/ticket button]',e); if(!i.replied&&!i.deferred) await i.reply({content:'Ticket action failed. Check bot permissions.',ephemeral:true}).catch(()=>{}); }
-  });
+const { 
+    EmbedBuilder, 
+    ActionRowBuilder, 
+    ButtonBuilder, 
+    ButtonStyle, 
+    ChannelType, 
+    PermissionFlagsBits 
+} = require('discord.js');
+const { isNormalFeatureEnabled } = require('../utils/featureCheck');
+
+module.exports = (client) => {
+    // 1. One-Click Setup
+    client.on('messageCreate', async (message) => {
+        if (!message.guild || message.author.bot) return;
+        if (message.content.trim().toLowerCase() !== '!set-ticket') return;
+
+        if (message.guild && !(await isNormalFeatureEnabled(message.guild.id))) return;
+        if (!message.member.permissions.has(PermissionFlagsBits.Administrator)) {
+            return message.reply('❌ Administrator permission required.');
+        }
+
+        const embed = new EmbedBuilder()
+            .setColor('#5865F2')
+            .setTitle('🎫 Server Support & Assistance')
+            .setDescription('Need help, have an inquiry, or want to report an issue?\nClick the button below to generate a private support ticket.')
+            .setFooter({ text: 'Spark Support System' });
+
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId('normal_open_ticket')
+                .setLabel('Create Ticket')
+                .setEmoji('📩')
+                .setStyle(ButtonStyle.Primary)
+        );
+
+        await message.delete().catch(() => {});
+        return message.channel.send({ embeds: [embed], components: [row] });
+    });
+
+    // 2. Ticket Actions
+    client.on('interactionCreate', async (interaction) => {
+        if (!interaction.isButton() || !interaction.guild) return;
+        if (!(await isNormalFeatureEnabled(interaction.guildId))) return;
+
+        // Open Ticket
+        if (interaction.customId === 'normal_open_ticket') {
+            const existing = interaction.guild.channels.cache.find(c => 
+                c.topic === `spark_ticket_${interaction.user.id}`
+            );
+            if (existing) {
+                return interaction.reply({ content: `❌ You already have an open ticket in <#${existing.id}>.`, ephemeral: true });
+            }
+
+            await interaction.deferReply({ ephemeral: true });
+
+            const ticketChannel = await interaction.guild.channels.create({
+                name: `ticket-${interaction.user.username.toLowerCase()}`,
+                type: ChannelType.GuildText,
+                topic: `spark_ticket_${interaction.user.id}`,
+                permissionOverwrites: [
+                    { id: interaction.guild.id, deny: [PermissionFlagsBits.ViewChannel] },
+                    { 
+                        id: interaction.user.id, 
+                        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.AttachFiles] 
+                    },
+                    { 
+                        id: interaction.guild.members.me.id, 
+                        allow: [PermissionFlagsBits.ViewChannel, PermissionFlagsBits.SendMessages, PermissionFlagsBits.ManageChannels] 
+                    }
+                ]
+            });
+
+            const ticketEmbed = new EmbedBuilder()
+                .setColor('#2ECC71')
+                .setTitle(`Ticket: ${interaction.user.username}`)
+                .setDescription('Support staff will assist you shortly.\nClick below when you are ready to terminate this ticket.');
+
+            const closeRow = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId('normal_close_ticket')
+                    .setLabel('Close Ticket')
+                    .setEmoji('🔒')
+                    .setStyle(ButtonStyle.Danger)
+            );
+
+            await ticketChannel.send({ 
+                content: `<@${interaction.user.id}> Welcome to your ticket.`, 
+                embeds: [ticketEmbed], 
+                components: [closeRow] 
+            });
+
+            return interaction.editReply(`✅ Ticket created: <#${ticketChannel.id}>`);
+        }
+
+        // Close Ticket
+        if (interaction.customId === 'normal_close_ticket') {
+            await interaction.reply('🔒 Closing this ticket in 5 seconds...');
+            setTimeout(() => {
+                interaction.channel.delete().catch(() => {});
+            }, 5000);
+        }
+    });
 };
-function isTicketStaff(member,cfg){return member.permissions.has(PermissionFlagsBits.ManageGuild)||member.permissions.has(PermissionFlagsBits.ManageChannels)||(cfg.staffRole&&member.roles.cache.has(cfg.staffRole));}
-async function makeTicket(guild,user,cfg){const existing=guild.channels.cache.find(c=>c.type===ChannelType.GuildText&&c.topic?.includes(`ticket-owner:${user.id}`)); if(existing) return existing; if(!cfg.ticketCategory||!cfg.staffRole) throw new Error('Run !set-ticket first'); const channel=await guild.channels.create({name:`ticket-${user.username}`.toLowerCase().replace(/[^a-z0-9-]/g,'-').slice(0,90),type:ChannelType.GuildText,parent:cfg.ticketCategory,topic:`ticket-owner:${user.id}`,permissionOverwrites:[{id:guild.id,deny:[PermissionFlagsBits.ViewChannel]},{id:user.id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.AttachFiles,PermissionFlagsBits.EmbedLinks]},{id:cfg.staffRole,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageMessages]},{id:guild.members.me.id,allow:[PermissionFlagsBits.ViewChannel,PermissionFlagsBits.SendMessages,PermissionFlagsBits.ReadMessageHistory,PermissionFlagsBits.ManageChannels]}]}); const row=new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(`nf_ticket_claim:${user.id}`).setLabel('Claim').setStyle(ButtonStyle.Success),new ButtonBuilder().setCustomId(`nf_ticket_close:${user.id}`).setLabel('Close').setStyle(ButtonStyle.Danger)); await channel.send({content:`Welcome ${user}. Describe your issue below.`,components:[row]}); await logAction(guild,cfg,`Ticket opened: ${channel} by ${user.tag}`); return channel;}
-async function openTicket(msg){const cfg=guild(msg.guild.id); try{return msg.reply(`Your ticket is ready: ${await makeTicket(msg.guild,msg.author,cfg)}`);}catch{return msg.reply('Ticket system is not configured yet. Ask an administrator to run `!set-ticket`.');}}
-async function closeTicket(channel,member,cfg,client,by){const guild=channel.guild; await logAction(guild,cfg,`Ticket closed: #${channel.name} by ${by}`); await channel.delete(`Ticket closed by ${by}`);}
-async function logAction(guild,cfg,text){const log=cfg.ticketLog&&guild.channels.cache.get(cfg.ticketLog); if(log) await log.send({content:text}).catch(()=>{});}
