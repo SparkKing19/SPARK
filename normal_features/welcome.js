@@ -1,3 +1,5 @@
+// normal_features/welcome.js
+
 const { AttachmentBuilder, PermissionFlagsBits } = require('discord.js');
 const { isNormalFeatureEnabled } = require('../utils/featureCheck');
 
@@ -34,8 +36,9 @@ module.exports = (client) => {
         const guildName = encodeURIComponent(member.guild.name);
         const memberCount = member.guild.memberCount;
 
-        // Dynamic Sapphire-style image rendering API
-        const cardUrl = `https://api.popcat.xyz/welcomecard?background=https://i.imgur.com/8QeR01D.png&text1=${username}&text2=Welcome+to+${guildName}&text3=Member+%23${memberCount}&avatar=${avatarUrl}`;
+        // Dark clean aesthetic background (Unsplash high-uptime direct CDN)
+        const bgUrl = encodeURIComponent('https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=1000&q=80');
+        const cardUrl = `https://api.popcat.xyz/welcomecard?background=${bgUrl}&text1=${username}&text2=Welcome+to+${guildName}&text3=Member+%23${memberCount}&avatar=${avatarUrl}`;
 
         try {
             const res = await fetch(cardUrl);
