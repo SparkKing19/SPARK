@@ -183,14 +183,15 @@ for (const file of handlerFiles) {
     require(`./handlers/${file}`)(client);
 }
 
-// Default Server Registration
+// Default Server Registration: Normal Features ON, Premium Features OFF
 client.on('guildCreate', async (guild) => {
     try {
         let settings = await ServerSettings.findOne({ guildId: guild.id });
         if (!settings) {
             settings = new ServerSettings({
                 guildId: guild.id,
-                mode: 'premium',
+                mode: 'normal',
+                normalFeatures: true, // Default enabled
                 features: {
                     welcome: false,
                     ticket: false,
@@ -261,13 +262,14 @@ async function urlToBase64(url) {
     return `data:${contentType};base64,${buffer.toString('base64')}`;
 }
 
-// Helper: Build Feature & Mode Manager Card
+// Helper: Build Feature & Mode Manager Card (Normal Master Toggle + Premium Checklist)
 async function buildFeatureManager(guildId) {
     let settings = await ServerSettings.findOne({ guildId });
     if (!settings) {
         settings = await ServerSettings.create({
             guildId,
-            mode: 'premium',
+            mode: 'normal',
+            normalFeatures: true,
             features: {
                 welcome: false,
                 ticket: false,
@@ -292,18 +294,15 @@ async function buildFeatureManager(guildId) {
 
     const guild = client.guilds.cache.get(guildId);
     const f = settings.features || {};
-
-    const botMember = guild ? await guild.members.fetch(client.user.id).catch(() => null) : null;
-    const currentAvatar = botMember ? botMember.displayAvatarURL() : client.user.displayAvatarURL();
-
-    const isPremium = settings.mode === 'premium';
+    const isNormalEnabled = settings.normalFeatures ?? true;
 
     const embed = new EmbedBuilder()
-        .setColor(isPremium ? '#F1C40F' : '#5865F2')
-        .setTitle(`🛠️ Feature & Mode Manager: ${guild ? guild.name : guildId}`)
+        .setColor(isNormalEnabled ? '#2ECC71' : '#E74C3C')
+        .setTitle(`🛠️ Feature & Tier Manager: ${guild ? guild.name : guildId}`)
         .setDescription(
-            `**Server Operating Mode:** \`${settings.mode.toUpperCase()}\` ${isPremium ? '💎' : '📦'}\n` +
-            `Toggle server modules, switch tier modes, or change the bot profile for this server.`
+            `Manage **Normal Features** (\`normal_features/\`) aur **Premium Modules** (\`handlers/\`) for this guild.\n\n` +
+            `🔹 **Normal Features State:** ${isNormalEnabled ? '✅ `ENABLED (Active)`' : '❌ `DISABLED (Inactive)`'}\n` +
+            `*Use the button below to toggle all Normal Features at once.*`
         )
         .addFields(
             { name: 'Welcome System', value: f.welcome ? '✅ `Enabled`' : '❌ `Disabled`', inline: true },
@@ -322,10 +321,9 @@ async function buildFeatureManager(guildId) {
             { name: 'Music System', value: f.music ? '✅ `Enabled`' : '❌ `Disabled`', inline: true },
             { name: 'Leveling System', value: f.leveling ? '✅ `Enabled`' : '❌ `Disabled`', inline: true },
             { name: 'Bot Profile System', value: f.botprofile ? '✅ `Enabled`' : '❌ `Disabled`', inline: true },
-            { name: 'Bot AI System', value: f.ai ? '✅ `Enabled`' : '❌ `Disabled`', inline: true },
-            { name: 'Server Avatar Status', value: settings.customLogoUrl ? '`Using Server Icon` 🖼️' : '`Using Global Bot Avatar` 🤖', inline: false }
+            { name: 'Bot AI System', value: f.ai ? '✅ `Enabled`' : '❌ `Disabled`', inline: true }
         )
-        .setThumbnail(currentAvatar)
+        .setFooter({ text: 'SparkCore Feature Control' })
         .setTimestamp();
 
     const featureKeys = [
@@ -351,33 +349,30 @@ async function buildFeatureManager(guildId) {
     const options = featureKeys.map(item => ({
         label: item.label,
         value: item.value,
-        description: `Check to enable ${item.label}`,
+        description: `Premium feature: ${item.label}`,
         default: Boolean(f[item.value])
     }));
 
-    const multiSelectMenu = new StringSelectMenuBuilder()
+    // Premium Features Checklist
+    const premiumSelectMenu = new StringSelectMenuBuilder()
         .setCustomId(`multi_toggle_feature_${guildId}`)
-        .setPlaceholder('Select enabled features (Multi-Select Checklist)...')
+        .setPlaceholder('Select active Premium Features (Checklist)...')
         .setMinValues(0)
         .setMaxValues(options.length)
         .addOptions(options);
 
-    const modeBtn = new ButtonBuilder()
-        .setCustomId(`toggle_mode_${guildId}`)
-        .setLabel(isPremium ? 'Switch to Normal Mode' : 'Upgrade to Premium Mode')
-        .setEmoji(isPremium ? '📦' : '💎')
-        .setStyle(isPremium ? ButtonStyle.Secondary : ButtonStyle.Success);
-
-    const logoBtn = new ButtonBuilder()
-        .setCustomId(`toggle_logo_${guildId}`)
-        .setLabel(settings.customLogoUrl ? 'Reset Global Avatar' : 'Apply Server Icon as Avatar')
-        .setStyle(settings.customLogoUrl ? ButtonStyle.Danger : ButtonStyle.Primary);
+    // Normal Features Master Toggle Button
+    const normalToggleBtn = new ButtonBuilder()
+        .setCustomId(`toggle_normal_features_${guildId}`)
+        .setLabel(isNormalEnabled ? 'Disable Normal Features' : 'Enable Normal Features')
+        .setEmoji(isNormalEnabled ? '❌' : '✅')
+        .setStyle(isNormalEnabled ? ButtonStyle.Danger : ButtonStyle.Success);
 
     return {
         embeds: [embed],
         components: [
-            new ActionRowBuilder().addComponents(multiSelectMenu),
-            new ActionRowBuilder().addComponents(modeBtn, logoBtn)
+            new ActionRowBuilder().addComponents(premiumSelectMenu),
+            new ActionRowBuilder().addComponents(normalToggleBtn)
         ]
     };
 }
