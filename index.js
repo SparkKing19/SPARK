@@ -451,32 +451,45 @@ client.on('messageCreate', async (message) => {
         return message.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(selectMenu)] });
     }
 
-    // %manage (in Owner DM)
-    if (message.channel.isDMBased() && isBotOwner && cmd === '%manage') {
-        const guilds = Array.from(client.guilds.cache.values());
-        if (guilds.length === 0) return message.reply('❌ The bot is not currently in any servers.');
+        // %manage: Normal Features Master Toggle
+    if (interaction.isButton() && interaction.customId.startsWith('toggle_normal_features_')) {
+        const guildId = interaction.customId.replace('toggle_normal_features_', '');
+        let settings = await ServerSettings.findOne({ guildId });
+        if (!settings) settings = new ServerSettings({ guildId });
 
-        const options = guilds.slice(0, 25).map(g => ({
-            label: g.name.substring(0, 100),
-            value: `manage_guild_${g.id}`,
-            description: `Configure tier mode & modules for ${g.name}`
-        }));
+        settings.normalFeatures = !(settings.normalFeatures ?? true);
+        await settings.save();
 
-        const selectMenu = new StringSelectMenuBuilder()
-            .setCustomId('owner_manage_server_select')
-            .setPlaceholder('Select server to configure...')
-            .addOptions(options);
-
-        const embed = new EmbedBuilder()
-            .setColor('#2ECC71')
-            .setTitle('🛠️ Bot Features & Guild Profile Manager')
-            .setDescription('Select a server from the menu to customize active features, tier mode (Normal/Premium), and profile avatar.')
-            .setThumbnail(client.user.displayAvatarURL())
-            .setTimestamp();
-
-        return message.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(selectMenu)] });
+        const updatedPanel = await buildFeatureManager(guildId);
+        return interaction.update(updatedPanel);
     }
 
+    // %manage: Premium Features Toggle Checklist
+    if (interaction.isStringSelectMenu() && interaction.customId.startsWith('multi_toggle_feature_')) {
+        const guildId = interaction.customId.replace('multi_toggle_feature_', '');
+        const selectedFeatures = interaction.values;
+
+        let settings = await ServerSettings.findOne({ guildId });
+        if (!settings) settings = new ServerSettings({ guildId });
+
+        const allFeatureKeys = [
+            'welcome', 'ticket', 'onboarding', 'stats', 'store', 
+            'moderation', 'autoresponse', 'voicegen', 'apply', 
+            'youtube', 'invite', 'goodbye', 'giveaway', 'music', 
+            'leveling', 'botprofile', 'ai'
+        ];
+
+        allFeatureKeys.forEach(key => {
+            settings.features[key] = selectedFeatures.includes(key);
+        });
+
+        settings.markModified('features');
+        await settings.save();
+
+        const updatedPanel = await buildFeatureManager(guildId);
+        return interaction.update(updatedPanel);
+    }
+    
     // %storage (in Owner DM)
     if (message.channel.isDMBased() && isBotOwner && cmd === '%storage') {
         const db = mongoose.connection.db;
