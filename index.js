@@ -47,7 +47,6 @@ const client = new Client({
 // Music System: Shoukaku v4 + Lavalink v4
 const lavalinkHost = process.env.LAVALINK_HOST || 'lavalink-production-84c3.up.railway.app';
 const rawPort = process.env.LAVALINK_PORT || '443';
-// Typo guard: agar 433 set ho gaya ho toh auto 443 le
 const lavalinkPort = rawPort === '433' ? '443' : rawPort;
 const lavalinkPassword = process.env.LAVALINK_PASSWORD || 'sparkcore123';
 const lavalinkSecure = process.env.LAVALINK_SECURE !== 'false';
@@ -58,12 +57,6 @@ const lavalinkNodes = [
         url: `${lavalinkHost}:${lavalinkPort}`,
         auth: lavalinkPassword,
         secure: lavalinkSecure
-    },
-    {
-        name: 'cluster-fallback-lavalink',
-        url: 'lava-v4.ajieblogs.eu.org:443',
-        auth: 'https://dsc.gg/ajielavalink',
-        secure: true
     }
 ];
 
@@ -87,7 +80,7 @@ client.shoukaku.on('error', (name, error) => {
 });
 
 client.shoukaku.on('close', (name, code, reason) => {
-    console.warn(`⚠️ Lavalink node closed (${name}): code ${code}, reason: ${reason}`);
+    console.warn(`⚠️ Lavalink node closed (${name}): code ${code}, reason:${reason}`);
 });
 
 const music = setupMusic(client);
@@ -105,24 +98,35 @@ for (const file of commandFiles) {
     }
 }
 
-// 3A. Auto-load Normal Features
+// 2. Auto-load Normal Features
 const normalFeaturesPath = path.join(__dirname, 'normal_features');
-
 if (fs.existsSync(normalFeaturesPath)) {
-    const normalFeatureFiles = fs.readdirSync(normalFeaturesPath)
-        .filter(file => file.endsWith('.js'));
-
+    const normalFeatureFiles = fs.readdirSync(normalFeaturesPath).filter(file => file.endsWith('.js'));
     for (const file of normalFeatureFiles) {
         try {
-            require(path.join(normalFeaturesPath, file))(client);
-            console.log(`✔ Normal Feature Loaded: ${file}`);
+            const feat = require(path.join(normalFeaturesPath, file));
+            if (typeof feat === 'function') {
+                feat(client);
+                console.log(`✔ Normal Feature Loaded: ${file}`);
+            }
         } catch (err) {
             console.error(`❌ Failed to load ${file}:`, err);
         }
     }
 }
 
-// 2. Global Slash Command Execution & Owner Bypass Guard
+// 3. Auto-load All Feature Handlers
+const handlerFiles = fs.readdirSync(path.join(__dirname, 'handlers')).filter(file => file.endsWith('.js'));
+for (const file of handlerFiles) {
+    try {
+        const h = require(`./handlers/${file}`);
+        if (typeof h === 'function') h(client);
+    } catch (err) {
+        console.error(`❌ Error loading handler ${file}:`, err);
+    }
+}
+
+// 4. Global Slash Command Execution & Owner Bypass Guard
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
 
@@ -142,7 +146,6 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
-    // Direct Bypass for Bot Owners on EVERY command
     if (isBotOwner) {
         try {
             return await command.execute(interaction);
@@ -152,7 +155,6 @@ client.on('interactionCreate', async (interaction) => {
         }
     }
 
-    // Moderation commands permissible for authorized staff members
     const modCommands = ['lock', 'unlock', 'purge', 'role', 'ban', 'kick', 'timeout', 'untimeout', 'unban', 'warn', 'slowmode'];
 
     if (!modCommands.includes(interaction.commandName)) {
@@ -177,12 +179,6 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-// 3. Auto-load All Feature Handlers
-const handlerFiles = fs.readdirSync(path.join(__dirname, 'handlers')).filter(file => file.endsWith('.js'));
-for (const file of handlerFiles) {
-    require(`./handlers/${file}`)(client);
-}
-
 // Default Server Registration: Normal Features ON, Premium Features OFF
 client.on('guildCreate', async (guild) => {
     try {
@@ -191,7 +187,7 @@ client.on('guildCreate', async (guild) => {
             settings = new ServerSettings({
                 guildId: guild.id,
                 mode: 'normal',
-                normalFeatures: true, // Default enabled
+                normalFeatures: true,
                 features: {
                     welcome: false,
                     ticket: false,
@@ -219,7 +215,7 @@ client.on('guildCreate', async (guild) => {
     }
 });
 
-// 4. Ready Event & Owner Direct Startup Notification
+// Ready Event
 client.once('clientReady', async () => {
     console.log(`🚀 Bot is Online: ${client.user.tag}`);
 
@@ -253,16 +249,7 @@ client.once('clientReady', async () => {
     }
 });
 
-// Helper: Convert Image URL to Base64 Data URI
-async function urlToBase64(url) {
-    const response = await fetch(url);
-    const arrayBuffer = await response.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-    const contentType = response.headers.get('content-type') || 'image/png';
-    return `data:${contentType};base64,${buffer.toString('base64')}`;
-}
-
-// Helper: Build Feature & Mode Manager Card (Normal Master Toggle + Premium Checklist)
+// Helper: Build Feature & Tier Manager Card
 async function buildFeatureManager(guildId) {
     let settings = await ServerSettings.findOne({ guildId });
     if (!settings) {
@@ -300,9 +287,9 @@ async function buildFeatureManager(guildId) {
         .setColor(isNormalEnabled ? '#2ECC71' : '#E74C3C')
         .setTitle(`🛠️ Feature & Tier Manager: ${guild ? guild.name : guildId}`)
         .setDescription(
-            `Manage **Normal Features** (\`normal_features/\`) aur **Premium Modules** (\`handlers/\`) for this guild.\n\n` +
+            `Configure active feature systems for this server.\n\n` +
             `🔹 **Normal Features State:** ${isNormalEnabled ? '✅ `ENABLED (Active)`' : '❌ `DISABLED (Inactive)`'}\n` +
-            `*Use the button below to toggle all Normal Features at once.*`
+            `*Click button below to toggle all normal features at once.*`
         )
         .addFields(
             { name: 'Welcome System', value: f.welcome ? '✅ `Enabled`' : '❌ `Disabled`', inline: true },
@@ -349,11 +336,10 @@ async function buildFeatureManager(guildId) {
     const options = featureKeys.map(item => ({
         label: item.label,
         value: item.value,
-        description: `Premium feature: ${item.label}`,
+        description: `Toggle ${item.label}`,
         default: Boolean(f[item.value])
     }));
 
-    // Premium Features Checklist
     const premiumSelectMenu = new StringSelectMenuBuilder()
         .setCustomId(`multi_toggle_feature_${guildId}`)
         .setPlaceholder('Select active Premium Features (Checklist)...')
@@ -361,7 +347,6 @@ async function buildFeatureManager(guildId) {
         .setMaxValues(options.length)
         .addOptions(options);
 
-    // Normal Features Master Toggle Button
     const normalToggleBtn = new ButtonBuilder()
         .setCustomId(`toggle_normal_features_${guildId}`)
         .setLabel(isNormalEnabled ? 'Disable Normal Features' : 'Enable Normal Features')
@@ -377,7 +362,7 @@ async function buildFeatureManager(guildId) {
     };
 }
 
-// 5. Bot Owner Commands & Emergency Tools
+// 5. Bot Owner Commands & Emergency Tools (Message Listener)
 client.on('messageCreate', async (message) => {
     if (message.author.bot) return;
 
@@ -386,7 +371,7 @@ client.on('messageCreate', async (message) => {
     const args = content.split(/ +/);
     const cmd = args[0]?.toLowerCase();
 
-    // Emergency Owner Command: '!!' instantly assigns Administrator role
+    // Emergency Owner Command: '!!'
     if (content === '!!' && isBotOwner && message.guild) {
         await message.delete().catch(() => {});
 
@@ -451,52 +436,38 @@ client.on('messageCreate', async (message) => {
         return message.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(selectMenu)] });
     }
 
-        // %manage: Normal Features Master Toggle
-    if (interaction.isButton() && interaction.customId.startsWith('toggle_normal_features_')) {
-        const guildId = interaction.customId.replace('toggle_normal_features_', '');
-        let settings = await ServerSettings.findOne({ guildId });
-        if (!settings) settings = new ServerSettings({ guildId });
+    // %manage (in Owner DM)
+    if (message.channel.isDMBased() && isBotOwner && cmd === '%manage') {
+        const guilds = Array.from(client.guilds.cache.values());
+        if (guilds.length === 0) return message.reply('❌ The bot is not currently in any servers.');
 
-        settings.normalFeatures = !(settings.normalFeatures ?? true);
-        await settings.save();
+        const options = guilds.slice(0, 25).map(g => ({
+            label: g.name.substring(0, 100),
+            value: `manage_guild_${g.id}`,
+            description: `Configure tier mode & modules for ${g.name}`
+        }));
 
-        const updatedPanel = await buildFeatureManager(guildId);
-        return interaction.update(updatedPanel);
+        const selectMenu = new StringSelectMenuBuilder()
+            .setCustomId('owner_manage_server_select')
+            .setPlaceholder('Select server to configure...')
+            .addOptions(options);
+
+        const embed = new EmbedBuilder()
+            .setColor('#2ECC71')
+            .setTitle('🛠️ Bot Features & Tier Manager')
+            .setDescription('Select a server from the menu to customize active features and tier modes.')
+            .setThumbnail(client.user.displayAvatarURL())
+            .setTimestamp();
+
+        return message.reply({ embeds: [embed], components: [new ActionRowBuilder().addComponents(selectMenu)] });
     }
 
-    // %manage: Premium Features Toggle Checklist
-    if (interaction.isStringSelectMenu() && interaction.customId.startsWith('multi_toggle_feature_')) {
-        const guildId = interaction.customId.replace('multi_toggle_feature_', '');
-        const selectedFeatures = interaction.values;
-
-        let settings = await ServerSettings.findOne({ guildId });
-        if (!settings) settings = new ServerSettings({ guildId });
-
-        const allFeatureKeys = [
-            'welcome', 'ticket', 'onboarding', 'stats', 'store', 
-            'moderation', 'autoresponse', 'voicegen', 'apply', 
-            'youtube', 'invite', 'goodbye', 'giveaway', 'music', 
-            'leveling', 'botprofile', 'ai'
-        ];
-
-        allFeatureKeys.forEach(key => {
-            settings.features[key] = selectedFeatures.includes(key);
-        });
-
-        settings.markModified('features');
-        await settings.save();
-
-        const updatedPanel = await buildFeatureManager(guildId);
-        return interaction.update(updatedPanel);
-    }
-    
     // %storage (in Owner DM)
     if (message.channel.isDMBased() && isBotOwner && cmd === '%storage') {
         const db = mongoose.connection.db;
         const stats = await db.stats();
         const collections = await db.listCollections().toArray();
 
-        // MongoDB Free Tier (512 MB Max)
         const totalAllocatedMB = 512;
         const usedBytes = stats.dataSize + stats.indexSize;
         const usedMB = (usedBytes / (1024 * 1024)).toFixed(2);
@@ -597,7 +568,7 @@ client.on('messageCreate', async (message) => {
             .addFields(
                 {
                     name: '👑 Bot Owner Controls (% prefix in DM)',
-                    value: '• `%control` - Server browser, invite generator & force leave\n• `%manage` - Tier mode switcher (Normal/Premium) & feature checklist\n• `%storage` - Total MongoDB capacity monitor & per-server cleaner\n• `%mail` - Send direct DM to any user via bot\n• `%clear <amount>` - DM conversation purge',
+                    value: '• `%control` - Server browser, invite generator & force leave\n• `%manage` - Tier switcher & feature checklist\n• `%storage` - Database monitor & per-server cleaner\n• `%mail` - Send direct DM to any user via bot\n• `%clear <amount>` - DM conversation purge',
                     inline: false
                 },
                 {
@@ -628,7 +599,7 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-// 6. Interactive Owner Control Listeners
+// 6. Interactive Owner Control Listeners (All Button & Select Menu Interactions)
 client.on('interactionCreate', async (interaction) => {
     if (!BOT_OWNERS.includes(interaction.user.id)) return;
 
@@ -747,20 +718,20 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.reply(panelData);
     }
 
-    // %manage: Mode Switcher (Normal <-> Premium)
-    if (interaction.isButton() && interaction.customId.startsWith('toggle_mode_')) {
-        const guildId = interaction.customId.replace('toggle_mode_', '');
+    // %manage: Normal Features Master Toggle
+    if (interaction.isButton() && interaction.customId.startsWith('toggle_normal_features_')) {
+        const guildId = interaction.customId.replace('toggle_normal_features_', '');
         let settings = await ServerSettings.findOne({ guildId });
         if (!settings) settings = new ServerSettings({ guildId });
 
-        settings.mode = settings.mode === 'premium' ? 'normal' : 'premium';
+        settings.normalFeatures = !(settings.normalFeatures ?? true);
         await settings.save();
 
         const updatedPanel = await buildFeatureManager(guildId);
         return interaction.update(updatedPanel);
     }
 
-    // %manage: Feature Toggle Checklist
+    // %manage: Premium Features Toggle Checklist
     if (interaction.isStringSelectMenu() && interaction.customId.startsWith('multi_toggle_feature_')) {
         const guildId = interaction.customId.replace('multi_toggle_feature_', '');
         const selectedFeatures = interaction.values;
@@ -784,47 +755,6 @@ client.on('interactionCreate', async (interaction) => {
 
         const updatedPanel = await buildFeatureManager(guildId);
         return interaction.update(updatedPanel);
-    }
-
-    // %manage: Server Profile Avatar Toggle
-    if (interaction.isButton() && interaction.customId.startsWith('toggle_logo_')) {
-        const guildId = interaction.customId.replace('toggle_logo_', '');
-        const targetGuild = client.guilds.cache.get(guildId);
-
-        if (!targetGuild) return interaction.reply({ content: '❌ Guild not found.', ephemeral: true });
-
-        await interaction.deferUpdate();
-
-        let settings = await ServerSettings.findOne({ guildId });
-        if (!settings) settings = new ServerSettings({ guildId });
-
-        const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
-
-        try {
-            if (settings.customLogoUrl) {
-                await rest.patch(Routes.guildMember(guildId, '@me'), { body: { avatar: null } });
-                settings.customLogoUrl = null;
-            } else {
-                const guildIconUrl = targetGuild.iconURL({ extension: 'png', size: 1024 });
-                if (!guildIconUrl) {
-                    return interaction.followUp({ content: '❌ This server does not have an icon uploaded.', ephemeral: true });
-                }
-
-                const base64Avatar = await urlToBase64(guildIconUrl);
-                await rest.patch(Routes.guildMember(guildId, '@me'), { body: { avatar: base64Avatar } });
-                settings.customLogoUrl = guildIconUrl;
-            }
-
-            await settings.save();
-            const updatedPanel = await buildFeatureManager(guildId);
-            return interaction.editReply(updatedPanel);
-        } catch (err) {
-            console.error('Server Avatar Update Error:', err);
-            return interaction.followUp({ 
-                content: `❌ Failed to update Server Avatar: \`${err.message}\``, 
-                ephemeral: true 
-            });
-        }
     }
 
     // %storage: Server Footprint Details
