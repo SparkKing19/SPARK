@@ -16,6 +16,33 @@ const OWNERS_INFO = {
 
 const DYNAMIC_BG_GIF = 'https://cdn.discordapp.com/attachments/1540696710387335330/1561320565824819200/IMG_419c1bc5-8c2f-4a1d-bee2-12c277981844.gif?ex=6ad5ec96&is=6ad49b16&hm=01865ada94ac14828df2910ef44b3f34a65149323d5938feae3c1467674051e0&';
 const conversationMemory = new Map();
+let activeGroqModel = null;
+
+// Dynamic model fetcher taaki model_not_found error kabhi na aaye
+async function getGroqModel(apiKey) {
+    if (activeGroqModel) return activeGroqModel;
+
+    try {
+        const res = await fetch('https://api.groq.com/openai/v1/models', {
+            headers: { 'Authorization': `Bearer ${apiKey}` }
+        });
+        const data = await res.json();
+        if (data.data && Array.isArray(data.data)) {
+            // First preference: llama-3.3 70b ya llama-3.1
+            const llama = data.data.find(m => m.id.includes('llama-3.3-70b') || m.id.includes('llama-3.1-70b') || m.id.includes('llama3-70b') || m.id.includes('llama3-8b'));
+            if (llama) {
+                activeGroqModel = llama.id;
+                return activeGroqModel;
+            }
+            if (data.data.length > 0) {
+                activeGroqModel = data.data[0].id;
+                return activeGroqModel;
+            }
+        }
+    } catch (_) {}
+
+    return 'llama-3.3-70b-versatile';
+}
 
 // Groq Function Calling Definitions
 const tools = [
@@ -139,7 +166,7 @@ module.exports = (client) => {
             return message.reply('ℹ️ **SparkCore AI Controls:**\n• `%ai set` - Current chat bind karo\n• `%ai clear` - Memory reset\n• `%ai off` - Disable');
         }
 
-        // 2. CHECK CHAT TRIGGERS (Mention OR Dedicated AI Channel)
+        // 2. CHECK CHAT TRIGGERS
         const isMentioned = message.mentions.has(client.user.id) && !message.reference;
         const aiData = await AIConfig.findOne({ guildId: message.guild.id });
         const isAiChannel = aiData && aiData.enabled && message.channel.id === aiData.channelId;
@@ -194,7 +221,8 @@ You act as their personal JARVIS. When they ask to send messages, DMs, clear cha
         messages.push({ role: 'user', content: `${message.author.username}:${userPrompt}` });
 
         try {
-            // Using llama-3.1-8b-instant for blazing fast & reliable tool execution
+            const currentModel = await getGroqModel(apiKey);
+
             const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
                 method: 'POST',
                 headers: {
@@ -202,7 +230,7 @@ You act as their personal JARVIS. When they ask to send messages, DMs, clear cha
                     'Authorization': `Bearer ${apiKey}`
                 },
                 body: JSON.stringify({
-                    model: 'llama-3.1-8b-instant',
+                    model: currentModel,
                     messages: messages,
                     tools: tools,
                     tool_choice: 'auto',
@@ -213,9 +241,9 @@ You act as their personal JARVIS. When they ask to send messages, DMs, clear cha
 
             const data = await response.json();
 
-            // Catch backend API errors directly
             if (!response.ok || data.error) {
                 console.error('Groq API Error Response:', data);
+                activeGroqModel = null; // Cache reset on failure
                 return message.reply(`⚠️ Groq API Error: \`${data.error?.message || 'Unknown Error'}\``);
             }
 
@@ -276,7 +304,7 @@ You act as their personal JARVIS. When they ask to send messages, DMs, clear cha
                             const demoEmbed = new EmbedBuilder()
                                 .setColor('#5865F2')
                                 .setTitle(`🎫 ${message.guild.name} Support System`)
-                                .setDescription(`✨ **[DEMO PANEL]** Support desk ready.\nClick button to open ticket.`)
+                                .setDescription(`✨ **[DEMO PANEL]** Ticket demo ready.`)
                                 .setImage(DYNAMIC_BG_GIF)
                                 .setFooter({ text: `${message.guild.name} • 1 Ticket Per User Limit` });
                             return message.channel.send({ embeds: [demoEmbed] });
@@ -319,7 +347,11 @@ You act as their personal JARVIS. When they ask to send messages, DMs, clear cha
             }
         } catch (err) {
             console.error('Groq AI Request Catch Error:', err);
+            activeGroqModel = null;
             return message.reply(`⚠️ Connection issue: \`${err.message}\``);
         }
     });
+
+    console.log('✔ SparkCore Native Jarvis AI Engine loaded.');
 };
+              
