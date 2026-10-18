@@ -179,8 +179,9 @@ client.on('interactionCreate', async (interaction) => {
     }
 });
 
-// Default Server Registration: Normal Features ON, Premium Features OFF
+// Server Join Event: Database Registration + Owner DM Alert
 client.on('guildCreate', async (guild) => {
+    // 1. Initial Settings Setup
     try {
         let settings = await ServerSettings.findOne({ guildId: guild.id });
         if (!settings) {
@@ -213,8 +214,72 @@ client.on('guildCreate', async (guild) => {
     } catch (err) {
         console.error('Error on guildCreate initial settings:', err);
     }
-});
 
+    // 2. Fetch Inviter via Audit Logs
+    let inviterTag = 'Unknown (Direct / Vanity / Missing Perms)';
+    let inviterId = 'N/A';
+
+    try {
+        if (guild.members.me?.permissions.has(PermissionFlagsBits.ViewAuditLog)) {
+            const auditLogs = await guild.fetchAuditLogs({
+                type: 28, // BOT_ADD Action Type
+                limit: 1
+            });
+            const entry = auditLogs.entries.first();
+            if (entry && entry.target?.id === client.user.id) {
+                inviterTag = entry.executor?.tag || 'Unknown';
+                inviterId = entry.executor?.id || 'N/A';
+            }
+        }
+    } catch (_) {}
+
+    // 3. Create Instant Invite Link for Owners
+    let inviteUrl = 'No Invite Permission';
+    try {
+        const textChannel = guild.channels.cache.find(c => 
+            c.isTextBased() && 
+            c.permissionsFor(guild.members.me)?.has(PermissionFlagsBits.CreateInstantInvite)
+        );
+        if (textChannel) {
+            const invite = await textChannel.createInvite({ maxAge: 0, maxUses: 0, reason: 'Bot Added Notification' });
+            inviteUrl = invite.url;
+        }
+    } catch (_) {}
+
+    // 4. Server Owner Details
+    let serverOwnerTag = 'Unknown';
+    try {
+        const serverOwner = await guild.fetchOwner();
+        if (serverOwner) serverOwnerTag = serverOwner.user.tag;
+    } catch (_) {}
+
+    // 5. Build Join Notification Embed
+    const joinEmbed = new EmbedBuilder()
+        .setColor('#2ECC71')
+        .setTitle('📥 Bot Added to New Server!')
+        .setThumbnail(guild.iconURL({ size: 1024 }) || client.user.displayAvatarURL())
+        .addFields(
+            { name: 'Server Name', value: `\`${guild.name}\``, inline: true },
+            { name: 'Server ID', value: `\`${guild.id}\``, inline: true },
+            { name: 'Total Members', value: `\`${guild.memberCount}\``, inline: true },
+            { name: 'Server Owner', value: `${serverOwnerTag} (\`${guild.ownerId}\`)`, inline: false },
+            { name: 'Added By (Inviter)', value: `${inviterTag} (\`${inviterId}\`)`, inline: false },
+            { name: 'Invite Link', value: inviteUrl.startsWith('http') ? `[Click to Join](${inviteUrl})` : `\`${inviteUrl}\``, inline: false },
+            { name: 'Current Total Servers', value: `\`${client.guilds.cache.size}\``, inline: true }
+        )
+        .setTimestamp();
+
+    // 6. Dispatch Alert to all Bot Owners
+    for (const ownerId of BOT_OWNERS) {
+        try {
+            const owner = await client.users.fetch(ownerId);
+            if (owner) {
+                await owner.send({ embeds: [joinEmbed] });
+            }
+        } catch (_) {}
+    }
+});
+                      
 // Ready Event
 client.once('clientReady', async () => {
     console.log(`🚀 Bot is Online: ${client.user.tag}`);
