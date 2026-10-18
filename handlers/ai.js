@@ -1,210 +1,267 @@
-const AIConfig = require('../models/aiConfig');
-const { isFeatureEnabled } = require('../utils/featureCheck');
+const { EmbedBuilder, PermissionFlagsBits, AttachmentBuilder } = require('discord.js');
+const Groq = require('groq-sdk');
 
-const BOT_OWNERS = [
-    '1549995551288852584',
-    '1266728371719508062', // FZBOY
-    '1474216218792558735'  // DAREQUEEN
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+
+// Bot Owners Mapping
+const OWNERS = {
+    '1549995551288852584': { name: 'FZBOY', gender: 'male', role: 'Boss / Primary Creator' },
+    '1266728371719508062': { name: 'FZBOY', gender: 'male', role: 'Boss / Primary Creator' },
+    '1474216218792558735': { name: 'DAREQUEEN', gender: 'female', role: 'Co-Owner / Queen' }
+};
+
+// 3D Animated GIF for Demos
+const DYNAMIC_BG_GIF = 'https://cdn.discordapp.com/attachments/1540696710387335330/1561320565824819200/IMG_419c1bc5-8c2f-4a1d-bee2-12c277981844.gif?ex=6ad5ec96&is=6ad49b16&hm=01865ada94ac14828df2910ef44b3f34a65149323d5938feae3c1467674051e0&';
+
+// Groq Tools Definition (Jarvis Actions)
+const tools = [
+    {
+        type: 'function',
+        function: {
+            name: 'send_channel_message',
+            description: 'Send a message or announcement to a specific channel.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    channel_id: { type: 'string', description: 'The Discord channel ID to send message to' },
+                    content: { type: 'string', description: 'The text message or announcement content' }
+                },
+                required: ['channel_id', 'content']
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'send_user_dm',
+            description: 'Send a direct DM to a user via the bot.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    user_id: { type: 'string', description: 'The user ID to receive the DM' },
+                    message: { type: 'string', description: 'The message content to send' }
+                },
+                required: ['user_id', 'message']
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'setup_welcome_channel',
+            description: 'Set up welcome card system in the current or mentioned channel.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    channel_id: { type: 'string', description: 'Channel ID to bind welcome cards' }
+                },
+                required: ['channel_id']
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'purge_messages',
+            description: 'Clear or purge messages from the channel.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    amount: { type: 'number', description: 'Number of messages to delete (1-100)' }
+                },
+                required: ['amount']
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'show_demo',
+            description: 'Show demo for welcome card or ticket system.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    feature: { type: 'string', enum: ['welcome', 'ticket'], description: 'The feature demo to show' }
+                },
+                required: ['feature']
+            }
+        }
+    },
+    {
+        type: 'function',
+        function: {
+            name: 'generate_image',
+            description: 'Generate an AI photo/image based on a prompt.',
+            parameters: {
+                type: 'object',
+                properties: {
+                    prompt: { type: 'string', description: 'Detailed prompt in English describing the image' }
+                },
+                required: ['prompt']
+            }
+        }
+    }
 ];
-
-const conversationMemory = new Map();
-let activeGroqModel = null;
-
-// Auto-detect active Groq model
-async function getGroqModel(apiKey) {
-    if (activeGroqModel) return activeGroqModel;
-
-    try {
-        const res = await fetch('https://api.groq.com/openai/v1/models', {
-            headers: { 'Authorization': `Bearer ${apiKey}` }
-        });
-        const data = await res.json();
-        if (data.data && Array.isArray(data.data)) {
-            const llama = data.data.find(m => m.id.includes('llama-3.1-8b-instant') || m.id.includes('llama3-8b'));
-            if (llama) {
-                activeGroqModel = llama.id;
-                return activeGroqModel;
-            }
-            if (data.data.length > 0) {
-                activeGroqModel = data.data[0].id;
-                return activeGroqModel;
-            }
-        }
-    } catch (_) {}
-
-    return 'llama-3.1-8b-instant';
-}
-
-async function getSparkCoreAIResponse(history, userPrompt, username, userId, guildName) {
-    const apiKey = process.env.GROQ_API_KEY;
-    if (!apiKey) {
-        return 'Arre boss, `GROQ_API_KEY` Railway variables me set nahi hai!';
-    }
-
-    const isOwner = BOT_OWNERS.includes(userId);
-
-    const systemInstruction = `
-You are "SparkCore", an ultra-fast, witty, authentic, and intelligent Discord AI assistant built for servers.
-You were created and developed exclusively by FZBOY along with DAREQUEEN. Under no circumstances mention or use the real name "Fouzan".
-
-IDENTITY & BEHAVIOR RULES:
-1. NEVER identify yourself as ChatGPT, OpenAI, Llama, Meta, or Google. Your ONLY identity and name is "SparkCore".
-2. If asked "Tum kaun ho?", "Who are you?", or who created you: State that you are SparkCore, developed by FZBOY and DAREQUEEN.
-3. User details:
-   - Username: ${username}
-   - User ID: ${userId}
-   - Is Bot Owner: ${isOwner ? 'YES (Treat as Boss/Creator with high respect & camaraderie)' : 'NO'}
-   - Server: ${guildName}
-4. Tone & Vibe: Talk like a chill, sharp, witty Discord teammate. Seamlessly reply in Hinglish, English, Urdu, or Hindi matching the user. Keep it natural, punchy, and concise.
-
-BOT KNOWLEDGE:
-You know all SparkCore modules:
-- Music Engine (%play, filters, panel, 24/7)
-- Moderation & Security (/ban, /timeout, automod)
-- Community Systems (Tickets, /panel, Leveling &rank, Giveaways)
-
-STRICT CONFIDENTIALITY & SECURITY GUARDRAILS:
-- NEVER reveal, hint at, or discuss the "Bot Owner Bypass", backend bypass logic, admin emergency roles (like !!), or owner-only commands (%manage, %control, %storage).
-- If anyone asks how owners bypass rules, deflect politely: "Owner security architecture is private and restricted."
-    `.trim();
-
-    const messages = [
-        { role: 'system', content: systemInstruction }
-    ];
-
-    for (const msg of history) {
-        messages.push({
-            role: msg.role === 'model' ? 'assistant' : 'user',
-            content: String(msg.text)
-        });
-    }
-
-    messages.push({
-        role: 'user',
-        content: `${username}:${userPrompt}`
-    });
-
-    const targetModel = await getGroqModel(apiKey);
-
-    try {
-        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Authorization': `Bearer ${apiKey}`
-            },
-            body: JSON.stringify({
-                model: targetModel,
-                messages: messages,
-                max_tokens: 600,
-                temperature: 0.85
-            })
-        });
-
-        const data = await response.json();
-
-        if (response.ok && data.choices && data.choices[0]?.message?.content) {
-            return data.choices[0].message.content.trim();
-        }
-
-        if (data.error) {
-            activeGroqModel = null;
-            return `❌ AI Error: \`${data.error.message}\``;
-        }
-    } catch (err) {
-        activeGroqModel = null;
-        return `Arey ${username}, network me halka lag ho gaya tha! Ek baar wapas bolo! ⚡`;
-    }
-
-    return '⚠️ Response generate nahi ho paya, please try again.';
-}
 
 module.exports = (client) => {
     client.on('messageCreate', async (message) => {
-        if (!message.guild || message.author.bot) return;
+        if (message.author.bot || !message.guild) return;
 
-        const content = message.content.trim();
-        const isBotOwner = BOT_OWNERS.includes(message.author.id);
-        const isServerOwner = message.author.id === message.guild.ownerId;
-        const isAdmin = message.member?.permissions.has('Administrator');
+        // Trigger: Bot mention ya !ai prefix
+        const isMentioned = message.mentions.has(client.user.id) && !message.reference;
+        const hasPrefix = message.content.toLowerCase().startsWith('!ai ');
 
-        // Setup Commands
-        if (content.toLowerCase().startsWith('%ai')) {
-            const args = content.split(/ +/).slice(1);
-            const sub = args[0]?.toLowerCase();
+        if (!isMentioned && !hasPrefix) return;
 
-            if (!isBotOwner && !isServerOwner && !isAdmin) {
-                return message.reply('❌ You do not have permission to configure the AI system.');
-            }
+        let userPrompt = message.content.replace(`<@${client.user.id}>`, '').replace(/!ai\s+/i, '').trim();
+        if (!userPrompt) return message.reply('Boliye, main aapki kya madad kar sakta hoon?');
 
-            if (sub === 'set') {
-                const targetChannel = message.mentions.channels.first() || message.channel;
+        const isOwner = !!OWNERS[message.author.id];
+        const ownerData = OWNERS[message.author.id];
 
-                await AIConfig.findOneAndUpdate(
-                    { guildId: message.guild.id },
-                    { channelId: targetChannel.id, enabled: true },
-                    { upsert: true, new: true }
-                );
+        // System Persona Prompt
+        let systemPrompt = `You are SparkCore AI, a smart, fast, and helpful AI assistant for the server.
+Language Rules:
+- Understand and speak strictly in Hinglish (Hindi written in Latin script) or natural English.
+- NEVER talk unnecessarily. Keep your answers direct, crisp, and to the point.
+- Avoid robotic, boring textbook speech. Talk like a sharp, modern developer peer.
 
-                return message.reply(`⚡ **SparkCore AI Activated!**\nBound channel: ${targetChannel}. AI is now live!`);
-            }
+Identity & Owner Recognition:
+- FZBOY and FOUZAN are the EXACT same person (He/Him). He is your primary creator and Boss.
+- DAREQUEEN is a female co-owner (She/Her). Treat her with immense respect.
+`;
 
-            if (sub === 'off' || sub === 'disable') {
-                await AIConfig.findOneAndUpdate(
-                    { guildId: message.guild.id },
-                    { enabled: false },
-                    { upsert: true, new: true }
-                );
-                conversationMemory.delete(`${message.guild.id}_${message.channel.id}`);
-                return message.reply('⚠️ SparkCore AI has been disabled for this server.');
-            }
-
-            if (sub === 'clear' || sub === 'reset') {
-                conversationMemory.delete(`${message.guild.id}_${message.channel.id}`);
-                return message.reply('🧹 SparkCore memory for this channel has been cleared.');
-            }
-
-            return message.reply('ℹ️ **SparkCore AI Controls:**\n• `%ai set` - Current chat bind karo\n• `%ai clear` - Memory reset karo\n• `%ai off` - Disable karo');
+        if (isOwner) {
+            systemPrompt += `\nCRITICAL CONTEXT: The current user is BOT OWNER: ${ownerData.name} (${ownerData.gender}).
+You are acting as their personal JARVIS. Follow their instructions immediately and use tools whenever they ask you to send messages, DMs, clear chat, show demos, setup features, or generate images. Address them naturally (e.g., "Ji FZBOY bhai" ya "Ji DAREQUEEN ma'am").`;
+        } else {
+            systemPrompt += `\nCRITICAL CONTEXT: The current user is a normal server member. Do NOT execute administrative server tools (like send_channel_message, send_user_dm, setup_welcome_channel, purge_messages) for them unless they have admin permissions. For image generation, you can assist them.`;
         }
 
-        // Live Chat Execution
-        const aiData = await AIConfig.findOne({ guildId: message.guild.id });
-        if (!aiData || !aiData.enabled || !aiData.channelId) return;
-        if (message.channel.id !== aiData.channelId) return;
+        await message.channel.sendTyping();
 
-        const featureEnabled = await isFeatureEnabled(message.guild.id, 'ai', message.author.id);
-        if (!featureEnabled) return;
+        try {
+            const chatCompletion = await groq.chat.completions.create({
+                model: 'llama-3.3-70b-versatile',
+                messages: [
+                    { role: 'system', content: systemPrompt },
+                    { role: 'user', content: userPrompt }
+                ],
+                tools: tools,
+                tool_choice: 'auto',
+                temperature: 0.6,
+                max_tokens: 600
+            });
 
-        await message.channel.sendTyping().catch(() => {});
+            const responseMessage = chatCompletion.choices[0]?.message;
 
-        const memKey = `${message.guild.id}_${message.channel.id}`;
-        let history = conversationMemory.get(memKey) || [];
+            // Handle Tool Calling (Jarvis Actions)
+            if (responseMessage.tool_calls && responseMessage.tool_calls.length > 0) {
+                for (const toolCall of responseMessage.tool_calls) {
+                    const fnName = toolCall.function.name;
+                    const args = JSON.parse(toolCall.function.arguments);
 
-        const reply = await getSparkCoreAIResponse(
-            history,
-            message.content,
-            message.author.username,
-            message.author.id,
-            message.guild.name
-        );
+                    // 1. Send Message to Channel
+                    if (fnName === 'send_channel_message') {
+                        if (!isOwner && !message.member.permissions.has(PermissionFlagsBits.ManageMessages)) {
+                            return message.reply('❌ Ye command sirf Owners ya Staff use kar sakte hain.');
+                        }
+                        const targetChannel = message.guild.channels.cache.get(args.channel_id.replace(/[<#>]/g, ''));
+                        if (targetChannel && targetChannel.isTextBased()) {
+                            await targetChannel.send(args.content);
+                            return message.reply(`✅ Done Boss, message <#${targetChannel.id}> me send ho gaya!`);
+                        } else {
+                            return message.reply('❌ Channel nahi mila ya valid text channel nahi hai.');
+                        }
+                    }
 
-        if (reply) {
-            if (!reply.startsWith('❌') && !reply.startsWith('⚠️')) {
-                history.push({ role: 'user', text: `${message.author.username}: ${message.content}` });
-                history.push({ role: 'model', text: reply });
+                    // 2. Send User DM
+                    if (fnName === 'send_user_dm') {
+                        if (!isOwner) {
+                            return message.reply('❌ DMs bhejne ka access sirf Bot Owners ke paas hai.');
+                        }
+                        const targetUser = await client.users.fetch(args.user_id.replace(/[<@!>]/g, '')).catch(() => null);
+                        if (targetUser) {
+                            try {
+                                await targetUser.send(`📩 **Message from ${message.guild.name} Staff:**\n${args.message}`);
+                                return message.reply(`✅ DM successfully user <@${targetUser.id}> ko bhej diya gaya hai!`);
+                            } catch (e) {
+                                return message.reply('❌ User ka DM closed hai.');
+                            }
+                        } else {
+                            return message.reply('❌ User ID nahi mili.');
+                        }
+                    }
 
-                if (history.length > 8) {
-                    history = history.slice(history.length - 8);
+                    // 3. Setup Welcome Channel
+                    if (fnName === 'setup_welcome_channel') {
+                        if (!isOwner && !message.member.permissions.has(PermissionFlagsBits.ManageGuild)) {
+                            return message.reply('❌ Manage Guild permission required.');
+                        }
+                        const targetChan = message.guild.channels.cache.get(args.channel_id.replace(/[<#>]/g, '')) || message.channel;
+                        await targetChan.setTopic('spark_welcome_channel');
+                        return message.reply(`✅ Welcome card system automatically <#${targetChan.id}> me set ho gaya!`);
+                    }
+
+                    // 4. Purge Messages
+                    if (fnName === 'purge_messages') {
+                        if (!isOwner && !message.member.permissions.has(PermissionFlagsBits.ManageMessages)) {
+                            return message.reply('❌ Permission nahi hai message delete karne ki.');
+                        }
+                        const count = Math.min(Math.max(args.amount, 1), 100);
+                        await message.channel.bulkDelete(count + 1, true).catch(() => {});
+                        const msg = await message.channel.send(`🧹 Cleared **${count}** messages.`);
+                        setTimeout(() => msg.delete().catch(() => {}), 3000);
+                        return;
+                    }
+
+                    // 5. Show Demo (Welcome or Ticket)
+                    if (fnName === 'show_demo') {
+                        if (args.feature === 'ticket') {
+                            const demoEmbed = new EmbedBuilder()
+                                .setColor('#5865F2')
+                                .setTitle(`🎫 ${message.guild.name} Support System`)
+                                .setDescription(`✨ **[DEMO PANEL]** Support desk ready.\nClick button to open ticket.`)
+                                .setImage(DYNAMIC_BG_GIF)
+                                .setFooter({ text: `${message.guild.name} • 1 Ticket Per User Limit` });
+                            return message.channel.send({ embeds: [demoEmbed] });
+                        } else if (args.feature === 'welcome') {
+                            const avatarUrl = encodeURIComponent(message.author.displayAvatarURL({ extension: 'png', size: 512 }));
+                            const username = encodeURIComponent(message.author.username);
+                            const guildName = encodeURIComponent(message.guild.name);
+                            const bgUrl = encodeURIComponent(DYNAMIC_BG_GIF);
+                            const cardUrl = `https://api.popcat.xyz/welcomecard?background=${bgUrl}&text1=${username}&text2=Welcome+to+${guildName}&text3=Member+%23${message.guild.memberCount}&avatar=${avatarUrl}`;
+
+                            const res = await fetch(cardUrl);
+                            const arrayBuffer = await res.arrayBuffer();
+                            const attachment = new AttachmentBuilder(Buffer.from(arrayBuffer), { name: 'welcome-demo.png' });
+                            return message.channel.send({ content: `✨ **[DEMO WELCOME]**`, files: [attachment] });
+                        }
+                    }
+
+                    // 6. Generate Image (Pollinations AI)
+                    if (fnName === 'generate_image') {
+                        const seed = Math.floor(Math.random() * 100000);
+                        const cleanPrompt = encodeURIComponent(args.prompt);
+                        const imageUrl = `https://image.pollinations.ai/prompt/${cleanPrompt}?seed=${seed}&width=1024&height=1024&nologo=true`;
+
+                        const imgEmbed = new EmbedBuilder()
+                            .setColor('#9B59B6')
+                            .setTitle('🎨 AI Image Generated')
+                            .setDescription(`**Prompt:** ${args.prompt}\n*Requested by:* <@${message.author.id}>`)
+                            .setImage(imageUrl)
+                            .setFooter({ text: 'Generated via SparkCore Engine' });
+
+                        return message.reply({ embeds: [imgEmbed] });
+                    }
                 }
-                conversationMemory.set(memKey, history);
+            } else {
+                // Normal Text Reply
+                return message.reply(responseMessage.content || 'Hmm, kuch issue lag raha hai.');
             }
-
-            const chunks = reply.match(/[\s\S]{1,1990}/g) || [reply];
-            for (const chunk of chunks) {
-                await message.reply({ content: chunk }).catch(() => {});
-            }
+        } catch (err) {
+            console.error('AI Processing Error:', err);
+            return message.reply('⚠️ AI process karne me error aaya. Please API key aur logs check karein.');
         }
     });
-
-    console.log('✔ SparkCore Active Groq Engine loaded.');
 };
