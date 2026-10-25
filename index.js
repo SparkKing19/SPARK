@@ -27,7 +27,7 @@ const ModerationConfig = require('./models/moderation');
 
 // Authorized Bot Owners
 const BOT_OWNERS = [
-    '1549995551288852584', // FOUZAN
+    '1549995551288852584', // FOUZAN (FZBOY)
     '1266728371719508062', // FZBOY
     '1474216218792558735'  // DAREQUEEN
 ];
@@ -126,6 +126,126 @@ for (const file of handlerFiles) {
     }
 }
 
+// ============================================================================
+// DM Session States for Bot Direct Messages (AI ON / MAIL BOX - 5 Min Timeout)
+// ============================================================================
+const dmSessions = new Map(); // userId -> { mode: 'ai' | 'mailbox', lastActive: timestamp }
+
+// Periodic cleaner for expired DM sessions (5 minutes inactivity)
+setInterval(() => {
+    const now = Date.now();
+    for (const [userId, session] of dmSessions.entries()) {
+        if (now - session.lastActive > 5 * 60 * 1000) {
+            dmSessions.delete(userId);
+        }
+    }
+}, 30 * 1000);
+
+// DM Message Listener for Interactive Buttons & Mailbox Bridge
+client.on('messageCreate', async (message) => {
+    if (message.author.bot) return;
+
+    // Check if message is in Direct Messages
+    if (message.channel.isDMBased()) {
+        const userId = message.author.id;
+        const isOwner = BOT_OWNERS.includes(userId);
+
+        // If message is from a Bot Owner responding in DM to a forwarded Mailbox message
+        if (isOwner && message.reference) {
+            try {
+                const repliedMsg = await message.channel.messages.fetch(message.reference.messageId).catch(() => null);
+                if (repliedMsg && repliedMsg.embeds.length > 0) {
+                    const embedDesc = repliedMsg.embeds[0].description || '';
+                    const match = embedDesc.match(/User ID:\s*`(\d{17,20})`/);
+                    if (match && match[1]) {
+                        const targetUserId = match[1];
+                        const targetUser = await client.users.fetch(targetUserId).catch(() => null);
+                        if (targetUser) {
+                            const ownerInfo = userId === '1474216218792558735' ? 'DAREQUEEN' : 'FZBOY';
+                            await targetUser.send(`📬 **Message from Bot Owner (${ownerInfo}):**\n${message.content}`);
+                            return message.react('✅').catch(() => {});
+                        }
+                    }
+                }
+            } catch (_) {}
+        }
+
+        const session = dmSessions.get(userId);
+
+        // If active session exists (AI or Mailbox)
+        if (session) {
+            session.lastActive = Date.now();
+
+            if (session.mode === 'ai') {
+                // Let the AI handler take care of it or trigger AI response here if needed
+                return;
+            }
+
+            if (session.mode === 'mailbox') {
+                if (isOwner) return; // Owners use direct replies via reference
+                // Forward user message to all Bot Owners
+                const forwardEmbed = new EmbedBuilder()
+                    .setColor('#9B59B6')
+                    .setTitle('📬 Mailbox Message Received')
+                    .setDescription(`**From:** <@${userId}> (${message.author.tag})\n**User ID:** \`${userId}\`\n\n**Message:**\n${message.content}`)
+                    .setTimestamp();
+
+                for (const ownerId of BOT_OWNERS) {
+                    try {
+                        const owner = await client.users.fetch(ownerId);
+                        if (owner) await owner.send({ embeds: [forwardEmbed] });
+                    } catch (_) {}
+                }
+                return message.react('📨').catch(() => {});
+            }
+        }
+
+        // If no active session, send prompt with AI ON & MAIL BOX buttons
+        const dmEmbed = new EmbedBuilder()
+            .setColor('#5865F2')
+            .setTitle('🤖 SparkCore DM Central')
+            .setDescription(
+                `Hello **${message.author.username}**!\n\n` +
+                `Please choose an option below to proceed:\n` +
+                `• **AI ON**: Chat directly with SparkCore AI assistant.\n` +
+                `• **MAIL BOX**: Connect securely with the Bot Owners (${BOT_OWNERS.length > 1 ? 'FZBOY & DAREQUEEN' : 'Owner'}).\n\n` +
+                `*Note: Sessions auto-close after 5 minutes of inactivity.*`
+            )
+            .setTimestamp();
+
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('dm_mode_ai').setLabel('AI ON').setStyle(ButtonStyle.Success).setEmoji('🧠'),
+            new ButtonBuilder().setCustomId('dm_mode_mailbox').setLabel('MAIL BOX').setStyle(ButtonStyle.Primary).setEmoji('📬')
+        );
+
+        return message.reply({ embeds: [dmEmbed], components: [row] }).catch(() => {});
+    }
+});
+
+// DM Button Interactions Handler
+client.on('interactionCreate', async (interaction) => {
+    if (!interaction.isButton()) return;
+
+    if (interaction.customId === 'dm_mode_ai' || interaction.customId === 'dm_mode_mailbox') {
+        const userId = interaction.user.id;
+        const mode = interaction.customId === 'dm_mode_ai' ? 'ai' : 'mailbox';
+
+        dmSessions.set(userId, { mode, lastActive: Date.now() });
+
+        const confirmEmbed = new EmbedBuilder()
+            .setColor(mode === 'ai' ? '#2ECC71' : '#3498DB')
+            .setTitle(mode === 'ai' ? '🧠 AI Mode Activated' : '📬 Mailbox Connected')
+            .setDescription(
+                mode === 'ai' 
+                    ? 'AI session is now active! Type anything here to chat with SparkCore AI. (Will timeout after 5 mins of inactivity).'
+                    : 'Mailbox connected with Bot Owners! Send your message here and it will be delivered directly to FZBOY & DAREQUEEN.'
+            )
+            .setTimestamp();
+
+        return interaction.update({ embeds: [confirmEmbed], components: [] });
+    }
+});
+
 // 4. Global Slash Command Execution & Owner Bypass Guard
 client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
@@ -181,7 +301,6 @@ client.on('interactionCreate', async (interaction) => {
 
 // Server Join Event: Database Registration + Owner DM Alert
 client.on('guildCreate', async (guild) => {
-    // 1. Initial Settings Setup
     try {
         let settings = await ServerSettings.findOne({ guildId: guild.id });
         if (!settings) {
@@ -215,16 +334,12 @@ client.on('guildCreate', async (guild) => {
         console.error('Error on guildCreate initial settings:', err);
     }
 
-    // 2. Fetch Inviter via Audit Logs
     let inviterTag = 'Unknown (Direct / Vanity / Missing Perms)';
     let inviterId = 'N/A';
 
     try {
         if (guild.members.me?.permissions.has(PermissionFlagsBits.ViewAuditLog)) {
-            const auditLogs = await guild.fetchAuditLogs({
-                type: 28, // BOT_ADD Action Type
-                limit: 1
-            });
+            const auditLogs = await guild.fetchAuditLogs({ type: 28, limit: 1 });
             const entry = auditLogs.entries.first();
             if (entry && entry.target?.id === client.user.id) {
                 inviterTag = entry.executor?.tag || 'Unknown';
@@ -233,7 +348,6 @@ client.on('guildCreate', async (guild) => {
         }
     } catch (_) {}
 
-    // 3. Create Instant Invite Link for Owners
     let inviteUrl = 'No Invite Permission';
     try {
         const textChannel = guild.channels.cache.find(c => 
@@ -246,14 +360,12 @@ client.on('guildCreate', async (guild) => {
         }
     } catch (_) {}
 
-    // 4. Server Owner Details
     let serverOwnerTag = 'Unknown';
     try {
         const serverOwner = await guild.fetchOwner();
         if (serverOwner) serverOwnerTag = serverOwner.user.tag;
     } catch (_) {}
 
-    // 5. Build Join Notification Embed
     const joinEmbed = new EmbedBuilder()
         .setColor('#2ECC71')
         .setTitle('📥 Bot Added to New Server!')
@@ -269,13 +381,10 @@ client.on('guildCreate', async (guild) => {
         )
         .setTimestamp();
 
-    // 6. Dispatch Alert to all Bot Owners
     for (const ownerId of BOT_OWNERS) {
         try {
             const owner = await client.users.fetch(ownerId);
-            if (owner) {
-                await owner.send({ embeds: [joinEmbed] });
-            }
+            if (owner) await owner.send({ embeds: [joinEmbed] });
         } catch (_) {}
     }
 });
@@ -308,13 +417,11 @@ client.once('clientReady', async () => {
 
     for (const ownerId of BOT_OWNERS) {
         const owner = await client.users.fetch(ownerId).catch(() => null);
-        if (owner) {
-            await owner.send({ embeds: [startupEmbed] }).catch(() => {});
-        }
+        if (owner) await owner.send({ embeds: [startupEmbed] }).catch(() => {});
     }
 });
 
-// Helper: Build Feature & Tier Manager Card
+// Helper: Build Feature & Tier Manager Card (%manage A-Z features)
 async function buildFeatureManager(guildId) {
     let settings = await ServerSettings.findOne({ guildId });
     if (!settings) {
@@ -352,9 +459,8 @@ async function buildFeatureManager(guildId) {
         .setColor(isNormalEnabled ? '#2ECC71' : '#E74C3C')
         .setTitle(`🛠️ Feature & Tier Manager: ${guild ? guild.name : guildId}`)
         .setDescription(
-            `Configure active feature systems for this server.\n\n` +
-            `🔹 **Normal Features State:** ${isNormalEnabled ? '✅ `ENABLED (Active)`' : '❌ `DISABLED (Inactive)`'}\n` +
-            `*Click button below to toggle all normal features at once.*`
+            `Configure active feature systems for this server (A-Z Modules).\n\n` +
+            `🔹 **Normal Features State:** ${isNormalEnabled ? '✅ `ENABLED (Active)`' : '❌ `DISABLED (Inactive)`'}`
         )
         .addFields(
             { name: 'Welcome System', value: f.welcome ? '✅ `Enabled`' : '❌ `Disabled`', inline: true },
@@ -375,7 +481,7 @@ async function buildFeatureManager(guildId) {
             { name: 'Bot Profile System', value: f.botprofile ? '✅ `Enabled`' : '❌ `Disabled`', inline: true },
             { name: 'Bot AI System', value: f.ai ? '✅ `Enabled`' : '❌ `Disabled`', inline: true }
         )
-        .setFooter({ text: 'SparkCore Feature Control' })
+        .setFooter({ text: 'SparkCore Feature Control Center' })
         .setTimestamp();
 
     const featureKeys = [
@@ -405,9 +511,9 @@ async function buildFeatureManager(guildId) {
         default: Boolean(f[item.value])
     }));
 
-    const premiumSelectMenu = new StringSelectMenuBuilder()
+    const featureSelectMenu = new StringSelectMenuBuilder()
         .setCustomId(`multi_toggle_feature_${guildId}`)
-        .setPlaceholder('Select active Premium Features (Checklist)...')
+        .setPlaceholder('Select active A-Z Features (Checklist)...')
         .setMinValues(0)
         .setMaxValues(options.length)
         .addOptions(options);
@@ -421,7 +527,7 @@ async function buildFeatureManager(guildId) {
     return {
         embeds: [embed],
         components: [
-            new ActionRowBuilder().addComponents(premiumSelectMenu),
+            new ActionRowBuilder().addComponents(featureSelectMenu),
             new ActionRowBuilder().addComponents(normalToggleBtn)
         ]
     };
@@ -509,7 +615,7 @@ client.on('messageCreate', async (message) => {
         const options = guilds.slice(0, 25).map(g => ({
             label: g.name.substring(0, 100),
             value: `manage_guild_${g.id}`,
-            description: `Configure tier mode & modules for ${g.name}`
+            description: `Configure A-Z features for ${g.name}`
         }));
 
         const selectMenu = new StringSelectMenuBuilder()
@@ -519,8 +625,8 @@ client.on('messageCreate', async (message) => {
 
         const embed = new EmbedBuilder()
             .setColor('#2ECC71')
-            .setTitle('🛠️ Bot Features & Tier Manager')
-            .setDescription('Select a server from the menu to customize active features and tier modes.')
+            .setTitle('🛠️ Bot Features & Module Manager')
+            .setDescription('Select a server from the menu to customize all A-Z active features.')
             .setThumbnail(client.user.displayAvatarURL())
             .setTimestamp();
 
@@ -624,47 +730,13 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    // %help (Universal Guide)
-    if (cmd === '%help') {
-        const helpEmbed = new EmbedBuilder()
-            .setColor('#5865F2')
-            .setTitle('📖 Command Directory & System Guide')
-            .setDescription('Overview of all slash commands, anti-nuke controls, and utility triggers.')
-            .addFields(
-                {
-                    name: '👑 Bot Owner Controls (% prefix in DM)',
-                    value: '• `%control` - Server browser, invite generator & force leave\n• `%manage` - Tier switcher & feature checklist\n• `%storage` - Database monitor & per-server cleaner\n• `%mail` - Send direct DM to any user via bot\n• `%clear <amount>` - DM conversation purge',
-                    inline: false
-                },
-                {
-                    name: '🛡️ Anti-Nuke & Ownership (% prefix)',
-                    value: '• `%antinuke <enable/disable>` - Toggle protection\n• `%extraowner <add/remove> @user` - Manage extra owners\n• `%wl <add/remove> @user/@bot` - Manage whitelist\n• `%channel <allow/deny> <links/media/ips>` - Per-channel automod rules\n• `%backup <create/load/delete>` - Full architecture templates',
-                    inline: false
-                },
-                {
-                    name: '⚔️ Moderation Actions (/staff)',
-                    value: '• `/staff action:ban/kick/timeout/untimeout/unban/purge/role_add/role_remove/lock/unlock/slowmode/warn`',
-                    inline: false
-                },
-                {
-                    name: '⚙️ Configuration & Core Systems (/panel)',
-                    value: '• `/panel book:1` - Welcome, Ticket, Onboarding, Stats, Store\n• `/panel book:2` - Moderation, Auto Response, Voice Generator, Apply, YouTube\n• `/panel book:3` - Invite Tracker, Goodbye, Leveling, Bot Profile, Bot AI',
-                    inline: false
-                }
-            )
-            .setFooter({ text: 'Enterprise Security & Management System' })
-            .setTimestamp();
-
-        return message.reply({ embeds: [helpEmbed] });
-    }
-
     // Music Prefix Commands
     if (await music.handleMessage(message, process.env.PREFIX || '%')) {
         return;
     }
 });
 
-// 6. Interactive Owner Control Listeners (All Button & Select Menu Interactions)
+// 6. Interactive Owner Control Listeners
 client.on('interactionCreate', async (interaction) => {
     if (!BOT_OWNERS.includes(interaction.user.id)) return;
 
@@ -796,7 +868,7 @@ client.on('interactionCreate', async (interaction) => {
         return interaction.update(updatedPanel);
     }
 
-    // %manage: Premium Features Toggle Checklist
+    // %manage: A-Z Features Toggle Checklist
     if (interaction.isStringSelectMenu() && interaction.customId.startsWith('multi_toggle_feature_')) {
         const guildId = interaction.customId.replace('multi_toggle_feature_', '');
         const selectedFeatures = interaction.values;
