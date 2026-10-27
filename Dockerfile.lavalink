@@ -1,0 +1,4 @@
+
+FROM ghcr.io/lavalink-devs/lavalink:4-alpine
+
+COPY music-bot/lavalink/application.yml /opt/Lavalink/application.yml
