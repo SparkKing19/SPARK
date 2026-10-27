@@ -1,0 +1,34 @@
+# Lavalink v4 config. Run: java -jar Lavalink.jar   (Java 17+)
+# Keep `password` in sync with LAVALINK_PASSWORD in the bot's .env
+server:
+  port: 2333
+  address: 0.0.0.0
+
+lavalink:
+  plugins:
+    # YouTube support lives in this plugin. Check the latest version at:
+    # https://github.com/lavalink-devs/youtube-source/releases
+    - dependency: "dev.lavalink.youtube:youtube-plugin:1.13.3"
+      snapshot: false
+  server:
+    password: "youshallnotpass"
+    sources:
+      youtube: false   # replaced by the plugin above
+      bandcamp: true
+      soundcloud: true
+      twitch: true
+      vimeo: true
+      http: true
+      local: false
+
+plugins:
+  youtube:
+    enabled: true
+    allowSearch: true
+    allowDirectVideoIds: true
+    allowDirectPlaylistIds: true
+    clients:
+      - MUSIC
+      - ANDROID_VR
+      - WEB
+      - WEBEMBEDDED
