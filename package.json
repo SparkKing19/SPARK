@@ -1,0 +1,16 @@
+{
+  "name": "music-bot",
+  "version": "1.0.0",
+  "description": "Music-only Discord bot with 100+ commands (discord.js + Shoukaku + Lavalink)",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "emojis": "node scripts/upload-emojis.js"
+  },
+  "engines": { "node": ">=18" },
+  "dependencies": {
+    "discord.js": "^14.17.3",
+    "dotenv": "^16.4.5",
+    "shoukaku": "^4.1.1"
+  }
+}
