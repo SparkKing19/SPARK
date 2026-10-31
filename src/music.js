@@ -154,10 +154,19 @@ class MusicManager {
     if (!this.sessionId || !this.ready) return;
     const v = this.voice.get(guildId);
     if (!v || !v.sessionId || !v.token || !v.endpoint) return;
-    await this.request(`/v4/sessions/${this.sessionId}/players/${guildId}?noReplace=false`, "PATCH", {
-      voice: { sessionId: v.sessionId, token: v.token, endpoint: v.endpoint },
-      volume: this.queue(guildId).volume
-    });
+    
+    try {
+      await this.request(`/v4/sessions/${this.sessionId}/players/${guildId}?noReplace=false`, "PATCH", {
+        voice: { 
+          sessionId: v.sessionId, 
+          token: v.token, 
+          endpoint: v.endpoint 
+        },
+        volume: this.queue(guildId).volume
+      });
+    } catch (err) {
+      console.error("[VOICE SYNC] Failed to sync voice data to Lavalink:", err.message);
+    }
   }
 
   async onVoiceState(data) {
