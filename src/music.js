@@ -129,21 +129,27 @@ class MusicManager {
 
   async ensureVoice(guildId, channelId) {
     const guild = this.client.guilds.cache.get(guildId);
-    if (!guild) return;
-    
+    if (!guild) throw new Error("Guild not found.");
+
     this.voice.set(guildId, { channelId, sessionId: null, token: null, endpoint: null });
-    
+
     try {
-      // Direct discord.js client se voice channel join karne ke liye connection establish karo
-      await guild.members.me.voice.setChannel(channelId);
+      // Direct Discord gateway ko voice state update packet bhejkar bot ko channel me join karvate hain
+      await guild.shard.send({
+        op: 4,
+        d: {
+          guild_id: guildId,
+          channel_id: channelId,
+          self_mute: false,
+          self_deaf: true
+        }
+      });
     } catch (error) {
-      console.error(`[VOICE] Failed to join voice channel: ${error.message}`);
+      console.error(`[VOICE] Failed to join voice channel via shard: ${error.message}`);
       throw new Error(`Could not join the voice channel: ${error.message}`);
     }
-    
-    await this.syncVoice(guildId);
-    }
-
+  }
+  
   async syncVoice(guildId) {
     if (!this.sessionId || !this.ready) return;
     const v = this.voice.get(guildId);
