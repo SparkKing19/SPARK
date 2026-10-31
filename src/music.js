@@ -100,10 +100,13 @@ class MusicManager {
 
   async search(query) {
     if (!this.ready) throw new Error("Music engine is still starting. Try again in a few seconds.");
-    const identifier = /^https?:\/\//i.test(query) ? query : `ytsearch:${query}`;
+    
+    // YouTube ki jagah SoundCloud search (`scsearch:`) use karenge taaki YouTube signature errors bypass ho jayein
+    const identifier = /^https?:\/\//i.test(query) ? query : `scsearch:${query}`;
+    
     const result = await this.request(`/v4/loadtracks?identifier=${encodeURIComponent(identifier)}`);
-    if (result.loadType === "empty" || result.loadType === "error") {
-      throw new Error(result.data?.message || "No playable tracks found.");
+    if (!result || result.loadType === "empty" || result.loadType === "error") {
+      throw new Error(result.data?.message || "No playable tracks found on SoundCloud.");
     }
     if (result.loadType === "playlist") return { tracks: result.data.tracks || [], name: result.data.info?.name };
     if (result.loadType === "search") return { tracks: (result.data || []).slice(0, 1) };
