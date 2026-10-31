@@ -1,17 +1,15 @@
-spring:
-  cloud:
-    config:
-      enabled: false
-      import-check:
-        enabled: false
-
 server:
   port: 2333
   address: 127.0.0.1
 
 lavalink:
+  plugins:
+    - dependency: "dev.lavalink.youtube:youtube-plugin:1.18.2"
+      snapshot: false
+
   server:
     password: "${LAVALINK_PASSWORD:change-this-in-railway}"
+
     sources:
       youtube: false
       soundcloud: true
@@ -20,6 +18,7 @@ lavalink:
       vimeo: true
       http: true
       local: false
+
     filters:
       volume: true
       equalizer: true
@@ -31,6 +30,7 @@ lavalink:
       rotation: true
       channelMix: true
       lowPass: true
+
     bufferDurationMs: 400
     frameBufferDurationMs: 5000
     youtubePlaylistLoadLimit: 6
@@ -38,10 +38,19 @@ lavalink:
     gc-warnings: true
 
 plugins:
-  - dependency: "dev.lavalink.youtube:youtube-plugin:1.18.2"
-    snapshot: false
+  youtube:
+    enabled: true
+    allowSearch: true
+    allowDirectVideoIds: true
+    allowDirectPlaylistIds: true
+    clients:
+      - ANDROID_VR
+      - WEB
+      - WEBEMBEDDED
+      - MWEB
 
 logging:
   level:
     root: INFO
     lavalink: INFO
+    dev.lavalink.youtube: DEBUG
