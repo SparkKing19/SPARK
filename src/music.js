@@ -131,10 +131,11 @@ class MusicManager {
     const guild = this.client.guilds.cache.get(guildId);
     if (!guild) throw new Error("Guild not found.");
 
-    this.voice.set(guildId, { channelId, sessionId: null, token: null, endpoint: null });
+    let v = this.voice.get(guildId) || {};
+    v.channelId = channelId;
+    this.voice.set(guildId, v);
 
     try {
-      // Direct Discord gateway ko voice state update packet bhejkar bot ko channel me join karvate hain
       await guild.shard.send({
         op: 4,
         d: {
@@ -149,18 +150,19 @@ class MusicManager {
       throw new Error(`Could not join the voice channel: ${error.message}`);
     }
   }
-  
+
   async syncVoice(guildId) {
     if (!this.sessionId || !this.ready) return;
     const v = this.voice.get(guildId);
-    if (!v || !v.sessionId || !v.token || !v.endpoint) return;
+    if (!v || !v.sessionId || !v.token || !v.endpoint || !v.channelId) return;
     
     try {
       await this.request(`/v4/sessions/${this.sessionId}/players/${guildId}?noReplace=false`, "PATCH", {
         voice: { 
-          sessionId: v.sessionId, 
           token: v.token, 
-          endpoint: v.endpoint 
+          endpoint: v.endpoint, 
+          sessionId: v.sessionId,
+          channelId: v.channelId
         },
         volume: this.queue(guildId).volume
       });
@@ -263,3 +265,4 @@ class MusicManager {
 }
 
 module.exports = { MusicManager };
+        
