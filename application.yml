@@ -18,7 +18,7 @@ lavalink:
     password: "${LAVALINK_PASSWORD:change-this-in-railway}"
 
     sources:
-      youtube: false
+      youtube: true
       soundcloud: true
       bandcamp: true
       twitch: true
@@ -51,11 +51,14 @@ plugins:
     allowDirectVideoIds: true
     allowDirectPlaylistIds: true
     clients:
-      - ANDROID_VR
       - WEB
+      - MUSIC
+      - ANDROID
+      - TVHTML5EMBEDDED
 
 logging:
   level:
     root: INFO
     lavalink: INFO
     dev.lavalink.youtube: DEBUG
+    
