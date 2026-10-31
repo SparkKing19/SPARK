@@ -128,15 +128,21 @@ class MusicManager {
   }
 
   async ensureVoice(guildId, channelId) {
-    const existing = this.voice.get(guildId);
-    if (existing?.channelId === channelId) return;
     const guild = this.client.guilds.cache.get(guildId);
+    if (!guild) return;
+    
     this.voice.set(guildId, { channelId, sessionId: null, token: null, endpoint: null });
-    await guild.members.me.voice.setChannel(channelId).catch(error => {
+    
+    try {
+      // Direct discord.js client se voice channel join karne ke liye connection establish karo
+      await guild.members.me.voice.setChannel(channelId);
+    } catch (error) {
+      console.error(`[VOICE] Failed to join voice channel: ${error.message}`);
       throw new Error(`Could not join the voice channel: ${error.message}`);
-    });
+    }
+    
     await this.syncVoice(guildId);
-  }
+    }
 
   async syncVoice(guildId) {
     if (!this.sessionId || !this.ready) return;
