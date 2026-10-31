@@ -101,12 +101,14 @@ class MusicManager {
   async search(query) {
     if (!this.ready) throw new Error("Music engine is still starting. Try again in a few seconds.");
     
-    // SoundCloud search use karenge taaki YouTube search API 400 error bypass ho jaye
-    const identifier = /^https?:\/\//i.test(query) ? query : `scsearch:${query}`;
+    // Check if query is a direct HTTP/HTTPS audio/MP3 link
+    if (!/^https?:\/\//i.test(query)) {
+      throw new Error("⚠️ Text search is currently unavailable. Please provide a direct MP3 or audio stream link (e.g., /play https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3).");
+    }
 
-    const result = await this.request(`/v4/loadtracks?identifier=${encodeURIComponent(identifier)}`);
+    const result = await this.request(`/v4/loadtracks?identifier=${encodeURIComponent(query)}`);
     if (!result || result.loadType === "empty" || result.loadType === "error") {
-      throw new Error(result.data?.message || "No tracks found.");
+      throw new Error(result.data?.message || "Could not load this audio link.");
     }
     if (result.loadType === "playlist") return { tracks: result.data.tracks || [], name: result.data.info?.name };
     if (result.loadType === "search") return { tracks: (result.data || []).slice(0, 1) };
@@ -268,4 +270,4 @@ class MusicManager {
 }
 
 module.exports = { MusicManager };
-                                                                                 
+    
