@@ -101,19 +101,31 @@ class MusicManager {
   async search(query) {
     if (!this.ready) throw new Error("Music engine is still starting. Try again in a few seconds.");
     
-    // Direct URL check to bypass YouTube search API 400 errors
+    // Agar query link nahi hai, toh ytsearch: use karenge
     let identifier = query;
     if (!/^https?:\/\//i.test(query)) {
-      throw new Error("YouTube search is currently restricted. Please use a direct YouTube URL (e.g., /play https://www.youtube.com/watch?v=...).");
+      identifier = `ytsearch:${query}`;
     }
 
-    const result = await this.request(`/v4/loadtracks?identifier=${encodeURIComponent(identifier)}`);
-    if (!result || result.loadType === "empty" || result.loadType === "error") {
-      throw new Error(result.data?.message || "Could not load this track URL.");
+    try {
+      const result = await this.request(`/v4/loadtracks?identifier=${encodeURIComponent(identifier)}`);
+      if (!result || result.loadType === "empty" || result.loadType === "error") {
+        throw new Error("No playable tracks found for this query.");
+      }
+      if (result.loadType === "playlist") return { tracks: result.data.tracks || [], name: result.data.info?.name };
+      if (result.loadType === "search") return { tracks: (result.data || []).slice(0, 1) };
+      return { tracks: result.data ? [result.data] : [] };
+    } catch (err) {
+      // Agar YouTube search fail ho jaye, toh SoundCloud search (`scsearch:`) par automatic fallback karega
+      if (!/^https?:\/\//i.test(query)) {
+        console.warn(`[SEARCH FALLBACK] YouTube search failed for "${query}", switching to SoundCloud...`);
+        const scResult = await this.request(`/v4/loadtracks?identifier=${encodeURIComponent(`scsearch:${query}`)}`);
+        if (scResult && scResult.loadType === "search" && scResult.data?.length > 0) {
+          return { tracks: [scResult.data[0]] };
+        }
+      }
+      throw new Error("Could not find or play this track. Try using a direct YouTube URL.");
     }
-    if (result.loadType === "playlist") return { tracks: result.data.tracks || [], name: result.data.info?.name };
-    if (result.loadType === "search") return { tracks: (result.data || []).slice(0, 1) };
-    return { tracks: result.data ? [result.data] : [] };
   }
 
   async enqueue(interaction, query) {
