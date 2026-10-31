@@ -101,20 +101,18 @@ class MusicManager {
   async search(query) {
     if (!this.ready) throw new Error("Music engine is still starting. Try again in a few seconds.");
     
-    // Sirf direct HTTP/HTTPS URLs allow karenge kyunki YouTube aur SoundCloud ki text search API is jar version par deprecated/blocked hain
-    if (!/^https?:\/\//i.test(query)) {
-      throw new Error("⚠️ Direct text search is disabled due to YouTube restrictions. Please use a direct link: `/play https://www.youtube.com/watch?v=...`");
-    }
+    // SoundCloud search use karenge taaki YouTube search API 400 error bypass ho jaye
+    const identifier = /^https?:\/\//i.test(query) ? query : `scsearch:${query}`;
 
-    const result = await this.request(`/v4/loadtracks?identifier=${encodeURIComponent(query)}`);
+    const result = await this.request(`/v4/loadtracks?identifier=${encodeURIComponent(identifier)}`);
     if (!result || result.loadType === "empty" || result.loadType === "error") {
-      throw new Error(result.data?.message || "Could not load this track link.");
+      throw new Error(result.data?.message || "No tracks found.");
     }
     if (result.loadType === "playlist") return { tracks: result.data.tracks || [], name: result.data.info?.name };
     if (result.loadType === "search") return { tracks: (result.data || []).slice(0, 1) };
     return { tracks: result.data ? [result.data] : [] };
   }
-  
+
   async enqueue(interaction, query) {
     const memberChannel = interaction.member.voice?.channel;
     if (!memberChannel) throw new Error("Join a voice channel first.");
@@ -270,4 +268,4 @@ class MusicManager {
 }
 
 module.exports = { MusicManager };
-      
+                                                                                 
