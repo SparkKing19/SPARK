@@ -101,12 +101,15 @@ class MusicManager {
   async search(query) {
     if (!this.ready) throw new Error("Music engine is still starting. Try again in a few seconds.");
     
-    // Agar query direct http link hai toh wahi use karo, warna ytsearch ya direct identifier
-    const identifier = /^https?:\/\//i.test(query) ? query : `ytsearch:${query}`;
-    
+    // Direct URL check to bypass YouTube search API 400 errors
+    let identifier = query;
+    if (!/^https?:\/\//i.test(query)) {
+      throw new Error("YouTube search is currently restricted. Please use a direct YouTube URL (e.g., /play https://www.youtube.com/watch?v=...).");
+    }
+
     const result = await this.request(`/v4/loadtracks?identifier=${encodeURIComponent(identifier)}`);
     if (!result || result.loadType === "empty" || result.loadType === "error") {
-      throw new Error(result.data?.message || "No playable tracks found.");
+      throw new Error(result.data?.message || "Could not load this track URL.");
     }
     if (result.loadType === "playlist") return { tracks: result.data.tracks || [], name: result.data.info?.name };
     if (result.loadType === "search") return { tracks: (result.data || []).slice(0, 1) };
@@ -268,4 +271,4 @@ class MusicManager {
 }
 
 module.exports = { MusicManager };
-        
+      
