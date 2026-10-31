@@ -101,33 +101,20 @@ class MusicManager {
   async search(query) {
     if (!this.ready) throw new Error("Music engine is still starting. Try again in a few seconds.");
     
-    // Agar query link nahi hai, toh ytsearch: use karenge
-    let identifier = query;
+    // Sirf direct HTTP/HTTPS URLs allow karenge kyunki YouTube aur SoundCloud ki text search API is jar version par deprecated/blocked hain
     if (!/^https?:\/\//i.test(query)) {
-      identifier = `ytsearch:${query}`;
+      throw new Error("⚠️ Direct text search is disabled due to YouTube restrictions. Please use a direct link: `/play https://www.youtube.com/watch?v=...`");
     }
 
-    try {
-      const result = await this.request(`/v4/loadtracks?identifier=${encodeURIComponent(identifier)}`);
-      if (!result || result.loadType === "empty" || result.loadType === "error") {
-        throw new Error("No playable tracks found for this query.");
-      }
-      if (result.loadType === "playlist") return { tracks: result.data.tracks || [], name: result.data.info?.name };
-      if (result.loadType === "search") return { tracks: (result.data || []).slice(0, 1) };
-      return { tracks: result.data ? [result.data] : [] };
-    } catch (err) {
-      // Agar YouTube search fail ho jaye, toh SoundCloud search (`scsearch:`) par automatic fallback karega
-      if (!/^https?:\/\//i.test(query)) {
-        console.warn(`[SEARCH FALLBACK] YouTube search failed for "${query}", switching to SoundCloud...`);
-        const scResult = await this.request(`/v4/loadtracks?identifier=${encodeURIComponent(`scsearch:${query}`)}`);
-        if (scResult && scResult.loadType === "search" && scResult.data?.length > 0) {
-          return { tracks: [scResult.data[0]] };
-        }
-      }
-      throw new Error("Could not find or play this track. Try using a direct YouTube URL.");
+    const result = await this.request(`/v4/loadtracks?identifier=${encodeURIComponent(query)}`);
+    if (!result || result.loadType === "empty" || result.loadType === "error") {
+      throw new Error(result.data?.message || "Could not load this track link.");
     }
+    if (result.loadType === "playlist") return { tracks: result.data.tracks || [], name: result.data.info?.name };
+    if (result.loadType === "search") return { tracks: (result.data || []).slice(0, 1) };
+    return { tracks: result.data ? [result.data] : [] };
   }
-
+  
   async enqueue(interaction, query) {
     const memberChannel = interaction.member.voice?.channel;
     if (!memberChannel) throw new Error("Join a voice channel first.");
