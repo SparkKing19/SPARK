@@ -101,16 +101,12 @@ class MusicManager {
   async search(query) {
     if (!this.ready) throw new Error("Music engine is still starting. Try again in a few seconds.");
     
-    // Agar direct URL nahi hai, toh HTTP / public audio source fallback use karenge
-    let identifier = query;
-    if (!/^https?:\/\//i.test(query)) {
-      // Direct public audio search ya sample stream fallback
-      identifier = `https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3`; 
-    }
-
+    // Agar query direct http link hai toh wahi use karo, warna ytsearch ya direct identifier
+    const identifier = /^https?:\/\//i.test(query) ? query : `ytsearch:${query}`;
+    
     const result = await this.request(`/v4/loadtracks?identifier=${encodeURIComponent(identifier)}`);
     if (!result || result.loadType === "empty" || result.loadType === "error") {
-      throw new Error("Could not load the track. Please provide a direct audio/MP3 link.");
+      throw new Error(result.data?.message || "No playable tracks found.");
     }
     if (result.loadType === "playlist") return { tracks: result.data.tracks || [], name: result.data.info?.name };
     if (result.loadType === "search") return { tracks: (result.data || []).slice(0, 1) };
