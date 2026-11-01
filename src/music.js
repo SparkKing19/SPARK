@@ -107,37 +107,28 @@ class MusicManager {
   async search(query) {
     if (!this.ready) throw new Error("Music engine is still starting up. Please wait a few seconds.");
     
-    // Agar link hai toh direct use karo, warna ytsearch: ya scsearch: use karo
     let identifier = query;
+    // Handle text searches vs URLs properly
     if (!/^https?:\/\//i.test(query)) {
       identifier = `ytsearch:${query}`;
     }
 
-    try {
-      const result = await this.request(`/v4/loadtracks?identifier=${encodeURIComponent(identifier)}`);
-      if (result && result.loadType !== "empty" && result.loadType !== "error") {
-        if (result.loadType === "playlist") return { tracks: result.data.tracks || [], name: result.data.info?.name };
-        if (result.loadType === "search") return { tracks: (result.data || []).slice(0, 1) };
-        if (result.loadType === "track") return { tracks: [result.data] };
-      }
-    } catch (err) {
-      console.warn("[SEARCH] YouTube search failed, attempting fallback...");
-    }
-
-    // Fallback: Agar YouTube search fail ho jaye toh SoundCloud search (`scsearch:`) try karega
-    if (!/^https?:\/\//i.test(query)) {
-      try {
-        const scIdentifier = `scsearch:${query}`;
-        const scResult = await this.request(`/v4/loadtracks?identifier=${encodeURIComponent(scIdentifier)}`);
+    const result = await this.request(`/v4/loadtracks?identifier=${encodeURIComponent(identifier)}`);
+    if (!result || result.loadType === "empty" || result.loadType === "error") {
+      // Fallback to SoundCloud search if text search fails
+      if (!/^https?:\/\//i.test(query)) {
+        const scResult = await this.request(`/v4/loadtracks?identifier=${encodeURIComponent(`scsearch:${query}`)}`);
         if (scResult && scResult.loadType === "search" && scResult.data?.length > 0) {
           return { tracks: [scResult.data[0]] };
         }
-      } catch (e) {
-        console.warn("[SEARCH] SoundCloud fallback also failed.");
       }
+      throw new Error(result.data?.message || "Could not find or load this track.");
     }
 
-    throw new Error("Could not find any tracks matching your query. Try using a direct YouTube or audio link.");
+    if (result.loadType === "playlist") return { tracks: result.data.tracks || [], name: result.data.info?.name };
+    if (result.loadType === "search") return { tracks: (result.data || []).slice(0, 1) };
+    if (result.loadType === "track") return { tracks: [result.data] };
+    return { tracks: result.data ? [result.data] : [] };
   }
 
   async enqueue(interaction, query) {
