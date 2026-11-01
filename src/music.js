@@ -17,7 +17,6 @@ class MusicManager {
   }
 
   async connect() {
-    // Lavalink ke poori tarah start hone ka wait karne ke liye thoda delay dete hain
     await sleep(3000);
     while (!this.ready) {
       try {
@@ -106,21 +105,39 @@ class MusicManager {
   }
 
   async search(query) {
-    if (!this.ready) throw new Error("Music engine is still starting up. Please wait 5 seconds and try again.");
+    if (!this.ready) throw new Error("Music engine is still starting up. Please wait a few seconds.");
     
-    // Direct URL check to ensure absolute stability without search query restrictions
+    // Agar link hai toh direct use karo, warna ytsearch: ya scsearch: use karo
     let identifier = query;
     if (!/^https?:\/\//i.test(query)) {
-      throw new Error("⚠️ Direct text search is restricted by YouTube. Please use a direct link: `/play https://www.youtube.com/watch?v=...`");
+      identifier = `ytsearch:${query}`;
     }
 
-    const result = await this.request(`/v4/loadtracks?identifier=${encodeURIComponent(identifier)}`);
-    if (!result || result.loadType === "empty" || result.loadType === "error") {
-      throw new Error(result.data?.message || "Could not load this track URL.");
+    try {
+      const result = await this.request(`/v4/loadtracks?identifier=${encodeURIComponent(identifier)}`);
+      if (result && result.loadType !== "empty" && result.loadType !== "error") {
+        if (result.loadType === "playlist") return { tracks: result.data.tracks || [], name: result.data.info?.name };
+        if (result.loadType === "search") return { tracks: (result.data || []).slice(0, 1) };
+        if (result.loadType === "track") return { tracks: [result.data] };
+      }
+    } catch (err) {
+      console.warn("[SEARCH] YouTube search failed, attempting fallback...");
     }
-    if (result.loadType === "playlist") return { tracks: result.data.tracks || [], name: result.data.info?.name };
-    if (result.loadType === "search") return { tracks: (result.data || []).slice(0, 1) };
-    return { tracks: result.data ? [result.data] : [] };
+
+    // Fallback: Agar YouTube search fail ho jaye toh SoundCloud search (`scsearch:`) try karega
+    if (!/^https?:\/\//i.test(query)) {
+      try {
+        const scIdentifier = `scsearch:${query}`;
+        const scResult = await this.request(`/v4/loadtracks?identifier=${encodeURIComponent(scIdentifier)}`);
+        if (scResult && scResult.loadType === "search" && scResult.data?.length > 0) {
+          return { tracks: [scResult.data[0]] };
+        }
+      } catch (e) {
+        console.warn("[SEARCH] SoundCloud fallback also failed.");
+      }
+    }
+
+    throw new Error("Could not find any tracks matching your query. Try using a direct YouTube or audio link.");
   }
 
   async enqueue(interaction, query) {
@@ -255,7 +272,7 @@ class MusicManager {
     await this.request(`/v4/sessions/${this.sessionId}/players/${guildId}`, "PATCH", { paused });
   }
 
-    async stop(guildId) {
+  async stop(guildId) {
     const q = this.queue(guildId);
     q.tracks = []; q.current = null; q.loop = "off";
     await this.request(`/v4/sessions/${this.sessionId}/players/${guildId}`, "DELETE").catch(() => {});
