@@ -15,50 +15,44 @@ lavalink:
       snapshot: false
 
   server:
-    password: "${LAVALINK_PASSWORD:change-this-in-railway}"
+    password: "${LAVALINK_PASSWORD:change-this-in-railway}[span_2](start_span)"[span_2](end_span)
 
     sources:
-      youtube: true
-      soundcloud: true
-      bandcamp: true
-      twitch: true
-      vimeo: true
-      http: true
-      local: false
+      youtube: false
+      soundcloud: true[span_3](start_span)[span_3](end_span)
+      bandcamp: true[span_4](start_span)[span_4](end_span)
+      twitch: true[span_5](start_span)[span_5](end_span)
+      vimeo: true[span_6](start_span)[span_6](end_span)
+      http: true[span_7](start_span)[span_7](end_span)
+      local: false[span_8](start_span)[span_8](end_span)
 
     filters:
-      volume: true
-      equalizer: true
-      karaoke: true
-      timescale: true
-      tremolo: true
-      vibrato: true
-      distortion: true
-      rotation: true
-      channelMix: true
-      lowPass: true
+      volume: true[span_9](start_span)[span_9](end_span)
+      equalizer: true[span_10](start_span)[span_10](end_span)
+      karaoke: true[span_11](start_span)[span_11](end_span)
+      timescale: true[span_12](start_span)[span_12](end_span)
+      tremolo: true[span_13](start_span)[span_13](end_span)
+      vibrato: true[span_14](start_span)[span_14](end_span)
+      distortion: true[span_15](start_span)[span_15](end_span)
+      rotation: true[span_16](start_span)[span_16](end_span)
+      channelMix: true[span_17](start_span)[span_17](end_span)
+      lowPass: true[span_18](start_span)[span_18](end_span)
 
-    bufferDurationMs: 400
-    frameBufferDurationMs: 5000
-    youtubePlaylistLoadLimit: 6
-    playerUpdateInterval: 5
-    gc-warnings: true
+    bufferDurationMs: 400[span_19](start_span)[span_19](end_span)
+    frameBufferDurationMs: 5000[span_20](start_span)[span_20](end_span)
+    youtubePlaylistLoadLimit: 6[span_21](start_span)[span_21](end_span)
+    playerUpdateInterval: 5[span_22](start_span)[span_22](end_span)
+    gc-warnings: true[span_23](start_span)[span_23](end_span)
 
 plugins:
   youtube:
-    enabled: true
-    allowSearch: true
-    allowDirectVideoIds: true
-    allowDirectPlaylistIds: true
-    clients:
-      - WEB
-      - MUSIC
-      - ANDROID
-      - TVHTML5EMBEDDED
+    enabled: false
+    allowSearch: false
+    allowDirectVideoIds: false
+    allowDirectPlaylistIds: false
 
 logging:
   level:
-    root: INFO
-    lavalink: INFO
-    dev.lavalink.youtube: DEBUG
-    
+    root: INFO[span_24](start_span)[span_24](end_span)
+    lavalink: INFO[span_25](start_span)[span_25](end_span)
+    dev.lavalink.youtube: DEBUG[span_26](start_span)[span_26](end_span)
