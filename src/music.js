@@ -17,13 +17,15 @@ class MusicManager {
   }
 
   async connect() {
+    // Lavalink ke poori tarah start hone ka wait karne ke liye thoda delay dete hain
+    await sleep(3000);
     while (!this.ready) {
       try {
         await this.openSocket();
         return;
       } catch (error) {
-        console.error("[LAVALINK] Connection failed:", error.message);
-        await sleep(Math.min(5000 + this.retry++ * 3000, 30000));
+        console.error("[LAVALINK] Connection failed, retrying...", error.message);
+        await sleep(Math.min(3000 + this.retry++ * 2000, 15000));
       }
     }
   }
@@ -41,7 +43,9 @@ class MusicManager {
         ws.terminate();
         reject(new Error("Lavalink websocket timeout"));
       }, 15000);
-      ws.once("open", () => console.log("[LAVALINK] WebSocket connected."));
+
+      ws.once("open", () => console.log("[LAVALINK] WebSocket connected successfully."));
+      
       ws.on("message", raw => {
         let data;
         try { data = JSON.parse(raw.toString()); } catch { return; }
@@ -60,16 +64,19 @@ class MusicManager {
           if (q) q.position = data.state?.position || 0;
         }
       });
+
       ws.on("error", error => {
         clearTimeout(timeout);
         if (!this.ready) reject(error);
       });
+
       ws.on("close", () => {
         this.ready = false;
         this.sessionId = null;
-        console.warn("[LAVALINK] WebSocket closed; reconnecting.");
+        console.warn("[LAVALINK] WebSocket closed; reconnecting...");
         setTimeout(() => this.connect(), 3000);
       });
+
       this.ws = ws;
     });
   }
@@ -99,16 +106,17 @@ class MusicManager {
   }
 
   async search(query) {
-    if (!this.ready) throw new Error("Music engine is still starting. Try again in a few seconds.");
+    if (!this.ready) throw new Error("Music engine is still starting up. Please wait 5 seconds and try again.");
     
-    // Check if query is a direct HTTP/HTTPS audio/MP3 link
+    // Direct URL check to ensure absolute stability without search query restrictions
+    let identifier = query;
     if (!/^https?:\/\//i.test(query)) {
-      throw new Error("⚠️ Text search is currently unavailable. Please provide a direct MP3 or audio stream link (e.g., /play https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3).");
+      throw new Error("⚠️ Direct text search is restricted by YouTube. Please use a direct link: `/play https://www.youtube.com/watch?v=...`");
     }
 
-    const result = await this.request(`/v4/loadtracks?identifier=${encodeURIComponent(query)}`);
+    const result = await this.request(`/v4/loadtracks?identifier=${encodeURIComponent(identifier)}`);
     if (!result || result.loadType === "empty" || result.loadType === "error") {
-      throw new Error(result.data?.message || "Could not load this audio link.");
+      throw new Error(result.data?.message || "Could not load this track URL.");
     }
     if (result.loadType === "playlist") return { tracks: result.data.tracks || [], name: result.data.info?.name };
     if (result.loadType === "search") return { tracks: (result.data || []).slice(0, 1) };
@@ -247,7 +255,7 @@ class MusicManager {
     await this.request(`/v4/sessions/${this.sessionId}/players/${guildId}`, "PATCH", { paused });
   }
 
-  async stop(guildId) {
+    async stop(guildId) {
     const q = this.queue(guildId);
     q.tracks = []; q.current = null; q.loop = "off";
     await this.request(`/v4/sessions/${this.sessionId}/players/${guildId}`, "DELETE").catch(() => {});
@@ -270,4 +278,3 @@ class MusicManager {
 }
 
 module.exports = { MusicManager };
-    
