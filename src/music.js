@@ -107,28 +107,29 @@ class MusicManager {
   async search(query) {
     if (!this.ready) throw new Error("Music engine is still starting up. Please wait a few seconds.");
     
+    // Standard production URL vs Search routing
     let identifier = query;
-    // Handle text searches vs URLs properly
     if (!/^https?:\/\//i.test(query)) {
       identifier = `ytsearch:${query}`;
     }
 
     const result = await this.request(`/v4/loadtracks?identifier=${encodeURIComponent(identifier)}`);
+    
     if (!result || result.loadType === "empty" || result.loadType === "error") {
-      // Fallback to SoundCloud search if text search fails
-      if (!/^https?:\/\//i.test(query)) {
-        const scResult = await this.request(`/v4/loadtracks?identifier=${encodeURIComponent(`scsearch:${query}`)}`);
-        if (scResult && scResult.loadType === "search" && scResult.data?.length > 0) {
-          return { tracks: [scResult.data[0]] };
-        }
-      }
-      throw new Error(result.data?.message || "Could not find or load this track.");
+      throw new Error("Could not find or load this track. Please check the URL or search term.");
     }
 
     if (result.loadType === "playlist") return { tracks: result.data.tracks || [], name: result.data.info?.name };
-    if (result.loadType === "search") return { tracks: (result.data || []).slice(0, 1) };
+    if (result.loadType === "search") {
+      if (!result.data || result.data.length === 0) throw new Error("No tracks found for this query.");
+      return { tracks: [result.data[0]] };
+    }
     if (result.loadType === "track") return { tracks: [result.data] };
-    return { tracks: result.data ? [result.data] : [] };
+    
+    // Fallback for general array data
+    if (Array.isArray(result.data)) return { tracks: result.data.slice(0, 1) };
+    
+    throw new Error("Unsupported track load type received from Lavalink.");
   }
 
   async enqueue(interaction, query) {
@@ -286,3 +287,4 @@ class MusicManager {
 }
 
 module.exports = { MusicManager };
+      
