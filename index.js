@@ -39,7 +39,7 @@ const player = new Player(client, {
 });
 
 // Map to store active session controllers, panel references, and 24/7 settings per guild
-const activeControllers = new Map(); // guildId -> { controllerUserId, panelMessageId, autoplay, permanentVcId, musicChannelId }
+const activeControllers = new Map(); 
 
 function queueOptions(channel) {
   return {
@@ -73,7 +73,6 @@ function sameVoice(message) {
   return !bot || (user && bot.id === user.id);
 }
 
-// Helper: Check if user has music access (must be in bot's VC)
 function hasMusicAccess(message) {
   const session = activeControllers.get(message.guild.id);
   const uVoice = userVoice(message);
@@ -92,18 +91,13 @@ function hasMusicAccess(message) {
 
 async function checkPermissions(message, channel) {
   const permissions = channel.permissionsFor(message.guild.members.me);
-  if (!permissions?.has("Connect")) {
-    await message.reply("❌ I need Connect permission!");
-    return false;
-  }
-  if (!permissions?.has("Speak")) {
-    await message.reply("❌ I need Speak permission!");
+  if (!permissions?.has("Connect") || !permissions?.has("Speak")) {
+    await message.reply("❌ I need Connect and Speak permissions!");
     return false;
   }
   return true;
 }
 
-// Update Channel Status (Name with emoji `<a:music:1567533198983041135>`)
 async function updateVoiceChannelStatus(queue, track) {
   try {
     const vc = queue.channel;
@@ -117,17 +111,33 @@ async function updateVoiceChannelStatus(queue, track) {
   } catch (e) {}
 }
 
-// Build Black Embed Music Panel Components
-function getPanelComponents() {
+// Custom Emoji fallback helper for :DISC:
+function getDiscEmoji(clientInstance) {
+  const customDisc = clientInstance.emojis.cache.get("1564099400182272050");
+  if (customDisc) return `<a:DISK:${customDisc.id}>`;
+  return "💽";
+}
+
+// Panel Buttons Layout (10 Buttons split into 2 ActionRows + Filter Dropdown)
+function getPanelComponents(clientInstance, isPaused, isLooping) {
+  const disc = getDiscEmoji(clientInstance);
+
   const row1 = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setCustomId("music_pause_resume").setEmoji("⏯️").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("music_skip").setEmoji("⏭️").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("music_loop").setEmoji("🔁").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("music_prev").setEmoji("⏮️").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("music_stop").setEmoji("⏹️").setStyle(ButtonStyle.Danger),
-    new ButtonBuilder().setCustomId("music_autoplay").setEmoji("🔁").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("music_queue").setEmoji("📜").setStyle(ButtonStyle.Secondary)
+    new ButtonBuilder().setCustomId("music_skip").setEmoji("⏭️").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("music_queue").setEmoji("🗃️").setStyle(ButtonStyle.Secondary)
   );
 
   const row2 = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId("music_vol_down").setEmoji("🔉").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("music_pause_resume").setEmoji(isPaused ? "⏸️" : "▶️").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("music_panel_disc").setEmoji(disc.includes(":") ? { id: "1564099400182272050", name: "DISK" } : "💽").setStyle(ButtonStyle.Secondary).setDisabled(true),
+    new ButtonBuilder().setCustomId("music_vol_up").setEmoji("🔊").setStyle(ButtonStyle.Secondary)
+  );
+
+  const row3 = new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
       .setCustomId("music_filters")
       .setPlaceholder("Select Audio Filter...")
@@ -140,7 +150,7 @@ function getPanelComponents() {
       ])
   );
 
-  return [row1, row2];
+  return [row1, row2, row3];
 }
 
 async function updateMusicPanel(queue, clientInstance, targetChannel = null) {
@@ -153,17 +163,22 @@ async function updateMusicPanel(queue, clientInstance, targetChannel = null) {
     if (!channel) return;
 
     const track = queue.currentTrack;
+    const isPaused = queue.node.isPaused();
+    const disc = getDiscEmoji(clientInstance);
 
     const embed = new EmbedBuilder()
       .setColor(0x000000) // Black embed
-      .setTitle("🎧 SparkToon Music Control Panel")
+      .setTitle(`${disc} SparkToon Permanent Music Panel`)
       .setDescription(track ? `Playing: **${track.title}**` : "Queue is empty. Use `+play` or panel controls.")
       .addFields(
         { name: "Author", value: track?.author || "N/A", inline: true },
-        { name: "Duration", value: track?.duration || "N/A", inline: true },
-        { name: "Autoplay", value: session.autoplay ? "Enabled 🔁" : "Disabled", inline: true }
+        { name: "Name", value: track?.title || "N/A", inline: true },
+        { name: "Time", value: track?.duration || "N/A", inline: true },
+        { name: "Loop", value: session.loopMode ? "Enabled 🔁" : "Disabled", inline: true },
+        { name: "Volume", value: `${queue.node.volume}%`, inline: true }
       );
 
+    // Bada Thumbnail
     if (track?.thumbnail) {
       embed.setImage(track.thumbnail);
     }
@@ -173,12 +188,12 @@ async function updateMusicPanel(queue, clientInstance, targetChannel = null) {
     if (session.panelMessageId && !targetChannel) {
       const msg = await channel.messages.fetch(session.panelMessageId).catch(() => null);
       if (msg) {
-        await msg.edit({ embeds: [embed], components: getPanelComponents() }).catch(() => {});
+        await msg.edit({ embeds: [embed], components: getPanelComponents(clientInstance, isPaused, session.loopMode) }).catch(() => {});
         return;
       }
     }
 
-    const sentMsg = await channel.send({ embeds: [embed], components: getPanelComponents() });
+    const sentMsg = await channel.send({ embeds: [embed], components: getPanelComponents(clientInstance, isPaused, session.loopMode) });
     activeControllers.set(queue.guild.id, { ...session, panelMessageId: sentMsg.id, musicChannelId: channel.id });
   } catch (e) {
     console.error("[PANEL ERROR]", e);
@@ -188,7 +203,7 @@ async function updateMusicPanel(queue, clientInstance, targetChannel = null) {
 client.once("ready", () => {
   console.log(`[ready] Logged in as ${client.user.tag}`);
   console.log(`[ready] Prefix: ${PREFIX}`);
-  console.log("[ready] Music Bot V2 Active with +247 & +panel");
+  console.log("[ready] Music Bot Permanent Panel V3 Active");
 });
 
 // Player Events
@@ -197,31 +212,28 @@ player.events.on("playerStart", async (queue, track) => {
   await updateVoiceChannelStatus(queue, track);
   await updateMusicPanel(queue, client);
 
+  const disc = getDiscEmoji(client);
   queue.metadata?.send(
-    `<a:DISK:1564099400182272050> 🎶 **Now Playing:** [${track.title}](${track.url})`
+    `${disc} 🎶 **Now Playing:** [${track.title}](${track.url})`
   ).catch(() => {});
 });
 
 player.events.on("audioTrackAdd", async (queue, track) => {
-  console.log("[QUEUE ADD]", track.title);
   await updateMusicPanel(queue, client);
 });
 
 player.events.on("playerSkip", async (queue, track) => {
-  console.error("[PLAYER SKIP]", track?.title);
   await updateMusicPanel(queue, client);
 });
 
 player.events.on("playerError", async (queue, error, track) => {
-  console.error("[PLAYER ERROR]", track?.title, error);
   await updateMusicPanel(queue, client);
 });
 
 player.events.on("emptyQueue", async (queue) => {
-  console.log("[QUEUE] Finished");
   const session = activeControllers.get(queue.guild.id) || {};
   
-  if (session.autoplay && queue.history.size > 0) {
+  if (session.loopMode && queue.history.size > 0) {
     const lastTrack = queue.history.tracks.at(-1);
     if (lastTrack) {
       queue.node.play(lastTrack);
@@ -232,13 +244,11 @@ player.events.on("emptyQueue", async (queue) => {
   await updateVoiceChannelStatus(queue, null);
   await updateMusicPanel(queue, client);
 
-  // If 24/7 channel is not set, leave VC if empty
   if (!session.permanentVcId && queue.channel && queue.channel.members.size <= 1) {
     queue.delete();
   }
 });
 
-// Voice State Tracking for Auto-Leave & Controller Reset
 client.on("voiceStateUpdate", async (oldState, newState) => {
   const guildId = oldState.guild.id;
   const queue = getQueue(guildId);
@@ -272,7 +282,6 @@ client.on("voiceStateUpdate", async (oldState, newState) => {
   }
 });
 
-// Help Text (Short & Clean English, Black Embed format)
 const helpText = [
   "**🎧 SparkToon Music Bot**",
   "",
@@ -283,12 +292,12 @@ const helpText = [
   "`+skip` - Skip current track",
   "`+stop` - Stop and clear queue",
   "`+queue` - Show upcoming queue",
-  "`+autoplay` - Toggle repeat/autoplay",
+  "`+autoplay` - Toggle loop",
   "`+247` - Set current channel as 24/7",
-  "`+panel` - Send music control panel",
+  "`+panel` - Set permanent music panel here",
   "`+help` - List commands",
   "",
-  "<a:DISK:1564099400182272050> *Only users in the bot's voice channel can execute controls.*"
+  "🔒 *Only users in the bot's voice channel can control playback.*"
 ].join("\n");
 
 // Command Handler
@@ -302,21 +311,16 @@ client.on("messageCreate", async (message) => {
   if (!command) return;
 
   try {
-    // HELP
     if (command === "help" || command === "commands") {
       const embed = new EmbedBuilder().setColor(0x000000).setDescription(helpText);
       return message.reply({ embeds: [embed] });
     }
 
-    // JOIN
     if (command === "join") {
       const session = activeControllers.get(message.guild.id) || {};
       const channel = userVoice(message) || (session.permanentVcId ? await message.guild.channels.fetch(session.permanentVcId).catch(() => null) : null);
 
-      if (!channel) {
-        return message.reply("❌ Join a voice channel first!");
-      }
-
+      if (!channel) return message.reply("❌ Join a voice channel first!");
       if (!(await checkPermissions(message, channel))) return;
 
       let queue = getQueue(message.guild.id);
@@ -331,30 +335,18 @@ client.on("messageCreate", async (message) => {
       return message.reply({ embeds: [embed] });
     }
 
-    // PLAY
     if (command === "play" || command === "p") {
       const query = args.join(" ").trim();
-      if (!query) {
-        return message.reply("❌ Enter a song name or SoundCloud link!");
-      }
+      if (!query) return message.reply("❌ Enter a song name or SoundCloud link!");
 
       const session = activeControllers.get(message.guild.id) || {};
       const channel = userVoice(message) || (session.permanentVcId ? await message.guild.channels.fetch(session.permanentVcId).catch(() => null) : null);
 
-      if (!channel) {
-        return message.reply("❌ You must be in a voice channel to play music!");
-      }
-
-      if (botVoice(message) && !sameVoice(message)) {
-        return message.reply("❌ I am active in another voice channel!");
-      }
-
-      if (!hasMusicAccess(message)) {
-        return message.reply("❌ Another user currently controls the music in this voice channel. Join the VC to take control.");
-      }
+      if (!channel) return message.reply("❌ You must be in a voice channel to play music!");
+      if (botVoice(message) && !sameVoice(message)) return message.reply("❌ I am active in another voice channel!");
+      if (!hasMusicAccess(message)) return message.reply("❌ Another user currently controls the music in this voice channel.");
 
       if (!(await checkPermissions(message, channel))) return;
-
       await message.channel.sendTyping();
 
       const searchResult = await player.search(query, {
@@ -362,17 +354,16 @@ client.on("messageCreate", async (message) => {
         requestedBy: message.author
       });
 
-      if (!searchResult.hasTracks()) {
-        return message.reply("❌ No playable SoundCloud tracks found.");
-      }
+      if (!searchResult.hasTracks()) return message.reply("❌ No playable SoundCloud tracks found.");
 
       const result = await player.play(channel, searchResult, {
         nodeOptions: { ...queueOptions(message.channel) }
       });
 
+      const disc = getDiscEmoji(client);
       const embed = new EmbedBuilder()
         .setColor(0x000000)
-        .setDescription(`<a:DISK:1564099400182272050> Added to queue: **${result.track.title}**`);
+        .setDescription(`${disc} Added to queue: **${result.track.title}**`);
       
       return message.reply({ embeds: [embed] });
     }
@@ -380,13 +371,8 @@ client.on("messageCreate", async (message) => {
     // 24/7 COMMAND (`+247`)
     if (command === "247" || command === "set247") {
       const channel = userVoice(message);
-      if (!channel) {
-        return message.reply("❌ Join a voice channel first to set it as 24/7!");
-      }
-
-      if (!hasMusicAccess(message)) {
-        return message.reply("❌ You must be in the bot's voice channel to configure 24/7 mode!");
-      }
+      if (!channel) return message.reply("❌ Join a voice channel first to set it as 24/7!");
+      if (!hasMusicAccess(message)) return message.reply("❌ You must be in the bot's voice channel to configure 24/7 mode!");
 
       const session = activeControllers.get(message.guild.id) || {};
       session.permanentVcId = channel.id;
@@ -395,24 +381,35 @@ client.on("messageCreate", async (message) => {
 
       const embed = new EmbedBuilder()
         .setColor(0x000000)
-        .setDescription(`✅ **24/7 Mode Enabled!**\nVoice Channel: **${channel.name}**\nPanel Channel: **${message.channel.name}**`);
+        .setDescription(`✅ **24/7 Music Channel Enabled!**\nVoice Channel: **${channel.name}**\nPanel Channel: **${message.channel.name}**`);
       
       return message.reply({ embeds: [embed] });
     }
 
     // PANEL COMMAND (`+panel`)
     if (command === "panel") {
+      const session = activeControllers.get(message.guild.id) || {};
+      session.musicChannelId = message.channel.id;
+      activeControllers.set(message.guild.id, session);
+
       const queue = getQueue(message.guild.id);
-      if (!queue) {
-        return message.reply("❌ Music player is not active. Play a song first!");
+      if (queue) {
+        await updateMusicPanel(queue, client, message.channel);
+      } else {
+        const embed = new EmbedBuilder()
+          .setColor(0x000000)
+          .setTitle(`${getDiscEmoji(client)} SparkToon Permanent Music Panel`)
+          .setDescription("Queue is empty. Use `+play` or panel controls.")
+          .setFooter({ text: "Powered by SparkCore & SoundCloud" });
+        
+        const sentMsg = await message.channel.send({ embeds: [embed], components: getPanelComponents(client, false, false) });
+        session.panelMessageId = sentMsg.id;
+        activeControllers.set(message.guild.id, session);
       }
 
-      await updateMusicPanel(queue, client, message.channel);
-      const embed = new EmbedBuilder().setColor(0x000000).setDescription("✅ Music control panel sent here.");
-      return message.reply({ embeds: [embed] });
+      return message.reply("✅ Permanent music control panel has been set here.");
     }
 
-    // STOP
     if (command === "stop") {
       const queue = getQueue(message.guild.id);
       if (!queue) return message.reply("❌ Nothing is playing.");
@@ -426,29 +423,28 @@ client.on("messageCreate", async (message) => {
       return message.reply({ embeds: [embed] });
     }
 
-    // PAUSE
     if (command === "pause") {
       const queue = getQueue(message.guild.id);
       if (!queue?.isPlaying()) return message.reply("❌ Nothing is playing.");
       if (!hasMusicAccess(message)) return message.reply("❌ Join my voice channel to control playback!");
 
       queue.node.setPaused(true);
+      await updateMusicPanel(queue, client);
       const embed = new EmbedBuilder().setColor(0x000000).setDescription("⏸️ Music paused.");
       return message.reply({ embeds: [embed] });
     }
 
-    // RESUME
     if (command === "resume" || command === "unpause") {
       const queue = getQueue(message.guild.id);
       if (!queue || !queue.node.isPaused()) return message.reply("❌ Music is not paused.");
       if (!hasMusicAccess(message)) return message.reply("❌ Join my voice channel to control playback!");
 
       queue.node.setPaused(false);
+      await updateMusicPanel(queue, client);
       const embed = new EmbedBuilder().setColor(0x000000).setDescription("▶️ Music resumed.");
       return message.reply({ embeds: [embed] });
     }
 
-    // SKIP
     if (command === "skip" || command === "s") {
       const queue = getQueue(message.guild.id);
       if (!queue?.isPlaying()) return message.reply("❌ Nothing to skip.");
@@ -459,7 +455,6 @@ client.on("messageCreate", async (message) => {
       return message.reply({ embeds: [embed] });
     }
 
-    // QUEUE
     if (command === "queue" || command === "q") {
       const queue = getQueue(message.guild.id);
       if (!queue?.currentTrack) return message.reply("❌ Queue is empty.");
@@ -479,20 +474,19 @@ client.on("messageCreate", async (message) => {
       return message.reply({ embeds: [embed] });
     }
 
-    // AUTOPLAY
     if (command === "autoplay" || command === "repeat") {
       const queue = getQueue(message.guild.id);
       if (!queue) return message.reply("❌ Music player is not active.");
       if (!hasMusicAccess(message)) return message.reply("❌ Join my voice channel to control playback!");
 
       const session = activeControllers.get(message.guild.id) || {};
-      session.autoplay = !session.autoplay;
+      session.loopMode = !session.loopMode;
       activeControllers.set(message.guild.id, session);
       await updateMusicPanel(queue, client);
 
       const embed = new EmbedBuilder()
         .setColor(0x000000)
-        .setDescription(`🔁 Autoplay is now **${session.autoplay ? "Enabled" : "Disabled"}**.`);
+        .setDescription(`🔁 Loop mode is now **${session.loopMode ? "Enabled" : "Disabled"}**.`);
       return message.reply({ embeds: [embed] });
     }
 
@@ -503,7 +497,7 @@ client.on("messageCreate", async (message) => {
   }
 });
 
-// Interaction Handler for Panel Buttons & Dropdown Filters
+// Panel Buttons & Dropdown Interaction Handler
 client.on("interactionCreate", async (interaction) => {
   if (!interaction.isMessageComponent()) return;
   const guildId = interaction.guild?.id;
@@ -516,17 +510,19 @@ client.on("interactionCreate", async (interaction) => {
     return interaction.reply({ content: "❌ You must be in the bot's voice channel to use this panel!", ephemeral: true });
   }
 
-  if (interaction.customId === "music_pause_resume") {
-    if (!queue) return interaction.reply({ content: "❌ Nothing is playing.", ephemeral: true });
-    queue.node.setPaused(!queue.node.isPaused());
-    await updateMusicPanel(queue, client);
-    return interaction.reply({ content: `🎵 Playback toggled.`, ephemeral: true });
+  const session = activeControllers.get(guildId) || {};
+
+  if (interaction.customId === "music_loop") {
+    session.loopMode = !session.loopMode;
+    activeControllers.set(guildId, session);
+    if (queue) await updateMusicPanel(queue, client);
+    return interaction.reply({ content: `🔁 Loop mode: **${session.loopMode ? "Enabled" : "Disabled"}**`, ephemeral: true });
   }
 
-  if (interaction.customId === "music_skip") {
-    if (!queue) return interaction.reply({ content: "❌ Nothing to skip.", ephemeral: true });
-    queue.node.skip();
-    return interaction.reply({ content: `⏭️ Track skipped.`, ephemeral: true });
+  if (interaction.customId === "music_prev") {
+    if (!queue || queue.history.size === 0) return interaction.reply({ content: "❌ No previous tracks available.", ephemeral: true });
+    await queue.history.previous();
+    return interaction.reply({ content: `⏮️ Playing previous track.`, ephemeral: true });
   }
 
   if (interaction.customId === "music_stop") {
@@ -537,13 +533,40 @@ client.on("interactionCreate", async (interaction) => {
     return interaction.reply({ content: `⏹️ Playback stopped.`, ephemeral: true });
   }
 
-  if (interaction.customId === "music_autoplay") {
+  if (interaction.customId === "music_skip") {
+    if (!queue) return interaction.reply({ content: "❌ Nothing to skip.", ephemeral: true });
+    queue.node.skip();
+    return interaction.reply({ content: `⏭️ Track skipped.`, ephemeral: true });
+  }
+
+  if (interaction.customId === "music_queue") {
+    if (!queue?.currentTrack) return interaction.reply({ content: "❌ Queue is empty.", ephemeral: true });
+    const upcoming = queue.tracks.toArray().slice(0, 10).map((t, i) => `**${i + 1}.** ${t.title}`).join("\n");
+    return interaction.reply({ content: `🗃️ **Now Playing:** ${queue.currentTrack.title}\n\n**Up Next:**\n${upcoming || "None"}`, ephemeral: true });
+  }
+
+  if (interaction.customId === "music_vol_down") {
     if (!queue) return interaction.reply({ content: "❌ Music player not active.", ephemeral: true });
-    const session = activeControllers.get(guildId) || {};
-    session.autoplay = !session.autoplay;
-    activeControllers.set(guildId, session);
+    const newVol = Math.max(queue.node.volume - 10, 0);
+    queue.node.setVolume(newVol);
     await updateMusicPanel(queue, client);
-    return interaction.reply({ content: `🔁 Autoplay: **${session.autoplay ? "Enabled" : "Disabled"}**`, ephemeral: true });
+    return interaction.reply({ content: `🔉 Volume set to ${newVol}%`, ephemeral: true });
+  }
+
+  if (interaction.customId === "music_pause_resume") {
+    if (!queue) return interaction.reply({ content: "❌ Nothing is playing.", ephemeral: true });
+    const paused = queue.node.isPaused();
+    queue.node.setPaused(!paused);
+    await updateMusicPanel(queue, client);
+    return interaction.reply({ content: paused ? "▶️ Music resumed." : "⏸️ Music paused.", ephemeral: true });
+  }
+
+  if (interaction.customId === "music_vol_up") {
+    if (!queue) return interaction.reply({ content: "❌ Music player not active.", ephemeral: true });
+    const newVol = Math.min(queue.node.volume + 10, 100);
+    queue.node.setVolume(newVol);
+    await updateMusicPanel(queue, client);
+    return interaction.reply({ content: `🔊 Volume set to ${newVol}%`, ephemeral: true });
   }
 
   if (interaction.customId === "music_filters" && interaction.isStringSelectMenu()) {
@@ -573,4 +596,4 @@ async function start() {
   }
 }
 
-start(); 
+start();
