@@ -1,15 +1,20 @@
-# SPARK / SparkToon SoundCloud Music Bot V1
+# SparkToon SoundCloud Music Bot — Railway audio fix
 
-## Included files
-- `index.js` — full SoundCloud music bot source with join, play, pause, resume, skip, stop, queue, nowplaying, volume, leave, and help commands.
-- `package.json` — pinned Discord Player / extractor versions plus FFmpeg and Discord DAVE dependency.
+This build keeps the existing 460-line `index.js` commands and uses Railway's **system FFmpeg** instead of the `ffmpeg-static` npm binary.
 
-## Railway deployment
-1. Replace the contents of your bot repository with the contents of this folder (or upload these files into the existing project root).
-2. Keep the existing Railway `DISCORD_TOKEN` variable. `PREFIX` is optional and defaults to `+`.
-3. Deploy. Railway should run `npm start`.
+## Upload
+1. Extract this folder.
+2. Replace the existing root `index.js` and `package.json` with these files.
+3. Add `nixpacks.toml` to the same root folder as `package.json` (important).
+4. Commit/push and redeploy on Railway.
 
-No CLIENT_ID, GUILD_ID, Lavalink host, or `.env` file is required for this prefix-command version.
+Keep your existing Railway `DISCORD_TOKEN`. `PREFIX` is optional and defaults to `+`. No CLIENT_ID, GUILD_ID, Lavalink, or `.env` is required.
 
-## Audio diagnostic change
-The Player is initialized with the installed `ffmpeg-static` binary and `skipFFmpeg: false`. This forces the FFmpeg path instead of the raw-stream bypass seen in the previous logs. The next Railway log should show the stream configuration using FFmpeg; verify actual playback in Discord after deployment.
+## Important Railway builder setting
+- If Railway service uses **Railpack** (the current default on many services), add this variable in the SparkToon service Variables: `RAILPACK_DEPLOY_APT_PACKAGES=ffmpeg`.
+- If the service uses **Nixpacks**, the included `nixpacks.toml` installs FFmpeg.
+
+Do not keep `ffmpeg-static` in dependencies. After redeploy, the build/runtime must have `ffmpeg` on PATH.
+
+## Test
+Run `+play barsaat` in a voice channel. If it still ends early, send the new build log showing FFmpeg installation and the runtime logs from `[ffmpeg]` onward. This package is a targeted fix based on the current logs; actual audio playback must still be verified in Discord.

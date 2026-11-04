@@ -11,13 +11,10 @@ if (!TOKEN) {
   process.exit(1);
 }
 
-// FFmpeg must be available before Player is initialized.
-const ffmpegPath = require("ffmpeg-static");
-if (!ffmpegPath) {
-  throw new Error("FFmpeg binary not found!");
-}
-process.env.FFMPEG_PATH = ffmpegPath;
-console.log("[ffmpeg] Loaded:", ffmpegPath);
+// Use Railway's system FFmpeg. The discord-player FAQ warns that
+// static ffmpeg binaries can cause audio to stop immediately.
+const ffmpegPath = "ffmpeg";
+console.log("[ffmpeg] Using system binary from PATH:", ffmpegPath);
 
 // Discord Client
 const client = new Client({
