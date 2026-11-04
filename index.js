@@ -1,4 +1,3 @@
-
 const { Client, GatewayIntentBits, Partials } = require("discord.js");
 const { Player } = require("discord-player");
 const { SoundCloudExtractor } = require("@discord-player/extractor");
@@ -7,21 +6,18 @@ const { SoundCloudExtractor } = require("@discord-player/extractor");
 const TOKEN = process.env.DISCORD_TOKEN;
 const PREFIX = process.env.PREFIX || "+";
 
-// FFmpeg
-try {
-  const ffmpegPath = require("ffmpeg-static");
-  if (ffmpegPath) {
-    process.env.FFMPEG_PATH = ffmpegPath;
-    console.log("[ffmpeg] Loaded:", ffmpegPath);
-  }
-} catch (error) {
-  console.error("[ffmpeg] Could not load:", error.message);
-}
-
 if (!TOKEN) {
   console.error("[config] DISCORD_TOKEN missing!");
   process.exit(1);
 }
+
+// FFmpeg must be available before Player is initialized.
+const ffmpegPath = require("ffmpeg-static");
+if (!ffmpegPath) {
+  throw new Error("FFmpeg binary not found!");
+}
+process.env.FFMPEG_PATH = ffmpegPath;
+console.log("[ffmpeg] Loaded:", ffmpegPath);
 
 // Discord Client
 const client = new Client({
@@ -34,7 +30,12 @@ const client = new Client({
   partials: [Partials.Channel]
 });
 
-const player = new Player(client);
+// Force FFmpeg instead of allowing the raw/Opus bypass path implicated by
+// the previous logs (skipFFmpeg: true with zero packets played).
+const player = new Player(client, {
+  ffmpegPath,
+  skipFFmpeg: false
+});
 
 // Queue settings
 function queueOptions(channel) {
@@ -179,7 +180,6 @@ client.on("messageCreate", async (message) => {
   if (!command) return;
 
   try {
-
     // HELP
     if (command === "help" || command === "commands") {
       return message.reply(helpText);
@@ -458,4 +458,3 @@ process.on("uncaughtException", (error) => {
 });
 
 start();
-      

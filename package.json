@@ -1,7 +1,7 @@
 {
-  "name": "soundcloud-music-bot-v1",
-  "version": "1.0.3",
-  "description": "SoundCloud Music Bot V1",
+  "name": "sparktoon-soundcloud-music-bot",
+  "version": "1.0.4",
+  "description": "SPARK SoundCloud-only Discord music bot with forced FFmpeg voice transcoding",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"

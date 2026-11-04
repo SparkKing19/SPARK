@@ -1,59 +1,15 @@
-# SoundCloud Music Bot — V1
+# SPARK / SparkToon SoundCloud Music Bot V1
 
-A simple Discord music bot using Discord.js + Discord Player. **V1 supports SoundCloud only.** No Lavalink server, Client ID, or Guild ID is required.
+## Included files
+- `index.js` — full SoundCloud music bot source with join, play, pause, resume, skip, stop, queue, nowplaying, volume, leave, and help commands.
+- `package.json` — pinned Discord Player / extractor versions plus FFmpeg and Discord DAVE dependency.
 
-## 1. Railway setup
+## Railway deployment
+1. Replace the contents of your bot repository with the contents of this folder (or upload these files into the existing project root).
+2. Keep the existing Railway `DISCORD_TOKEN` variable. `PREFIX` is optional and defaults to `+`.
+3. Deploy. Railway should run `npm start`.
 
-Your Railway service should be connected to this GitHub repository.
+No CLIENT_ID, GUILD_ID, Lavalink host, or `.env` file is required for this prefix-command version.
 
-Add this variable in Railway → Service → Variables:
-
-```env
-DISCORD_TOKEN=YOUR_BOT_TOKEN
-```
-
-Optional:
-
-```env
-PREFIX=+
-```
-
-Railway will run `npm start` automatically using the `start` script in `package.json`.
-
-## 2. Discord Developer Portal
-
-In your application → Bot:
-- Enable **Message Content Intent** under Privileged Gateway Intents.
-- Make sure the bot has permission to View Channels, Send Messages, Connect, and Speak.
-- Invite it to your server with the `bot` scope and the permissions above.
-
-## 3. Commands
-
-| Command | What it does |
-|---|---|
-| `+join` | Join your current voice channel |
-| `+play <song/link>` | Search/play SoundCloud |
-| `+pause` | Pause |
-| `+resume` | Resume |
-| `+skip` | Skip current track |
-| `+stop` | Stop and clear queue |
-| `+queue` | Show upcoming tracks |
-| `+nowplaying` | Show current track |
-| `+volume 70` | Set volume from 1–100 |
-| `+leave` | Leave voice channel |
-| `+help` | Show help |
-
-Examples:
-
-```text
-+join
-+play Alan Walker Faded
-+play https://soundcloud.com/artist/track
-+volume 70
-```
-
-## Notes
-
-- Do not upload your Discord token to GitHub.
-- SoundCloud may restrict some tracks, regions, or copyrighted uploads. Those tracks may fail to play.
-- This version intentionally forces SoundCloud search and does not use YouTube or Spotify.
+## Audio diagnostic change
+The Player is initialized with the installed `ffmpeg-static` binary and `skipFFmpeg: false`. This forces the FFmpeg path instead of the raw-stream bypass seen in the previous logs. The next Railway log should show the stream configuration using FFmpeg; verify actual playback in Discord after deployment.
