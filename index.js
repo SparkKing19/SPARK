@@ -10,6 +10,7 @@ const {
 } = require("discord.js");
 const { Player } = require("discord-player");
 const { SoundCloudExtractor } = require("@discord-player/extractor");
+const { YouTubeDlpExtractor } = require("discord-player-youtubedlp");
 
 // Configuration
 const TOKEN = process.env.DISCORD_TOKEN;
@@ -38,7 +39,6 @@ const player = new Player(client, {
   skipFFmpeg: false
 });
 
-// Map to store active session controllers, panel references, and 24/7 settings per guild
 const activeControllers = new Map(); 
 
 function queueOptions(channel) {
@@ -111,15 +111,14 @@ async function updateVoiceChannelStatus(queue, track) {
   } catch (e) {}
 }
 
-// Custom Emoji fallback helper for :DISC:
 function getDiscEmoji(clientInstance) {
   const customDisc = clientInstance.emojis.cache.get("1564099400182272050");
   if (customDisc) return `<a:DISK:${customDisc.id}>`;
   return "💽";
 }
 
-// Panel Buttons Layout (10 Buttons split into 2 ActionRows + Filter Dropdown)
-function getPanelComponents(clientInstance, isPaused, isLooping) {
+// Panel Buttons Layout (Exact 10 Buttons layout)
+function getPanelComponents(clientInstance) {
   const disc = getDiscEmoji(clientInstance);
 
   const row1 = new ActionRowBuilder().addComponents(
@@ -132,8 +131,9 @@ function getPanelComponents(clientInstance, isPaused, isLooping) {
 
   const row2 = new ActionRowBuilder().addComponents(
     new ButtonBuilder().setCustomId("music_vol_down").setEmoji("🔉").setStyle(ButtonStyle.Secondary),
-    new ButtonBuilder().setCustomId("music_pause_resume").setEmoji(isPaused ? "⏸️" : "▶️").setStyle(ButtonStyle.Secondary),
+    new ButtonBuilder().setCustomId("music_pause").setEmoji("⏸️").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("music_panel_disc").setEmoji(disc.includes(":") ? { id: "1564099400182272050", name: "DISK" } : "💽").setStyle(ButtonStyle.Secondary).setDisabled(true),
+    new ButtonBuilder().setCustomId("music_resume").setEmoji("▶️").setStyle(ButtonStyle.Secondary),
     new ButtonBuilder().setCustomId("music_vol_up").setEmoji("🔊").setStyle(ButtonStyle.Secondary)
   );
 
@@ -163,11 +163,10 @@ async function updateMusicPanel(queue, clientInstance, targetChannel = null) {
     if (!channel) return;
 
     const track = queue.currentTrack;
-    const isPaused = queue.node.isPaused();
     const disc = getDiscEmoji(clientInstance);
 
     const embed = new EmbedBuilder()
-      .setColor(0x000000) // Black embed
+      .setColor(0x000000)
       .setTitle(`${disc} SparkToon Permanent Music Panel`)
       .setDescription(track ? `Playing: **${track.title}**` : "Queue is empty. Use `+play` or panel controls.")
       .addFields(
@@ -178,22 +177,21 @@ async function updateMusicPanel(queue, clientInstance, targetChannel = null) {
         { name: "Volume", value: `${queue.node.volume}%`, inline: true }
       );
 
-    // Bada Thumbnail
     if (track?.thumbnail) {
       embed.setImage(track.thumbnail);
     }
 
-    embed.setFooter({ text: "Powered by SparkCore & SoundCloud" });
+    embed.setFooter({ text: "Powered by SparkCore & YouTube/SoundCloud" });
 
     if (session.panelMessageId && !targetChannel) {
       const msg = await channel.messages.fetch(session.panelMessageId).catch(() => null);
       if (msg) {
-        await msg.edit({ embeds: [embed], components: getPanelComponents(clientInstance, isPaused, session.loopMode) }).catch(() => {});
+        await msg.edit({ embeds: [embed], components: getPanelComponents(clientInstance) }).catch(() => {});
         return;
       }
     }
 
-    const sentMsg = await channel.send({ embeds: [embed], components: getPanelComponents(clientInstance, isPaused, session.loopMode) });
+    const sentMsg = await channel.send({ embeds: [embed], components: getPanelComponents(clientInstance) });
     activeControllers.set(queue.guild.id, { ...session, panelMessageId: sentMsg.id, musicChannelId: channel.id });
   } catch (e) {
     console.error("[PANEL ERROR]", e);
@@ -203,10 +201,9 @@ async function updateMusicPanel(queue, clientInstance, targetChannel = null) {
 client.once("ready", () => {
   console.log(`[ready] Logged in as ${client.user.tag}`);
   console.log(`[ready] Prefix: ${PREFIX}`);
-  console.log("[ready] Music Bot Permanent Panel V3 Active");
+  console.log("[ready] Music Bot Permanent Panel V4 (YouTube + SoundCloud) Active");
 });
 
-// Player Events
 player.events.on("playerStart", async (queue, track) => {
   console.log("[PLAYING]", track.title);
   await updateVoiceChannelStatus(queue, track);
@@ -286,7 +283,7 @@ const helpText = [
   "**🎧 SparkToon Music Bot**",
   "",
   "`+join` - Join voice channel",
-  "`+play <song>` - Play track from SoundCloud",
+  "`+play <song/url>` - Play track from YouTube or SoundCloud",
   "`+pause` - Pause playback",
   "`+resume` - Resume playback",
   "`+skip` - Skip current track",
@@ -300,7 +297,6 @@ const helpText = [
   "🔒 *Only users in the bot's voice channel can control playback.*"
 ].join("\n");
 
-// Command Handler
 client.on("messageCreate", async (message) => {
   if (!message.guild || message.author.bot) return;
   if (!message.content.startsWith(PREFIX)) return;
@@ -337,7 +333,7 @@ client.on("messageCreate", async (message) => {
 
     if (command === "play" || command === "p") {
       const query = args.join(" ").trim();
-      if (!query) return message.reply("❌ Enter a song name or SoundCloud link!");
+      if (!query) return message.reply("❌ Enter a song name or YouTube/SoundCloud link!");
 
       const session = activeControllers.get(message.guild.id) || {};
       const channel = userVoice(message) || (session.permanentVcId ? await message.guild.channels.fetch(session.permanentVcId).catch(() => null) : null);
@@ -349,12 +345,12 @@ client.on("messageCreate", async (message) => {
       if (!(await checkPermissions(message, channel))) return;
       await message.channel.sendTyping();
 
+      // Searches across YouTube & SoundCloud automatically via registered extractors
       const searchResult = await player.search(query, {
-        searchEngine: `ext:${SoundCloudExtractor.identifier}`,
         requestedBy: message.author
       });
 
-      if (!searchResult.hasTracks()) return message.reply("❌ No playable SoundCloud tracks found.");
+      if (!searchResult.hasTracks()) return message.reply("❌ No playable tracks found on YouTube or SoundCloud.");
 
       const result = await player.play(channel, searchResult, {
         nodeOptions: { ...queueOptions(message.channel) }
@@ -368,7 +364,6 @@ client.on("messageCreate", async (message) => {
       return message.reply({ embeds: [embed] });
     }
 
-    // 24/7 COMMAND (`+247`)
     if (command === "247" || command === "set247") {
       const channel = userVoice(message);
       if (!channel) return message.reply("❌ Join a voice channel first to set it as 24/7!");
@@ -386,7 +381,6 @@ client.on("messageCreate", async (message) => {
       return message.reply({ embeds: [embed] });
     }
 
-    // PANEL COMMAND (`+panel`)
     if (command === "panel") {
       const session = activeControllers.get(message.guild.id) || {};
       session.musicChannelId = message.channel.id;
@@ -400,9 +394,9 @@ client.on("messageCreate", async (message) => {
           .setColor(0x000000)
           .setTitle(`${getDiscEmoji(client)} SparkToon Permanent Music Panel`)
           .setDescription("Queue is empty. Use `+play` or panel controls.")
-          .setFooter({ text: "Powered by SparkCore & SoundCloud" });
+          .setFooter({ text: "Powered by SparkCore & YouTube/SoundCloud" });
         
-        const sentMsg = await message.channel.send({ embeds: [embed], components: getPanelComponents(client, false, false) });
+        const sentMsg = await message.channel.send({ embeds: [embed], components: getPanelComponents(client) });
         session.panelMessageId = sentMsg.id;
         activeControllers.set(message.guild.id, session);
       }
@@ -497,7 +491,6 @@ client.on("messageCreate", async (message) => {
   }
 });
 
-// Panel Buttons & Dropdown Interaction Handler
 client.on("interactionCreate", async (interaction) => {
   if (!interaction.isMessageComponent()) return;
   const guildId = interaction.guild?.id;
@@ -553,12 +546,18 @@ client.on("interactionCreate", async (interaction) => {
     return interaction.reply({ content: `🔉 Volume set to ${newVol}%`, ephemeral: true });
   }
 
-  if (interaction.customId === "music_pause_resume") {
-    if (!queue) return interaction.reply({ content: "❌ Nothing is playing.", ephemeral: true });
-    const paused = queue.node.isPaused();
-    queue.node.setPaused(!paused);
+  if (interaction.customId === "music_pause") {
+    if (!queue?.isPlaying()) return interaction.reply({ content: "❌ Nothing is playing.", ephemeral: true });
+    queue.node.setPaused(true);
     await updateMusicPanel(queue, client);
-    return interaction.reply({ content: paused ? "▶️ Music resumed." : "⏸️ Music paused.", ephemeral: true });
+    return interaction.reply({ content: "⏸️ Music paused.", ephemeral: true });
+  }
+
+  if (interaction.customId === "music_resume") {
+    if (!queue || !queue.node.isPaused()) return interaction.reply({ content: "❌ Music is not paused.", ephemeral: true });
+    queue.node.setPaused(false);
+    await updateMusicPanel(queue, client);
+    return interaction.reply({ content: "▶️ Music resumed.", ephemeral: true });
   }
 
   if (interaction.customId === "music_vol_up") {
@@ -584,11 +583,13 @@ client.on("interactionCreate", async (interaction) => {
   }
 });
 
-// Start Bot
 async function start() {
   try {
-    await player.extractors.register(SoundCloudExtractor);
-    console.log("[extractors] SoundCloud loaded");
+    // Register both YouTube and SoundCloud extractors
+    await player.extractors.register(YouTubeDlpExtractor, {});
+    await player.extractors.register(SoundCloudExtractor, {});
+    console.log("[extractors] YouTube & SoundCloud loaded successfully");
+
     await client.login(TOKEN);
   } catch (error) {
     console.error("[STARTUP ERROR]", error);
