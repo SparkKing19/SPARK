@@ -1,58 +1,59 @@
-# SparkTune Music Bot
+# SoundCloud Music Bot — V1
 
-A Discord slash-command music bot with **Lavalink bundled in the same Docker service**. No external Lavalink host or public node list is required.
+A simple Discord music bot using Discord.js + Discord Player. **V1 supports SoundCloud only.** No Lavalink server, Client ID, or Guild ID is required.
 
-## Commands
+## 1. Railway setup
 
-`/play query` · `/skip` · `/pause` · `/resume` · `/stop` · `/queue` · `/nowplaying` · `/volume level` · `/loop mode` · `/shuffle` · `/ping`
+Your Railway service should be connected to this GitHub repository.
 
-## One-time Discord setup
+Add this variable in Railway → Service → Variables:
 
-1. Create an application at https://discord.com/developers/applications.
-2. Add a Bot user and copy its token.
-3. Under **OAuth2 → URL Generator**, select `bot` and `applications.commands`.
-4. Give it View Channels, Send Messages, Embed Links, Connect, and Speak permissions; invite it to your server.
-5. Copy the Application ID (Client ID).
+```env
+DISCORD_TOKEN=YOUR_BOT_TOKEN
+```
 
-The bot token is a secret. Never commit it to GitHub.
+Optional:
 
-## Deploy on Railway
+```env
+PREFIX=+
+```
 
-1. Push this folder to a GitHub repository.
-2. In Railway, create a project → **Deploy from GitHub repo**.
-3. Add these variables in the service:
-   - `DISCORD_TOKEN` = your bot token
-   - `LAVALINK_PASSWORD` = a strong password (optional, but recommended)
-4. Railway detects the `Dockerfile` and builds the bot plus its local Lavalink node. The bot gets its Application ID after login and registers global slash commands automatically.
+Railway will run `npm start` automatically using the `start` script in `package.json`.
 
-No public port is required. Keep the service running; music playback stops when the service sleeps/restarts.
+## 2. Discord Developer Portal
 
-## Important
+In your application → Bot:
+- Enable **Message Content Intent** under Privileged Gateway Intents.
+- Make sure the bot has permission to View Channels, Send Messages, Connect, and Speak.
+- Invite it to your server with the `bot` scope and the permissions above.
 
-- You only need to provide your Discord bot token. The application ID is obtained from the logged-in bot automatically; no Client ID or Guild ID variable is needed.
-- YouTube playback can be affected by upstream YouTube changes, account/login checks, regional restrictions, or provider rate limits. No music bot can guarantee every YouTube URL will always play.
-- This project bundles Lavalink 4.2.2 and the Lavalink YouTube source plugin 1.18.2. See the official projects:
-  - https://github.com/lavalink-devs/Lavalink
-  - https://github.com/lavalink-devs/youtube-source
+## 3. Commands
 
-## Local run
+| Command | What it does |
+|---|---|
+| `+join` | Join your current voice channel |
+| `+play <song/link>` | Search/play SoundCloud |
+| `+pause` | Pause |
+| `+resume` | Resume |
+| `+skip` | Skip current track |
+| `+stop` | Stop and clear queue |
+| `+queue` | Show upcoming tracks |
+| `+nowplaying` | Show current track |
+| `+volume 70` | Set volume from 1–100 |
+| `+leave` | Leave voice channel |
+| `+help` | Show help |
 
-Requires Java 21+, Node.js 22+, and the Lavalink JAR downloaded as `lavalink/Lavalink.jar`.
-Copy `.env.example` to `.env`, fill in the two required values, then run `npm install` and start Lavalink using `application.yml`, followed by `npm start`.
-
-## File layout
+Examples:
 
 ```text
-SparkTune-Music-Bot/
-├── src/
-│   ├── index.js
-│   ├── music.js
-│   └── commands.js
-├── Dockerfile
-├── application.yml
-├── start.sh
-├── package.json
-├── .env.example
-├── .gitignore
-└── README.md
++join
++play Alan Walker Faded
++play https://soundcloud.com/artist/track
++volume 70
 ```
+
+## Notes
+
+- Do not upload your Discord token to GitHub.
+- SoundCloud may restrict some tracks, regions, or copyrighted uploads. Those tracks may fail to play.
+- This version intentionally forces SoundCloud search and does not use YouTube or Spotify.
