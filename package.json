@@ -1,7 +1,7 @@
 {
   "name": "soundcloud-music-bot-v1",
-  "version": "1.0.0",
-  "description": "Discord music bot - SoundCloud only (V1)",
+  "version": "1.0.1",
+  "description": "Discord Music Bot - SoundCloud Only",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@discord-player/extractor": "7.2.0",
+    "@snazzah/davey": "^0.1.12",
     "discord-player": "7.2.0",
     "discord.js": "^14.22.1",
     "ffmpeg-static": "^5.2.0"
